@@ -98,13 +98,40 @@ def validate_image(file):
 try:
     mongo_client = MongoClient(MONGO_URI)
     db = mongo_client["smart_condo"]
+    
+    # Collections
     users_col = db["users"]
     parcels_col = db["parcels"]
     complaints_col = db["complaints"]
     kb_col = db["knowledge_base"]
     admins_col = db["admins"]
-    audit_logs_col = db["audit_logs"]  # เพิ่ม collection สำหรับ audit logs
-    chat_history_col = db["chat_history"]  # เพิ่ม collection สำหรับบันทึกประวัติแชททั้งหมด
+    audit_logs_col = db["audit_logs"]
+    chat_history_col = db["chat_history"]
+
+    def ensure_indexes():
+        """สร้าง Indexes เพื่อเพิ่มความเร็วในการค้นหา"""
+        try:
+            # Users: ค้นหาตาม line_user_id และ platform
+            users_col.create_index([("line_user_id", 1)])
+            users_col.create_index([("platform", 1)])
+            users_col.create_index([("last_active", -1)])
+            
+            # Complaints: ค้นหาตาม status, priority, timestamp
+            complaints_col.create_index([("status", 1)])
+            complaints_col.create_index([("priority", 1)])
+            complaints_col.create_index([("timestamp", -1)])
+            complaints_col.create_index([("line_user_id", 1)])
+            
+            # Parcels: ค้นหาตาม status, pin, timestamp
+            parcels_col.create_index([("status", 1)])
+            parcels_col.create_index([("pin", 1)])
+            parcels_col.create_index([("timestamp", -1)])
+            
+            print("✅ MongoDB Indexes ensured.")
+        except Exception as e:
+            print(f"⚠️ Failed to create indexes: {e}")
+
+    ensure_indexes()
     
     print("✅ MongoDB Connected: smart_condo")
     # ตรวจสอบจำนวนข้อมูลเบื้องต้น
@@ -1513,9 +1540,20 @@ def get_upcoming_parcels():
 def get_all_users():
     """ดึงข้อมูลผู้ใช้ทั้งหมด"""
     try:
-        print(f"DEBUG: Users requested by {request.remote_addr}")
-        users = list(users_col.find().sort("last_active", -1).limit(100))
-        print(f"DEBUG: Found {len(users)} users in DB")
+        # print(f"DEBUG: Users requested by {request.remote_addr}")
+        # Use projection to fetch only necessary fields
+        users = list(users_col.find({}, {
+            "room_number": 1, 
+            "first_name": 1, 
+            "last_name": 1, 
+            "display_name": 1, 
+            "phone_number": 1, 
+            "platform": 1, 
+            "line_user_id": 1,
+            "last_active": 1, 
+            "_id": 0
+        }).sort("last_active", -1).limit(100))
+        # print(f"DEBUG: Found {len(users)} users in DB")
         
         result = []
         for u in users:
@@ -1592,7 +1630,17 @@ def get_all_complaints():
                 {"ai_summary": {"$regex": search_q, "$options": "i"}}
             ]
             
-        items = list(complaints_col.find(query))
+        items = list(complaints_col.find(query, {
+            "room_number": 1,
+            "description": 1,
+            "ai_summary": 1,
+            "status": 1,
+            "priority": 1,
+            "timestamp": 1,
+            "image_url": 1,
+            "line_user_id": 1,
+            "urgency_level": 1
+        }))
         
         # 🔥 ปรับปรุง Sorting Logic ใหม่
         def get_priority_score(priority):
@@ -1668,7 +1716,10 @@ def get_parcels_frontend():
                 {"transport": {"$regex": q, "$options": "i"}}
             ]
             
-        items = list(parcels_col.find(query).sort("timestamp", -1).limit(1000))
+        items = list(parcels_col.find(query, {
+            "room_number": 1, "recipient_name": 1, "pin": 1, "transport": 1, "courier": 1,
+            "tracking_number": 1, "image_url": 1, "timestamp": 1
+        }).sort("timestamp", -1).limit(1000))
         result = []
         for i in items:
             result.append({
