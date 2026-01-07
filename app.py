@@ -139,6 +139,44 @@ def get_bkk_now():
     tz = datetime.timezone(datetime.timedelta(hours=7))
     return datetime.datetime.now(tz)
 
+def analyze_urgency_from_description(text):
+    """
+    วิเคราะห์ความเร่งด่วนเบื้องต้นจากคำสำคัญในข้อความ (Rule-based)
+    """
+    if not text: return "Medium"
+    text = text.lower()
+    
+    high_keywords = ['ไฟไหม้', 'ควัน', 'ประกายไฟ', 'ไฟช็อต', 'ไฟดูด', 'แก๊สรั่ว', 'กลิ่นแก๊ส', 'ระเบิด', 'น้ำท่วม', 'ท่อแตก', 'คนติด', 'ลิฟต์ค้าง', 'ประตูเสีย', 'ล็อคไม่ได้', 'อันตราย']
+    medium_keywords = ['แอร์เสีย', 'แอร์ไม่เย็น', 'น้ำไม่ไหล', 'น้ำรั่ว', 'ส้วมตัน', 'กดไม่ลง', 'ไฟดับ', 'ไฟตก', 'อินเทอร์เน็ต', 'internet', 'wifi', 'ลิฟต์เสีย', 'มีกลิ่น', 'เสียงดัง']
+    
+    for kw in high_keywords:
+        if kw in text: return "High"
+        
+    for kw in medium_keywords:
+        if kw in text: return "Medium"
+        
+    return "Low"
+
+def determine_final_urgency(desc_urgency, ai_urgency, text):
+    """
+    ตัดสินใจความเร่งด่วนขั้นสุดท้าย
+    - ถ้า Keyword บอก High -> ให้ High ทันที (Safety First)
+    - ถ้า Keyword Low แต่ AI บอก High -> เชื่อ AI (เผื่อมีภาพประกอบที่น่ากลัว)
+    """
+    # 1. Safety First: ถ้าเจอคำว่าไฟไหม้/แก๊สรั่ว ให้ High เสมอ
+    if desc_urgency == "High":
+        return "High"
+        
+    # 2. ถ้า AI เห็นว่า High (เช่น เห็นภาพไฟไหม้) -> High
+    if ai_urgency == "High":
+        return "High"
+        
+    # 3. ถ้า AI บอก Medium แต่ข้อความเป็น Low -> Medium (กันเหนียว)
+    if ai_urgency == "Medium":
+        return "Medium"
+        
+    return desc_urgency
+
 def log_admin_action(action, performed_by, target=None, details=None):
     """
     บันทึกการดำเนินการของผู้ดูแลระบบ
