@@ -64,6 +64,14 @@ CLOUDINARY_UPLOAD_PRESET = os.getenv("CLOUDINARY_UPLOAD_PRESET", "smart_condo")
 
 API_TOKEN = os.getenv("API_TOKEN")
 
+# ================= TIMEZONE HELPER =================
+def get_bkk_now():
+    """
+    คืนค่าเวลาปัจจุบันในเขตเวลาประเทศไทย (UTC+7)
+    ใช้แทน datetime.datetime.now() เพื่อแก้ปัญหาเวลาเพี้ยนบน Server (Render ใช้ UTC)
+    """
+    return datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+
 # ================= IMAGE VALIDATION =================
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
@@ -146,7 +154,7 @@ def log_admin_action(action, performed_by, target=None, details=None):
             "action": action,
             "performed_by": performed_by,
             "target": target,
-            "timestamp": datetime.datetime.now(),
+            "timestamp": get_bkk_now(),
             "details": details or ""
         }
         audit_logs_col.insert_one(log_entry)
@@ -177,7 +185,7 @@ def save_full_chat_history(line_user_id, role, message, platform="line"):
             "role": role,
             "message": message,
             "platform": platform,
-            "timestamp": datetime.datetime.now()
+            "timestamp": get_bkk_now()
         }
         
         chat_history_col.insert_one(chat_entry)
@@ -586,7 +594,7 @@ def analyze_intent(text):
 
 def update_chat_history(uid, role, message):
     if role == 'assistant': role = 'model'
-    entry = {"role": role, "parts": [message], "timestamp": datetime.datetime.now()}
+    entry = {"role": role, "parts": [message], "timestamp": get_bkk_now()}
     users_col.update_one(
         {"line_user_id": uid},
         {"$push": {"chat_history": {"$each": [entry], "$slice": -10}}}
@@ -736,7 +744,7 @@ def get_or_create_user(user_id, platform="line", display_name=None, picture_url=
     user = users_col.find_one({"line_user_id": user_id})
     
     update_data = {
-        "last_active": datetime.datetime.now(),
+        "last_active": get_bkk_now(),
         "platform": platform
     }
     if display_name: update_data["display_name"] = display_name
@@ -1258,7 +1266,7 @@ def handle_image_message(event):
                     "status": "pending",
                     "ai_summary": final_ai_summary,
                     "urgency_level": final_urgency,
-                    "timestamp": datetime.datetime.now(),
+                    "timestamp": get_bkk_now(),
                     "priority": final_urgency.lower(),  # แปลงเป็นตัวเล็กเพื่อใช้ใน DB
                     "analysis_debug": {  # เก็บข้อมูล debug สำหรับตรวจสอบ
                         "desc_urgency": desc_urgency,
@@ -2724,7 +2732,7 @@ def process_web_complaint_image(user, image_path):
             "status": "pending",
             "ai_summary": final_ai_summary,
             "urgency_level": final_urgency,
-            "timestamp": datetime.datetime.now(),
+            "timestamp": get_bkk_now(),
             "priority": final_urgency.lower(),
             "platform": "web",
             "analysis_debug": {
