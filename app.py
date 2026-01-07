@@ -2362,8 +2362,16 @@ def resolve_complaint(complaint_id):
 def get_audit_logs():
     """ดึง Audit Logs ล่าสุด"""
     try:
-        # ดึง logs ล่าสุด 30 รายการ (เรียงจากใหม่ไปเก่า) ตามคำขอของ user
-        logs = list(audit_logs_col.find().sort("timestamp", -1).limit(30))
+        # ดึง logs ล่าสุด 100 รายการ (เพิ่มจาก 30) เพื่อให้เห็นข้อมูลครอบคลุมขึ้น
+        # ใช้ projection เลือกเฉพาะ field ที่จำเป็น
+        logs = list(audit_logs_col.find({}, {
+            "action": 1,
+            "performed_by": 1,
+            "target": 1,
+            "timestamp": 1,
+            "details": 1,
+            "_id": 0
+        }).sort("timestamp", -1).limit(30))
         
         result = []
         for log in logs:
