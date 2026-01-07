@@ -1727,8 +1727,11 @@ def search_users():
             if not full_name or full_name == " ":
                 full_name = get_value('display_name', '-')
             
-            # ตรวจสอบ Platform
-            platform = "LINE" if u.get("line_user_id") else "Web/App"
+            # ตรวจสอบ Platform - อ่านจากฐานข้อมูลโดยตรง
+            platform = u.get("platform", "")
+            if not platform:
+                # Fallback: ถ้าไม่มี platform ให้ดูจาก line_user_id
+                platform = "LINE" if u.get("line_user_id") else "Web"
             
             # Format เวลาใช้งานล่าสุด
             last_active = u.get("last_active")
