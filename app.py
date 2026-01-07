@@ -1535,7 +1535,9 @@ def get_all_users():
                 full_name = get_value('display_name', '-')
             
             # ตรวจสอบ Platform
-            platform = "LINE" if u.get("line_user_id") else "Web/App"
+            platform = u.get("platform")
+            if not platform:
+                platform = "LINE" if u.get("line_user_id") else "Web/App"
             
             # Format เวลาใช้งานล่าสุด
             last_active = u.get("last_active")
