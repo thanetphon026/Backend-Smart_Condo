@@ -134,6 +134,11 @@ def log_request_info():
     if request.path.startswith('/api'):
         print(f"🔍 Incoming Request: {request.method} {request.path}")
 
+def get_bkk_now():
+    """Get current usage time in Bangkok timezone (UTC+7)"""
+    tz = datetime.timezone(datetime.timedelta(hours=7))
+    return datetime.datetime.now(tz)
+
 def log_admin_action(action, performed_by, target=None, details=None):
     """
     บันทึกการดำเนินการของผู้ดูแลระบบ
