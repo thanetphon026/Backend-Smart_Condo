@@ -64,13 +64,7 @@ CLOUDINARY_UPLOAD_PRESET = os.getenv("CLOUDINARY_UPLOAD_PRESET", "smart_condo")
 
 API_TOKEN = os.getenv("API_TOKEN")
 
-# ================= TIMEZONE HELPER =================
-def get_bkk_now():
-    """
-    คืนค่าเวลาปัจจุบันในเขตเวลาประเทศไทย (UTC+7)
-    ใช้แทน datetime.datetime.now() เพื่อแก้ปัญหาเวลาเพี้ยนบน Server (Render ใช้ UTC)
-    """
-    return datetime.datetime.utcnow() + datetime.timedelta(hours=7)
+
 
 # ================= IMAGE VALIDATION =================
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
@@ -154,7 +148,7 @@ def log_admin_action(action, performed_by, target=None, details=None):
             "action": action,
             "performed_by": performed_by,
             "target": target,
-            "timestamp": get_bkk_now(),
+            "timestamp": datetime.datetime.utcnow(),
             "details": details or ""
         }
         audit_logs_col.insert_one(log_entry)
@@ -185,7 +179,7 @@ def save_full_chat_history(line_user_id, role, message, platform="line"):
             "role": role,
             "message": message,
             "platform": platform,
-            "timestamp": get_bkk_now()
+            "timestamp": datetime.datetime.utcnow()
         }
         
         chat_history_col.insert_one(chat_entry)
@@ -594,7 +588,7 @@ def analyze_intent(text):
 
 def update_chat_history(uid, role, message):
     if role == 'assistant': role = 'model'
-    entry = {"role": role, "parts": [message], "timestamp": get_bkk_now()}
+    entry = {"role": role, "parts": [message], "timestamp": datetime.datetime.utcnow()}
     users_col.update_one(
         {"line_user_id": uid},
         {"$push": {"chat_history": {"$each": [entry], "$slice": -10}}}
@@ -744,7 +738,7 @@ def get_or_create_user(user_id, platform="line", display_name=None, picture_url=
     user = users_col.find_one({"line_user_id": user_id})
     
     update_data = {
-        "last_active": get_bkk_now(),
+        "last_active": datetime.datetime.utcnow(),
         "platform": platform
     }
     if display_name: update_data["display_name"] = display_name
@@ -1629,7 +1623,7 @@ def get_parcels_frontend():
                 {"transport": {"$regex": q, "$options": "i"}}
             ]
             
-        items = list(parcels_col.find(query).sort("timestamp", -1).limit(100))
+        items = list(parcels_col.find(query).sort("timestamp", -1).limit(1000))
         result = []
         for i in items:
             result.append({
