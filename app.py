@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 import csv
 import io
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 
 # [UPDATED] Google GenAI (New SDK)
 from google import genai
@@ -1432,42 +1433,33 @@ def get_dashboard_stats():
     print(f"DEBUG: Dashboard requested by {request.remote_addr}")
     print(f"DEBUG: Headers: {dict(request.headers)}")
     try:
-        # 1. จำนวนผู้ใช้งานทั้งหมด
-        total_users = users_col.count_documents({})
-        
-        # 2. จำนวนร้องเรียนทั้งหมด
-        total_complaints = complaints_col.count_documents({})
-        
-        # 3. ร้องเรียนที่แก้ไขแล้วและยังไม่ได้แก้
-        resolved_complaints = complaints_col.count_documents({"status": "resolved"})
-        pending_complaints = complaints_col.count_documents({"status": "pending"})
-        
-        # 4. จำนวนการร้องเรียนแยกตามระดับความสำคัญ
-        high_priority = complaints_col.count_documents({"priority": "high", "status": "pending"})
-        medium_priority = complaints_col.count_documents({"priority": "medium", "status": "pending"})
-        low_priority = complaints_col.count_documents({"priority": "low", "status": "pending"})
-        
-        # 5. จำนวนพัสดุทั้งหมด
-        total_parcels = parcels_col.count_documents({})
-        
-        # 6. จำนวนพัสดุที่รับแล้ว
-        picked_up_parcels = parcels_col.count_documents({"status": "picked_up"})
-        
-        # 7. จำนวนพัสดุคงค้าง
-        pending_parcels = parcels_col.count_documents({"status": "pending"})
+        # Use ThreadPoolExecutor to run queries in parallel
+        with ThreadPoolExecutor() as executor:
+            # Submit all queries
+            f_users = executor.submit(users_col.count_documents, {})
+            f_total_complaints = executor.submit(complaints_col.count_documents, {})
+            f_resolved_complaints = executor.submit(complaints_col.count_documents, {"status": "resolved"})
+            f_pending_complaints = executor.submit(complaints_col.count_documents, {"status": "pending"})
+            f_high = executor.submit(complaints_col.count_documents, {"priority": "high", "status": "pending"})
+            f_medium = executor.submit(complaints_col.count_documents, {"priority": "medium", "status": "pending"})
+            f_low = executor.submit(complaints_col.count_documents, {"priority": "low", "status": "pending"})
+            f_total_parcels = executor.submit(parcels_col.count_documents, {})
+            f_picked_up = executor.submit(parcels_col.count_documents, {"status": "picked_up"})
+            f_pending_parcels = executor.submit(parcels_col.count_documents, {"status": "pending"})
 
-        return jsonify({
-            "users": total_users,
-            "total_complaints": total_complaints,
-            "resolved_complaints": resolved_complaints,
-            "pending_complaints": pending_complaints,
-            "pending_high": high_priority,
-            "pending_medium": medium_priority,
-            "pending_low": low_priority,
-            "total_parcels": total_parcels,
-            "picked_up_parcels": picked_up_parcels,
-            "pending_parcels": pending_parcels
-        })
+            # Get results (this will wait for the slowest query, but they run simultaneously)
+            return jsonify({
+                "users": f_users.result(),
+                "total_complaints": f_total_complaints.result(),
+                "resolved_complaints": f_resolved_complaints.result(),
+                "pending_complaints": f_pending_complaints.result(),
+                "pending_high": f_high.result(),
+                "pending_medium": f_medium.result(),
+                "pending_low": f_low.result(),
+                "total_parcels": f_total_parcels.result(),
+                "picked_up_parcels": f_picked_up.result(),
+                "pending_parcels": f_pending_parcels.result()
+            })
     except Exception as e:
         print(f"Error dashboard: {e}")
         return jsonify({"error": str(e)}), 500
@@ -1479,9 +1471,13 @@ def get_dashboard_stats():
 def get_recent_activity():
     """ดึงกิจกรรมล่าสุด"""
     try:
-        # ดึงกิจกรรมจาก parcels และ complaints
-        recent_parcels = list(parcels_col.find().sort("timestamp", -1).limit(3))
-        recent_complaints = list(complaints_col.find().sort("timestamp", -1).limit(3))
+        # Use ThreadPoolExecutor to run queries in parallel
+        with ThreadPoolExecutor() as executor:
+            f_recent_parcels = executor.submit(lambda: list(parcels_col.find().sort("timestamp", -1).limit(3)))
+            f_recent_complaints = executor.submit(lambda: list(complaints_col.find().sort("timestamp", -1).limit(3)))
+            
+            recent_parcels = f_recent_parcels.result()
+            recent_complaints = f_recent_complaints.result()
         
         activities = []
         
@@ -1907,7 +1903,7 @@ def search_complaints_optimized():
             "line_user_id": 1,
             "urgency_level": 1,
             "_id": 1
-        }))
+        }).sort("timestamp", -1).limit(100))
         
         # เรียงลำดับตามความสำคัญ (สูงสุดก่อน) และตามเวลา (ใหม่ก่อน)
         def get_priority_score(priority):
