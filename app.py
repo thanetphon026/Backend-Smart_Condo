@@ -2485,46 +2485,61 @@ def web_chat_api():
         user = get_or_create_user(uid, "web", web_name, web_pic)
 
         # กรณีที่ส่งรูปภาพมาจากเว็บ (สำหรับการแจ้งร้องเรียน)
-        if image_base64 and user.get('complaint_state') == 'waiting_image' and user.get('draft_desc'):
-            try:
-                # [NEW] ตรวจสอบนามสกุลจาก image_type
-                if image_type.lower() not in ALLOWED_EXTENSIONS:
-                    return jsonify({"error": f"นามสกุลไฟล์ .{image_type} ไม่รองรับ"}), 400
+        if image_base64:
+            if user.get('complaint_state') == 'waiting_image' and user.get('draft_desc'):
+                try:
+                    # [NEW] ตรวจสอบนามสกุลจาก image_type
+                    if image_type.lower() not in ALLOWED_EXTENSIONS:
+                        return jsonify({"error": f"นามสกุลไฟล์ .{image_type} ไม่รองรับ"}), 400
 
-                # ถอดรหัส base64
-                image_data = base64.b64decode(image_base64)
-                
-                # [NEW] ตรวจสอบขนาดข้อมูลหลังถอดรหัส
-                if len(image_data) > MAX_FILE_SIZE:
-                    return jsonify({"error": f"ไฟล์มีขนาดใหญ่เกินไป (สูงสุด {MAX_FILE_SIZE // (1024*1024)}MB)"}), 400
+                    # ถอดรหัส base64
+                    image_data = base64.b64decode(image_base64)
+                    
+                    # [NEW] ตรวจสอบขนาดข้อมูลหลังถอดรหัส
+                    if len(image_data) > MAX_FILE_SIZE:
+                        return jsonify({"error": f"ไฟล์มีขนาดใหญ่เกินไป (สูงสุด {MAX_FILE_SIZE // (1024*1024)}MB)"}), 400
 
-                # บันทึกลงไฟล์ชั่วคราว
-                with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{image_type}') as tf:
-                    tf.write(image_data)
-                    temp_path = tf.name
-                
-                # เรียกใช้ฟังก์ชัน process_web_complaint_image
-                success_msg = process_web_complaint_image(user, temp_path)
-                
-                # บันทึกประวัติแชท
-                update_chat_history(uid, 'user', f'[ส่งรูปภาพแจ้งร้องเรียน: {user.get("draft_desc")}]')
-                update_chat_history(uid, 'model', success_msg)
-                
-                # บันทึกใน chat_history สำหรับ web
-                save_full_chat_history(uid, 'user', f'[ส่งรูปภาพแจ้งร้องเรียน: {user.get("draft_desc")}]', "web")
-                save_full_chat_history(uid, 'assistant', success_msg, "web")
+                    # บันทึกลงไฟล์ชั่วคราว
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{image_type}') as tf:
+                        tf.write(image_data)
+                        temp_path = tf.name
+                    
+                    # เรียกใช้ฟังก์ชัน process_web_complaint_image
+                    success_msg = process_web_complaint_image(user, temp_path)
+                    
+                    # บันทึกประวัติแชท
+                    update_chat_history(uid, 'user', f'[ส่งรูปภาพแจ้งร้องเรียน: {user.get("draft_desc")}]')
+                    update_chat_history(uid, 'model', success_msg)
+                    
+                    # บันทึกใน chat_history สำหรับ web
+                    save_full_chat_history(uid, 'user', f'[ส่งรูปภาพแจ้งร้องเรียน: {user.get("draft_desc")}]', "web")
+                    save_full_chat_history(uid, 'assistant', success_msg, "web")
 
+                    return jsonify({
+                        "reply": success_msg, 
+                        "status": "success",
+                        "is_registered": is_registered(user)
+                    })
+                    
+                except Exception as e:
+                    print(f"Web Image Processing Error: {e}")
+                    return jsonify({"error": str(e)}), 500
+                finally:
+                    if 'temp_path' in locals() and os.path.exists(temp_path): os.remove(temp_path)
+            else:
+                # กรณีส่งรูปมาแต่ไม่ได้อยู่ในสถานะรอรูป (เช่น ส่งเล่น หรือส่งผิด)
+                reply_msg = "📷 ได้รับรูปภาพแล้วค่ะ\nหากต้องการแจ้งร้องเรียน/แจ้งซ่อม กรุณาพิมพ์รายละเอียดปัญหาเข้ามาก่อนนะคะ แล้วระบบจะแจ้งให้ส่งรูปภาพอีกครั้งค่ะ"
+                
+                update_chat_history(uid, 'user', '[ส่งรูปภาพ]')
+                update_chat_history(uid, 'model', reply_msg)
+                save_full_chat_history(uid, 'user', '[ส่งรูปภาพ]', "web")
+                save_full_chat_history(uid, 'assistant', reply_msg, "web")
+                
                 return jsonify({
-                    "reply": success_msg, 
+                    "reply": reply_msg,
                     "status": "success",
                     "is_registered": is_registered(user)
                 })
-                
-            except Exception as e:
-                print(f"Web Image Processing Error: {e}")
-                return jsonify({"error": str(e)}), 500
-            finally:
-                if os.path.exists(temp_path): os.remove(temp_path)
         
         # ถ้าไม่มีรูปภาพ (เป็นข้อความธรรมดา)
         if not msg: 
