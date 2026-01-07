@@ -2462,17 +2462,10 @@ def api_cleanup_images():
 
 # ================= WEB CHAT API (แก้ไขให้รองรับการแจ้งร้องเรียนพร้อมรูปภาพ) =================
 
-@app.route('/api/web/chat', methods=['POST', 'OPTIONS'])
+@app.route('/api/web/chat', methods=['POST'])
+@require_api_token
 def web_chat_api():
-    # 1. Handle OPTIONS request (CORS preflight)
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, API_TOKEN')
-        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        return response, 200
-    
-    # 2. Handle POST request
+    # Handle POST request
     try:
         data = request.json
         uid = data.get('user_id')
