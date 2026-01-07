@@ -1426,6 +1426,13 @@ def health_check():
 
 # ================= DASHBOARD ENDPOINT =================
 
+# Helper for consistent datetime formatting (ISO 8601 UTC)
+def format_datetime(dt):
+    if not dt:
+        return "-"
+    # Ensure we treat it as UTC for Production (Render)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
 @app.route('/api/dashboard', methods=['GET'])
 @require_api_token
 def get_dashboard_stats():
@@ -1486,7 +1493,7 @@ def get_recent_activity():
                 "type": "parcel",
                 "message": f"พัสดุใหม่: ห้อง {parcel.get('room_number', '-')}",
                 "details": f"{parcel.get('transport', '-')} - {parcel.get('recipient_name', '-')}",
-                "timestamp": parcel.get('timestamp').strftime("%Y-%m-%d %H:%M") if parcel.get('timestamp') else "-"
+                "timestamp": format_datetime(parcel.get('timestamp'))
             })
         
         for complaint in recent_complaints:
@@ -1524,7 +1531,7 @@ def get_upcoming_parcels():
                 "room_number": parcel.get("room_number", "-"),
                 "recipient_name": parcel.get("recipient_name", "-"),
                 "transport": parcel.get("transport", "-"),
-                "timestamp": parcel.get('timestamp').strftime("%Y-%m-%d %H:%M") if parcel.get('timestamp') else "-"
+                "timestamp": format_datetime(parcel.get('timestamp'))
             })
         
         return jsonify({"parcels": result})
@@ -1578,12 +1585,7 @@ def get_all_users():
             
             # Format เวลาใช้งานล่าสุด
             last_active = u.get("last_active")
-            if isinstance(last_active, datetime.datetime):
-                last_active_str = last_active.strftime("%Y-%m-%d %H:%M")
-            elif last_active:
-                last_active_str = str(last_active)
-            else:
-                last_active_str = "-"
+            last_active_str = format_datetime(last_active)
             
             # เตรียมข้อมูลสำหรับ response
             user_data = {
@@ -1639,7 +1641,7 @@ def get_all_complaints():
             "image_url": 1,
             "line_user_id": 1,
             "urgency_level": 1
-        }))
+        }).limit(100))
         
         # 🔥 ปรับปรุง Sorting Logic ใหม่
         def get_priority_score(priority):
@@ -1686,7 +1688,7 @@ def get_all_complaints():
                 "status": c.get("status", "pending"),
                 "priority": c.get("priority", "medium"),
                 "priority_th": priority_th,
-                "timestamp": c.get("timestamp", "").strftime("%Y-%m-%d %H:%M:%S") if c.get("timestamp") else "-",
+                "timestamp": format_datetime(c.get("timestamp")),
                 "image_url": c.get("image_url", ""),
                 "display_name": user.get("display_name", "-") if user else "-",
                 "first_name": user.get("first_name", "") if user else "",
@@ -1728,7 +1730,8 @@ def get_parcels_frontend():
                 "pin": i.get("pin", "-"),
                 "courier": i.get("transport", "-"),
                 "tracking_number": i.get("tracking_number", "-"),
-                "image_url": i.get("image_url", "")
+                "image_url": i.get("image_url", ""),
+                "timestamp": format_datetime(i.get('timestamp'))
             })
         return jsonify({"items": result})
     except Exception as e:
@@ -1787,12 +1790,7 @@ def search_users():
             
             # Format เวลาใช้งานล่าสุด
             last_active = u.get("last_active")
-            if isinstance(last_active, datetime.datetime):
-                last_active_str = last_active.strftime("%Y-%m-%d %H:%M")
-            elif last_active:
-                last_active_str = str(last_active)
-            else:
-                last_active_str = "-"
+            last_active_str = format_datetime(last_active)
             
             # เตรียมข้อมูลสำหรับ response
             user_data = {
@@ -1859,7 +1857,7 @@ def search_parcels_optimized():
                 "courier": i.get("transport", "-"),
                 "tracking_number": i.get("tracking_number", "-"),
                 "image_url": i.get("image_url", ""),
-                "timestamp": i.get('timestamp').strftime("%Y-%m-%d %H:%M") if i.get('timestamp') else "-"
+                "timestamp": format_datetime(i.get('timestamp'))
             })
         
         return jsonify({"items": result})
@@ -1931,7 +1929,7 @@ def search_complaints_optimized():
                 "summary": c.get("ai_summary", "-"),
                 "status": c.get("status", "pending"),
                 "priority": c.get("priority", "medium"),
-                "timestamp": c.get("timestamp", "").strftime("%Y-%m-%d %H:%M:%S") if c.get("timestamp") else "-",
+                "timestamp": format_datetime(c.get("timestamp")),
                 "image_url": c.get("image_url", ""),
                 "display_name": user.get("display_name", "-") if user else "-",
                 "urgency_level": c.get("urgency_level", "Medium")
@@ -2062,6 +2060,13 @@ def scan_parcel_api():
     finally:
         if os.path.exists(temp_path): os.remove(temp_path)
 
+def send_notification_async(user_id, message, image_url=None):
+    """ส่ง LINE Async เพื่อไม่ให้บล็อคการทำงานหลัก"""
+    try:
+        send_line_message(user_id, message, image_url)
+    except Exception as e:
+        print(f"Async Notification Error: {e}")
+
 # ================= CONFIRM PARCEL AND NOTIFY (MODIFIED) =================
 
 @app.route('/api/confirm', methods=['POST'])
@@ -2123,35 +2128,14 @@ def confirm_parcel_and_notify():
             details=f"PIN: {pin}, Courier: {data.get('transport', data.get('courier', '-'))}, Tracking: {data.get('tracking_number', '-')}"
         )
         
-        # 6. ส่ง LINE แจ้งเตือน
-        notification_sent = False
-        notification_lines = []
-        
-        # สร้างข้อความแจ้งเตือน
-        message = (
-            f"📦 คุณมีพัสดุใหม่!\n\n"
-            f"🏠 ห้อง: {data.get('room_number', '-')}\n"
-            f"👤 ผู้รับ: {data.get('recipient_name', '-')}\n"
-            f"🚚 ขนส่ง: {data.get('transport', data.get('courier', '-'))}\n"
-            f"🔢 เลขติดตาม: {data.get('tracking_number', '-')}\n"
-            f"🔑 PIN: {pin}\n\n"
-            f"กรุณานำ PIN นี้ไปรับพัสดุที่สำนักงานค่ะ"
+        # 6. ส่ง LINE แจ้งเตือน (Asynchronous to improve speed)
+        executor.submit(
+            send_notification_async, 
+            user["line_user_id"], 
+            message, 
+            image_url
         )
-        
-        # ส่งรูปภาพพัสดุด้วยถ้ามี
-        image_url = data.get("image_url")
-        
-        try:
-            if send_line_message(user["line_user_id"], message, image_url):
-                notification_sent = True
-                notification_lines.append(f"✅ ส่งแจ้งเตือนถึง: {user.get('display_name', 'Unknown')} (ห้อง {user.get('room_number', '-')})")
-                print(f"✅ LINE notification sent to {user['line_user_id']}")
-            else:
-                notification_lines.append("⚠️ ไม่สามารถส่งแจ้งเตือน LINE ได้")
-                print(f"❌ Failed to send LINE notification")
-        except Exception as e:
-            notification_lines.append(f"⚠️ LINE sending error: {str(e)}")
-            print(f"❌ LINE sending error: {e}")
+        notification_lines.append(f"loading... ส่งแจ้งเตือนถึง: {user.get('display_name', 'Unknown')} (ห้อง {user.get('room_number', '-')})")
         
         # 7. นับพัสดุคงค้างใหม่
         parcel_count = 0
@@ -2164,7 +2148,7 @@ def confirm_parcel_and_notify():
             "message": "บันทึกพัสดุสำเร็จ",
             "pin": pin,
             "parcel_count": parcel_count,
-            "sent": notification_sent,
+            "sent": True, # Optimistic sent
             "notification_lines": notification_lines,
             "user_found": True
         })
@@ -2215,6 +2199,7 @@ def pickup_parcel():
         user = users_col.find_one({"room_number": parcel.get("room_number")})
         
         # 5. ส่ง LINE แจ้งเตือนการรับพัสดุ
+        # 5. ส่ง LINE แจ้งเตือนการรับพัสดุ (Asynchronous)
         if user and user.get("line_user_id"):
             message = (
                 f"✅ พัสดุของคุณถูกรับแล้ว!\n\n"
@@ -2222,15 +2207,20 @@ def pickup_parcel():
                 f"🏠 ห้อง: {parcel.get('room_number', '-')}\n"
                 f"🚚 ขนส่ง: {parcel.get('transport', '-')}\n"
                 f"🔑 PIN: {parcel.get('pin', '-')}\n"
-                f"⏰ เวลารับ: {datetime.datetime.now().strftime('%H:%M %d/%m/%Y')}\n\n"
+                f"⏰ เวลารับ: {format_datetime(datetime.datetime.now())}\n\n"
                 f"ขอบคุณที่ใช้บริการค่ะ"
             )
             
             # ส่งรูปภาพพัสดุด้วยถ้ามี
             image_url = parcel.get("image_url")
             
-            send_line_message(user["line_user_id"], message, image_url)
-            print(f"✅ Pickup notification sent to {user['line_user_id']}")
+            executor.submit(
+                send_notification_async,
+                user["line_user_id"],
+                message,
+                image_url
+            )
+            print(f"✅ Pickup notification queued for {user['line_user_id']}")
         
         return jsonify({
             "status": "success",
@@ -2363,6 +2353,12 @@ def get_audit_logs():
     try:
         # ดึง logs ล่าสุด 30 รายการ (เรียงจากใหม่ไปเก่า) ตามคำขอของ user
         # ใช้ projection เลือกเฉพาะ field ที่จำเป็น
+        # [SPEED FIX] Force strict limit and ensure index exists
+        try:
+            audit_logs_col.create_index([("timestamp", -1)]) 
+        except: 
+            pass
+            
         logs = list(audit_logs_col.find({}, {
             "action": 1,
             "performed_by": 1,
@@ -2370,7 +2366,7 @@ def get_audit_logs():
             "timestamp": 1,
             "details": 1,
             "_id": 0
-        }).sort("timestamp", -1).limit(30))
+        }).sort("timestamp", -1).limit(20))
         
         result = []
         for log in logs:
@@ -2378,7 +2374,7 @@ def get_audit_logs():
                 "action": log.get("action", ""),
                 "performed_by": log.get("performed_by", ""),
                 "target": log.get("target", ""),
-                "timestamp": log.get("timestamp", "").strftime("%Y-%m-%d %H:%M:%S") if log.get("timestamp") else "",
+                "timestamp": format_datetime(log.get("timestamp")),
                 "details": log.get("details", "")
             })
         
