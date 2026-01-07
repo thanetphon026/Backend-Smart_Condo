@@ -1,0 +1,10 @@
+Flask
+Flask-CORS
+python-dotenv
+google-genai
+pymongo
+cloudinary
+line-bot-sdk
+requests
+gunicorn
+Werkzeug
