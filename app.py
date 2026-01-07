@@ -2128,20 +2128,34 @@ def confirm_parcel_and_notify():
             details=f"PIN: {pin}, Courier: {data.get('transport', data.get('courier', '-'))}, Tracking: {data.get('tracking_number', '-')}"
         )
         
-        # 6. ส่ง LINE แจ้งเตือน (Asynchronous to improve speed)
+        # 6. นับพัสดุคงค้างใหม่ (Move up to use in message)
+        parcel_count = 0
+        room = data.get("room_number")
+        if room and room != "-":
+            parcel_count = parcels_col.count_documents({"room_number": room, "status": "pending"})
+
+        # 7. สร้างข้อความแจ้งเตือน (Updated with count)
+        message = (
+            f"📦 มีพัสดุมาใหม่ค่ะ!\n\n"
+            f"🏠 ห้อง: {data.get('room_number', '-')}\n"
+            f"🚚 ขนส่ง: {data.get('transport', data.get('courier', '-'))}\n"
+            f"📦 Tracking: {data.get('tracking_number', '-')}\n"
+            f"🔑 PIN: {pin}\n\n"
+            f"📦 รวมพัสดุค้างทั้งหมด: {parcel_count} ชิ้น\n"
+            f"(กรุณาแจ้ง PIN และรับของได้ที่นิติบุคคลค่ะ)"
+        )
+
+        image_url = data.get("image_url")
+
+        # 8. ส่ง LINE แจ้งเตือน (Asynchronous to improve speed)
         executor.submit(
             send_notification_async, 
             user["line_user_id"], 
             message, 
             image_url
         )
-        notification_lines.append(f"loading... ส่งแจ้งเตือนถึง: {user.get('display_name', 'Unknown')} (ห้อง {user.get('room_number', '-')})")
-        
-        # 7. นับพัสดุคงค้างใหม่
-        parcel_count = 0
-        room = data.get("room_number")
-        if room and room != "-":
-            parcel_count = parcels_col.count_documents({"room_number": room, "status": "pending"})
+        notification_lines = []
+        notification_lines.append(f"✅ ส่งแจ้งเตือนถึง: {user.get('display_name', 'Unknown')} (ห้อง {user.get('room_number', '-')})")
         
         return jsonify({
             "status": "saved",
@@ -2150,6 +2164,8 @@ def confirm_parcel_and_notify():
             "parcel_count": parcel_count,
             "sent": True, # Optimistic sent
             "notification_lines": notification_lines,
+            "user_found": True
+        })
             "user_found": True
         })
         
@@ -2333,7 +2349,14 @@ def resolve_complaint(complaint_id):
             message += "\n\nขอบคุณที่แจ้งปัญหาค่ะ 🙏"
             
             # ส่งรูปภาพแก้ไขด้วยถ้ามี
-            send_line_message(user["line_user_id"], message, image_url)
+            # [OPTIMIZED] Use background thread for LINE notification
+            executor.submit(
+                send_notification_async,
+                user["line_user_id"],
+                message,
+                image_url
+            )
+            print(f"✅ Resolve notification queued for {user['line_user_id']}")
         
         return jsonify({
             "status": "success",
