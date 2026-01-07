@@ -127,6 +127,9 @@ try:
             parcels_col.create_index([("pin", 1)])
             parcels_col.create_index([("timestamp", -1)])
             
+            # Audit Logs: สร้าง Index สำหรับ sort timestamp เพื่อให้โหลดเร็ว
+            audit_logs_col.create_index([("timestamp", -1)])
+            
             print("✅ MongoDB Indexes ensured.")
         except Exception as e:
             print(f"⚠️ Failed to create indexes: {e}")
@@ -2362,7 +2365,7 @@ def resolve_complaint(complaint_id):
 def get_audit_logs():
     """ดึง Audit Logs ล่าสุด"""
     try:
-        # ดึง logs ล่าสุด 100 รายการ (เพิ่มจาก 30) เพื่อให้เห็นข้อมูลครอบคลุมขึ้น
+        # ดึง logs ล่าสุด 30 รายการ (เรียงจากใหม่ไปเก่า) ตามคำขอของ user
         # ใช้ projection เลือกเฉพาะ field ที่จำเป็น
         logs = list(audit_logs_col.find({}, {
             "action": 1,
