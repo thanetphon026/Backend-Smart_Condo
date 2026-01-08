@@ -2092,8 +2092,9 @@ def confirm_parcel_and_notify():
 
         image_url = data.get("image_url")
 
-        # 8. ส่งแจ้งเตือน (พหุแพลตฟอร์ม: LINE + Web)
-        notify_user_platform_agnostic(user, message, image_url)
+        # 8. ส่งแจ้งเตือน (พหุแพลตฟอร์ม: LINE + Web) -- [SPEED OPTIMIZATION] Async
+        if user:
+            executor.submit(notify_user_platform_agnostic, user, message, image_url)
 
         notification_lines = []
         notification_lines.append(f"✅ ส่งแจ้งเตือนถึง: {user.get('display_name', 'Unknown')} (ห้อง {user.get('room_number', '-')})")
@@ -2154,8 +2155,9 @@ def pickup_parcel():
         # 4. ค้นหาผู้ใช้จากห้อง
         user = users_col.find_one({"room_number": parcel.get("room_number")})
         
-        # 5. ส่งแจ้งเตือนการรับพัสดุ (พหุแพลตฟอร์ม: LINE + Web)
-        notify_user_platform_agnostic(user, message, image_url)
+        # 5. ส่งแจ้งเตือนการรับพัสดุ (พหุแพลตฟอร์ม: LINE + Web) -- [SPEED OPTIMIZATION] Async
+        if user:
+            executor.submit(notify_user_platform_agnostic, user, message, image_url)
         
         return jsonify({
             "status": "success",
@@ -2250,8 +2252,12 @@ def resolve_complaint(complaint_id):
                 finally:
                     if os.path.exists(temp_path): os.remove(temp_path)
         
-        # 6. ส่งแจ้งเตือนไปยังผู้ใช้ (พหุแพลตฟอร์ม: LINE + Web)
-        notify_user_platform_agnostic(user, message, image_url)
+        # 6. ส่งแจ้งเตือนไปยังผู้ใช้ (พหุแพลตฟอร์ม: LINE + Web) -- [FIX] Fetch user first & Async
+        user = users_col.find_one({"line_user_id": complaint.get("line_user_id")})
+        
+        # [SPEED OPTIMIZATION] Offload notification to background thread
+        if user:
+            executor.submit(notify_user_platform_agnostic, user, message, image_url)
         
         return jsonify({
             "status": "success",
