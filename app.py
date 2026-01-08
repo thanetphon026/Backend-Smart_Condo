@@ -5,7 +5,7 @@ import tempfile
 import random
 import time
 import base64
-from functools import wraps
+from functools import wraps, lru_cache
 from bson import ObjectId
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
@@ -113,7 +113,7 @@ try:
         """สร้าง Indexes เพื่อเพิ่มความเร็วในการค้นหา"""
         try:
             # Users: ค้นหาตาม line_user_id และ platform
-            users_col.create_index([("line_user_id", 1)])
+            users_col.create_index([("line_user_id", 1)], unique=True)
             users_col.create_index([("platform", 1)])
             users_col.create_index([("last_active", -1)])
             
@@ -125,7 +125,7 @@ try:
             
             # Parcels: ค้นหาตาม status, pin, timestamp
             parcels_col.create_index([("status", 1)])
-            parcels_col.create_index([("pin", 1)])
+            parcels_col.create_index([("pin", 1)], unique=True)
             parcels_col.create_index([("timestamp", -1)])
             
             # Audit Logs: สร้าง Index สำหรับ sort timestamp เพื่อให้โหลดเร็ว
@@ -170,20 +170,16 @@ def create_indexes():
         # Parcels indexes
         parcels_col.create_index([("status", 1), ("timestamp", -1)])
         parcels_col.create_index([("room_number", 1)])
-        parcels_col.create_index([("pin", 1)])
+        parcels_col.create_index([("pin", 1)], unique=True)
         
         # Complaints indexes
         complaints_col.create_index([("status", 1), ("priority", -1), ("timestamp", -1)])
         complaints_col.create_index([("room_number", 1)])
         # line_user_id มักมีอยู่แล้วเป็น unique index ให้ข้ามถ้าซ้ำ
-        try:
-            complaints_col.create_index([("line_user_id", 1)])
-        except: pass
+        complaints_col.create_index([("line_user_id", 1)], unique=True)
         
         # Users indexes
-        try:
-            users_col.create_index([("line_user_id", 1)])
-        except: pass
+        users_col.create_index([("line_user_id", 1)], unique=True)
         users_col.create_index([("room_number", 1)])
         
         # Chat history indexes
