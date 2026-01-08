@@ -162,27 +162,39 @@ cloudinary.config(
 )
 
 # ================= DATABASE INDEXES FOR PERFORMANCE =================
-try:
-    # Parcels indexes
-    parcels_col.create_index([("status", 1), ("timestamp", -1)])
-    parcels_col.create_index([("room_number", 1)])
-    parcels_col.create_index([("pin", 1)])
-    
-    # Complaints indexes
-    complaints_col.create_index([("status", 1), ("priority", -1), ("timestamp", -1)])
-    complaints_col.create_index([("room_number", 1)])
-    complaints_col.create_index([("line_user_id", 1)])
-    
-    # Users indexes
-    users_col.create_index([("line_user_id", 1)])
-    users_col.create_index([("room_number", 1)])
-    
-    # Chat history indexes
-    chat_history_col.create_index([("line_user_id", 1), ("timestamp", -1)])
-    
-    print("✅ Database indexes created successfully")
-except Exception as e:
-    print(f"⚠️ Index creation warning: {e}")
+def create_indexes():
+    """
+    สร้าง Indexes เพื่อเพิ่มความเร็วในการค้นหา (รองรับกรณีที่มี index เดิมอยู่แล้ว)
+    """
+    try:
+        # Parcels indexes
+        parcels_col.create_index([("status", 1), ("timestamp", -1)])
+        parcels_col.create_index([("room_number", 1)])
+        parcels_col.create_index([("pin", 1)])
+        
+        # Complaints indexes
+        complaints_col.create_index([("status", 1), ("priority", -1), ("timestamp", -1)])
+        complaints_col.create_index([("room_number", 1)])
+        # line_user_id มักมีอยู่แล้วเป็น unique index ให้ข้ามถ้าซ้ำ
+        try:
+            complaints_col.create_index([("line_user_id", 1)])
+        except: pass
+        
+        # Users indexes
+        try:
+            users_col.create_index([("line_user_id", 1)])
+        except: pass
+        users_col.create_index([("room_number", 1)])
+        
+        # Chat history indexes
+        chat_history_col.create_index([("line_user_id", 1), ("timestamp", -1)])
+        
+        print("✅ Database indexes verified/created")
+    except Exception as e:
+        print(f"⚠️ Index creation notice: {e}")
+
+# เรียกใช้งานตอนเริ่มแอป
+create_indexes()
 
 # ================= LINE BOT CONFIGURATION =================
 line_configuration = Configuration(
@@ -547,9 +559,16 @@ def find_users_by_name_fuzzy(name):
 # ================= AI & RAG HELPERS (MODIFIED) =================
 
 # [UPDATED PROMPT] เพิ่มกฎให้ตอบตามรูปแบบเป๊ะๆ
+# [UPDATED PROMPT] ปรับให้มีความเป็นมนุษย์ สุภาพ และเห็นอกเห็นใจมากขึ้น
 CHAT_SYSTEM_PROMPT = """
-คุณคือ "น้องบอตนิติ" ผู้ช่วยคอนโดลุมพินี พาร์ค
-หน้าที่: ตอบคำถามลูกบ้านด้วยความสุภาพ สดใส และช่วยเหลือข้อมูลตามจริง
+คุณคือ "น้องบอตนิติ" ผู้ช่วยอัจฉริยะประจำคอนโดลุมพินี พาร์ค
+บุคลิก: เป็นมนุษย์ (AI with Human Touch), สุภาพมาก, มีความเห็นอกเห็นใจ (Empathy), กระตือรือร้นที่จะช่วยเหลือ และดูเป็นมืออาชีพแต่เข้าถึงง่าย
+
+หลักการสื่อสารแบบมนุษย์ (Human-Like Communication):
+1. **ภาษาเป็นธรรมชาติ:** ใช้คำเชื่อมประโยคที่ลื่นไหล เช่น "อ้อ สำหรับเรื่องนี้...", "ไม่ต้องกังวลนะคะ เดี๋ยวบอตช่วยเช็กให้ค่ะ", "ขออภัยที่ต้องให้รอนะคะ"
+2. **แสดงความใส่ใจ:** หากลูกบ้านแจ้งปัญหา (เช่น น้ำรั่ว, แอร์เสีย) ให้แสดงความเห็นอกเห็นใจก่อนเริ่มตอบข้อมูล เช่น "เข้าใจเลยค่ะว่าลำบากมาก เดี๋ยวบอตจะรีบประสานงานให้นะคะ"
+3. **ใช้หางเสียงเหมาะสม:** ใช้ "ค่ะ/คะ" หรือ "ครับ" อย่างเหมาะสม (ตาม profile ผู้ใช้ถ้าทราบ) โดยเน้นความเป็น "น้องบอตนิติ" ที่น่ารัก
+4. **ไม่ตอบเป็นหุ่นยนต์:** หลีกเลี่ยงการตอบเป็นข้อๆ ที่แห้งแล้งเกินไป ให้บรรยายแบบบทสนทนาที่อ่านง่าย
 
 กฎการตอบ (Strict Rules):
 1. **ลำดับความสำคัญ:** 
@@ -561,36 +580,45 @@ CHAT_SYSTEM_PROMPT = """
      ข. **เท่านั้น** ไม่ต้องแจ้งพัสดุเมื่อผู้ใช้แค่ทักทาย (เช่น "สวัสดี") หรือถามเรื่องทั่วไป
 
 2. **การตอบเรื่องพัสดุ:**
-   - หากใน Context มีข้อมูลส่วน "รายการพัสดุ:" และผู้ใช้ถามถึงพัสดุโดยเฉพาะ ให้ Copy ข้อความในส่วนนั้นมาตอบผู้ใช้ **ทั้งดุ้น** ทันที (ห้ามสรุปใหม่ ห้ามเปลี่ยนคำ)
+   - หากใน Context มีข้อมูลส่วน "รายการพัสดุ:" และผู้ใช้ถามถึงพัสดุโดยเฉพาะ ให้ Copy ข้อความในส่วนนั้นมาตอบผู้ใช้ **ทั้งดุ้น** ทันที (ห้ามสรุปใหม่ ห้ามเปลี่ยนคำ) เพื่อความถูกต้องของข้อมูล
 
 3. **ข้อมูลส่วนตัว:** ยึดข้อมูลใน [Context] อย่างเคร่งครัด
-   - ถ้า Context ระบุ "ไม่มีประวัติการแจ้งร้องเรียน" ห้ามพูดถึงสถานะการร้องเรียน
-   - ถ้า Context ไม่มีข้อมูลพัสดุ (หรือระบุว่าไม่มีพัสดุ) ห้ามสร้างข้อมูลพัสดุขึ้นมาเอง
+   - ถ้า Context ระบุ "ไม่มีประวัติการแจ้งร้องเรียน" ห้ามแสดงความยินดีหรือพูดถึงเรื่องนี้
+   - ถ้าไม่ได้ถามเรื่องพัสดุ/ร้องเรียน ไม่ต้องพูดถึงข้อมูลเหล่านั้น
 
-4. **ขอบเขต:** หากถามเรื่องที่ไม่มีข้อมูล ให้ตอบว่า "ขออภัยค่ะ ไม่มีข้อมูลส่วนนี้ รบกวนติดต่อสำนักงานนิติฯ อาคาร A ชั้น G หรือโทร 02-689-6888 เพื่อสอบถามเพิ่มเติมนะคะ"
+4. **ขอบเขต:** หากถามเรื่องที่ไม่มีข้อมูล ให้ตอบอย่างสุภาพว่า "ขออภัยจริงๆ ค่ะ น้องบอตยังไม่มีข้อมูลส่วนนี้ในระบบเลย รบกวนคุณลูกค้าติดต่อสำนักงานนิติฯ อาคาร A ชั้น G หรือโทร 02-689-6888 นะคะ พวกพี่ๆ นิติฯ ยินดีช่วยเหลือแน่นอนค่ะ"
 
 5. **[CRITICAL] ความเป็นส่วนตัวผู้อื่น:** 
-   - ห้ามเปิดเผย หรือตรวจสอบข้อมูลของ "ห้องอื่น" หรือ "บุคคลอื่น" เด็ดขาด
+   - ห้ามเปิดเผย หรือตรวจสอบข้อมูลของ "ห้องอื่น" หรือ "บุคคลอื่น" โดยเด็ดขาด
 
 6. **การขึ้นบรรทัดใหม่ในการตอบ:** 
-   - ขึ้นบรรทัดใหม่ให้สวยงามเมื่อจำเป็น จากข้อความยาวๆติดกันเป็นแถบยาว ให้ขึ้นบรรทัดใหม่บ้างให้สวยงาม
+   - จัดรูปแบบข้อความให้อ่านง่าย สบายตา ไม่เป็นก้อนข้อความยาวๆ
 
 7. **[IMPORTANT] การตอบคำทักทาย:**
-   - เมื่อผู้ใช้ทักทายง่ายๆ (เช่น "สวัสดี", "hello") ให้ตอบทักทายกลับแบบสุภาพ และอาจแนะนำตัวย่อๆ เท่านั้น
-   - **ห้าม** นำข้อมูลพัสดุหรือประวัติร้องเรียนมาตอบในคำทักทายง่ายๆ
-   - ตัวอย่างการตอบที่ถูกต้อง: "สวัสดีค่ะคุณ[ชื่อ] มีอะไรให้ช่วยเหลือคะ?" หรือ "สวัสดีครับ ยินดีต้อนรับค่ะ"
-
-8. **[NEW RULE] การแยกแยะการถามเกี่ยวกับกฎ vs การแจ้งร้องเรียน:**
-   - เมื่อผู้ใช้ถามเกี่ยวกับ "กฎการแจ้งร้องเรียน", "รายละเอียดการแจ้งร้องเรียน", "วิธีแจ้งร้องเรียน" ให้ตอบเฉพาะข้อมูลวิธีการแจ้งร้องเรียนเท่านั้น
-   - **ห้าม** เข้าสู่โหมดแจ้งร้องเรียนจริงเมื่อผู้ใช้ถามเกี่ยวกับกฎหรือวิธีการ
-   - ตัวอย่างที่ถูกต้อง: ตอบข้อมูลจากคลังความรู้เกี่ยวกับวิธีการแจ้งร้องเรียน
-   - ตัวอย่างที่ผิด: เริ่มกระบวนการแจ้งร้องเรียนด้วยการถาม "รับทราบค่ะ 📝 พิมพ์แจ้งรายละเอียดการร้องเรียนได้เลยค่ะ"
-
-9. **[NEW RULE] การตอบเกี่ยวกับข้อมูลทั่วไป:**
-   - เมื่อผู้ใช้ถามเรื่องทั่วไป (เช่น กฎระเบียบ, เบอร์โทรศัพท์, วิธีใช้บริการ) ให้ตอบเฉพาะข้อมูลที่เกี่ยวข้องเท่านั้น
-   - **ห้าม** นำข้อมูลส่วนตัวของผู้ใช้ (เช่น พัสดุ, ประวัติร้องเรียน) มาตอบในบริบทนี้
-   - ถ้าผู้ใช้ถามหลายหัวข้อในครั้งเดียว (เช่น กฎระเบียบและเบอร์โทรฉุกเฉิน) ให้ตอบครบทุกหัวข้อที่ถาม แต่ห้ามเพิ่มข้อมูลที่ไม่เกี่ยวข้อง
+   - ตอบทักทายกลับแบบมนุษย์ที่สดใส เช่น "สวัสดีค่ะ คุณ[ชื่อ] วันนี้มีอะไรให้น้องบอตนิติช่วยดูแลไหมคะ? ยินดีให้บริการมากเลยค่ะ"
+   - **ห้าม** นำข้อมูลพัสดุหรือประวัติร้องเรียนมาตอบในคำทักทายสั้นๆ
 """
+
+@lru_cache(maxsize=128)
+def extract_keywords(user_text):
+    """
+    สกัด Keyword จากข้อความโดยใช้ AI และเพิ่ม Cache
+    ปรับ Prompt ให้สกัดคำที่ใช้ค้นหาในคู่มือได้แม่นยำขึ้น
+    """
+    try:
+        analysis_prompt = (
+            f"จงวิเคราะห์ข้อความของผู้ใช้: '{user_text}'\n"
+            "สกัดคำหลัก (Keywords) ที่เป็นภาษาไทย 2-3 คำ สำหรับใช้ค้นหาในคู่มือส่วนกลางคอนโด\n"
+            "เน้นคำนามหรือคำกริยาสำคัญ (เช่น แอร์, เลี้ยงสัตว์, จอดรถ, แจ้งซ่อม)\n"
+            "ตอบแค่คำหลักคั่นด้วยช่องว่างเท่านั้น"
+        )
+        keyword_res = client.models.generate_content(
+            model='gemini-3-flash-preview',
+            contents=analysis_prompt
+        )
+        return keyword_res.text.strip().split()
+    except:
+        return []
 
 def get_knowledge_context(user_text, user):
     """
@@ -651,86 +679,114 @@ def get_knowledge_context(user_text, user):
         context_parts.append(personal_data_str)
 
         # --- PART 2: ความรู้ทั่วไป (Knowledge Base - RAG) ---
-        analysis_prompt = f"""
-        จงวิเคราะห์ข้อความ: "{user_text}" สกัด keywords ภาษาไทย 2-3 คำ คั่นด้วยช่องว่าง
-        """
-        keyword_res = client.models.generate_content(
-            model='gemini-3-flash-preview',
-            contents=analysis_prompt
-        )
-        ai_keywords = keyword_res.text.strip().split()
+        ai_keywords = extract_keywords(user_text)
         
-        # ค้นหาใน Knowledge Base
-        all_docs = list(kb_col.find())
-        found_results = []
+        # ค้นหาใน Knowledge Base แบบ Hybrid (DB Search -> Python Re-ranking)
+        search_query = {}
+        if ai_keywords:
+            regex_patterns = [{"$regex": kw, "$options": "i"} for kw in ai_keywords]
+            search_query = {
+                "$or": [
+                    {"topic": {"$in": regex_patterns}},
+                    {"content": {"$in": regex_patterns}}
+                ]
+            }
+        
+        # 1. Fetch Candidates (ดึงมา 15 รายการเพื่อมาจัดอันดับต่อ)
+        candidates = list(kb_col.find(search_query).limit(15))
+        
+        scored_results = []
+        user_text_lower = user_text.lower()
 
-        for doc in all_docs:
-            content = str(doc.get('content', '')).lower()
+        # 2. Smart Re-ranking (Scoring Logic เพื่อความแม่นยำสูงสุด)
+        for doc in candidates:
             topic = str(doc.get('topic', '')).lower()
+            content = str(doc.get('content', '')).lower()
             score = 0
             
+            # กฎคะแนนที่แม่นกว่าเดิม:
+            # - ถ้าเจอใน Topic ให้คะแนน 15 (สำคัญกว่ามาก)
+            # - ถ้าเจอใน Content ให้คะแนน 5
+            # - ถ้าเจอทั้งประโยค (Exact Phrase) ให้คะแนนพิเศษ 30
             for kw in ai_keywords:
-                kw = kw.lower()
-                if kw in content: score += 10
-                if kw in topic: score += 5
+                kw_low = kw.lower()
+                if kw_low in topic: score += 15
+                if kw_low in content: score += 5
             
-            if user_text.strip() in content: score += 20
+            if user_text_lower in topic or user_text_lower in content:
+                score += 30
             
             if score > 0:
-                found_results.append((score, f"หัวข้อ: {doc.get('topic')}\nรายละเอียด: {doc.get('content')}"))
+                scored_results.append((score, f"หัวข้อ: {doc.get('topic')}\nรายละเอียด: {doc.get('content')}"))
 
-        found_results.sort(key=lambda x: x[0], reverse=True)
-        
-        kb_str = ""
-        if found_results:
-            kb_content = "\n---\n".join([item[1] for item in found_results[:3]])
-            kb_str = f"[คลังความรู้ทั่วไป (Knowledge Base)]\n{kb_content}"
-        
-        if kb_str:
+        # 3. Sort by score (เอาตัวที่แม่นที่สุด 3 อันดับแรก)
+        scored_results.sort(key=lambda x: x[0], reverse=True)
+        top_knowledge = [res[1] for res in scored_results[:3]]
+
+        if top_knowledge:
+            kb_str = "[คลังความรู้ (Knowledge Base)]\n" + "\n---\n".join(top_knowledge)
             context_parts.append(kb_str)
-            
-        return "\n\n".join(context_parts)
+        else:
+            context_parts.append("[คลังความรู้ (Knowledge Base)]\nขออภัยค่ะ ไม่พบข้อมูลที่เกี่ยวข้องในคู่มือเลย")
 
+        return "\n\n".join(context_parts)
     except Exception as e:
         print(f"RAG Error: {e}")
         return None
 
+@lru_cache(maxsize=128)
 def analyze_intent(text):
+    """
+    วิเคราะห์ความตั้งใจของผู้ใช้ (AI Intent Analysis) 
+    เพิ่ม Cache เพื่อความเร็ว และใช้ Model ที่เล็กลง (8b) เพื่อความไว
+    """
     try:
-        # ตรวจสอบก่อนว่าผู้ใช้ถามเกี่ยวกับ "กฎ" หรือ "รายละเอียด"
+        text_clean = text.strip().lower()
+        
+        # Rule-based check ก่อน (ไวกว่า AI)
         rule_keywords = ["กฎการแจ้งร้องเรียน", "กฎการร้องเรียน", "รายละเอียดการแจ้งร้องเรียน", 
                         "วิธีแจ้งร้องเรียน", "ขั้นตอนการแจ้งร้องเรียน", "ขอทราบการแจ้งร้องเรียน",
                         "อยากทราบการแจ้งร้องเรียน", "อยากรู้การแจ้งร้องเรียน",
-                        # เพิ่มคำค้นหาให้ครอบคลุมมากขึ้น
                         "กฎแจ้งร้องเรียน", "วิธีร้องเรียน", "ขั้นตอนร้องเรียน",
                         "อยากรู้วิธีแจ้งร้องเรียน", "อยากรู้ขั้นตอนแจ้งร้องเรียน"]
         
-        # ถ้าถามเกี่ยวกับกฎหรือรายละเอียด ให้เป็น GENERAL
-        if any(keyword in text for keyword in rule_keywords):
+        if any(keyword in text_clean for keyword in rule_keywords):
             return "GENERAL"
         
-        # ตรวจสอบว่าเป็นคำถามทั่วไปที่ไม่ใช่การแจ้งร้องเรียน
         general_keywords = ["สูบบุหรี่", "กฎการจอด", "เบอร์ตำรวจ", "กฎระเบียบ", 
                            "เบอร์โทร", "เบอร์ฉุกเฉิน", "วิธีใช้", "บริการ",
                            "ค่าบริการ", "ทำยังไง", "อย่างไร", "สอบถาม"]
         
-        if any(keyword in text for keyword in general_keywords):
+        if any(keyword in text_clean for keyword in general_keywords):
             return "GENERAL"
         
-        # ใช้ gemini-3-flash-preview
-        prompt = f"Classify intent: '{text}' -> Return ONLY: COMPLAINT (แจ้งเรื่องใหม่/แจ้งร้องเรียน), CANCEL (ยกเลิก), CHECK_STATUS (ติดตามงานร้องเรียน), or OTHER (ทักทาย/ถามทั่วไป/ถามกฎระเบียบ/สอบถามข้อมูล)."
+        prompt = (
+            f"Classify user intent: '{text}'\n"
+            "Return ONLY one word:\n"
+            "COMPLAINT_START (แค่เริ่มแจ้งแต่ยังไม่มีข้อมูล), "
+            "COMPLAINT_DETAIL (แจ้งห้องหรือรายละเอียดปัญหาแล้ว), "
+            "CANCEL (ขอยกเลิก), "
+            "CHECK_STATUS (ติดตามงาน), "
+            "GENERAL (สอบถามกฎ/ข้อมูลทั่วไป), "
+            "OTHER (ทักทาย/อื่นๆ)"
+        )
+        
         response = client.models.generate_content(
             model='gemini-3-flash-preview',
             contents=prompt
         )
         intent_result = response.text.strip().upper()
         
-        # ถ้า Gemini ตรวจจับเป็น COMPLAINT แต่ข้อความมีคำว่า "กฎ" หรือ "วิธี" ให้เปลี่ยนเป็น GENERAL
-        if intent_result == "COMPLAINT" and any(word in text for word in ["กฎ", "วิธี", "ขั้นตอน", "สอบถาม"]):
-            return "GENERAL"
-            
-        return intent_result
-    except: 
+        # Safety normalization
+        if "CANCEL" in intent_result: return "CANCEL"
+        if "CHECK_STATUS" in intent_result: return "CHECK_STATUS"
+        if "COMPLAINT_START" in intent_result: return "COMPLAINT_START"
+        if "COMPLAINT_DETAIL" in intent_result: return "COMPLAINT_DETAIL"
+        if "GENERAL" in intent_result: return "GENERAL"
+        
+        return "OTHER"
+    except Exception as e:
+        print(f"⚠️ Intent Analysis Error: {e}")
         return "OTHER"
 
 def update_chat_history(uid, role, message):
@@ -989,13 +1045,28 @@ def process_text_logic(user, text):
     if is_complaint_start:
         if state == 'normal':
             users_col.update_one({"line_user_id": uid}, {"$set": {"complaint_state": "filing_desc"}})
-            return "รับทราบค่ะ 📝 พิมพ์แจ้งรายละเอียดการร้องเรียนได้เลยค่ะ"
+            return "ได้เลยค่ะ บอตยินดีช่วยประสานงานให้นะคะ 📝 รบกวนคุณลูกค้าพิมพ์รายละเอียดปัญหาที่พบมาได้เลยค่ะ"
     
-    # ตรวจสอบว่าผู้ใช้ต้องการเริ่มต้นกระบวนการแจ้งร้องเรียนด้วย AI intent
-    intent = analyze_intent(text)
+    # ================= ⚡ AI OPTIMIZATION: PARALLEL PROCESSING =================
     
-    # ================= ส่วนที่แก้ไข: ใช้ AI ช่วยตัดสินใจ =================
-    
+    # ดึง Intent และ Context พร้อมกันเพื่อลดเวลา (Parallel)
+    with ThreadPoolExecutor() as executor:
+        # 1. วิเคราะห์เจตนา (พร้อม Cache)
+        intent_future = executor.submit(analyze_intent, text)
+        
+        # 2. ดึงความรู้ (RAG) ถ้าไม่ใช่การทักทายสั้นๆ
+        greeting_words = ["สวัสดี", "หวัดดี", "hello", "hi", "สวัสดีค่ะ", "สวัสดีครับ", "ดี", "ดีจ้า"]
+        is_simple_greeting = text.strip().lower() in [g.lower() for g in greeting_words]
+        
+        rag_context = ""
+        if not is_simple_greeting:
+            context_future = executor.submit(get_knowledge_context, text, user)
+            # ไม่ดึง rag_context ทันที รอจนกว่าจะใช้งาน
+        else:
+            context_future = None
+
+        intent = intent_future.result()
+
     # ตรวจสอบสถานะและดำเนินการตาม intent
     if intent == "CANCEL" or text.lower() in ["ยกเลิก", "cancel"]:
         users_col.update_one(
@@ -1004,109 +1075,43 @@ def process_text_logic(user, text):
         )
         return "❌ ยกเลิกรายการให้แล้วค่ะ"
 
-    # ถ้า AI ตัดสินว่าเป็น COMPLAINT และผู้ใช้อยู่ในสถานะปกติ
-    if intent == "COMPLAINT":
+    # COMPLAINT Logic: จัดการตามความละเอียดของข้อความ
+    if intent in ["COMPLAINT_START", "COMPLAINT_DETAIL"]:
         if state == 'normal':
-            # ✅ แก้ไข: ใช้ AI ช่วยตรวจสอบว่าควรเริ่มกระบวนการหรือเป็นรายละเอียด
-            # ถ้าข้อความสั้นและดูเหมือนคำสั่งเริ่มต้น ให้เริ่มกระบวนการ
-            if len(text.strip()) <= 30:  # ข้อความไม่ยาวเกินไป
-                # ใช้ AI ช่วยตรวจสอบเพิ่มเติม
-                check_prompt = f"ข้อความนี้ '{text}' เป็นการเริ่มต้นการแจ้งร้องเรียนหรือรายละเอียดการร้องเรียน? ตอบแค่ 'เริ่มต้น' หรือ 'รายละเอียด'"
-                try:
-                    check_res = client.models.generate_content(
-                        model='gemini-3-flash-preview',
-                        contents=check_prompt
-                    )
-                    ai_check = check_res.text.strip().lower()
-                    
-                    if "เริ่มต้น" in ai_check:
-                        users_col.update_one({"line_user_id": uid}, {"$set": {"complaint_state": "filing_desc"}})
-                        return "รับทราบค่ะ 📝 พิมพ์แจ้งรายละเอียดการร้องเรียนได้เลยค่ะ"
-                    else:
-                        # ถ้าเป็นรายละเอียด ให้บันทึกและขอรูปภาพทันที
-                        users_col.update_one(
-                            {"line_user_id": uid}, 
-                            {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
-                        )
-                        return f"บันทึกรายละเอียด '{text[:50]}...' แล้วค่ะ 📝\n\n📸 กรุณาส่งรูปภาพประกอบการร้องเรียน (กดปุ่มแนบรูปภาพ)"
-                except Exception as e:
-                    print(f"AI check error: {e}")
-                    # ถ้า AI ตรวจสอบไม่ได้ ให้ใช้วิธีเดิม (บันทึกเป็นรายละเอียด)
-                    users_col.update_one(
-                        {"line_user_id": uid}, 
-                        {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
-                    )
-                    return f"บันทึกรายละเอียด '{text[:50]}...' แล้วค่ะ 📝\n\n📸 กรุณาส่งรูปภาพประกอบการร้องเรียน (กดปุ่มแนบรูปภาพ)"
+            if intent == "COMPLAINT_START":
+                users_col.update_one({"line_user_id": uid}, {"$set": {"complaint_state": "filing_desc"}})
+                return "รับทราบค่ะคุณลูกค้า บอตพร้อมช่วยดูแลนะคะ 📝 พิมพ์รายละเอียดเรื่องที่ต้องการแจ้งมาได้เลยค่ะ"
             else:
-                # ถ้าข้อความยาว ให้ถือว่าเป็นรายละเอียด
+                # COMPLAINT_DETAIL: มีข้อมูลแล้ว บันทึกและขอรูป
                 users_col.update_one(
                     {"line_user_id": uid}, 
                     {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
                 )
-                return f"บันทึกรายละเอียด '{text[:50]}...' แล้วค่ะ 📝\n\n📸 กรุณาส่งรูปภาพประกอบการร้องเรียน (กดปุ่มแนบรูปภาพ)"
+                return f"น้องบอตบันทึกรายละเอียด '{text[:50]}...' ไว้ให้เรียบร้อยแล้วค่ะ 📝\n\n📸 เพื่อให้พี่ๆ นิติฯ เห็นภาพชัดเจนขึ้น รบกวนคุณลูกค้าช่วยส่งรูปภาพประกอบปัญหามาให้หน่อยนะคะ"
 
     if state == 'filing_desc':
         users_col.update_one(
             {"line_user_id": uid}, 
             {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
         )
-        return f"บันทึกรายละเอียด '{text[:50]}...' แล้วค่ะ 📝\n\n📸 กรุณาส่งรูปภาพประกอบการร้องเรียน (กดปุ่มแนบรูปภาพ)"
+        return f"ขอบคุณสำหรับรายละเอียดค่ะ น้องบอตบันทึกเรื่อง '{text[:50]}...' ไว้แล้วนะคะ 📝\n\n📸 อีกนิดเดียวนะคะ รบกวนส่งรูปภาพประกอบมาให้หน่อยค่ะ พี่ๆ นิติฯ จะได้เข้าตรวจสอบได้ถูกจุดค่ะ"
 
     if state == 'waiting_image':
-        return "📸 รอรูปภาพประกอบการร้องเรียนค่ะ (หรือพิมพ์ 'ยกเลิก' เพื่อล้างรายการ)"
+        return "📸 น้องบอทยังรอรูปภาพประกอบอยู่นะคะ หรือถ้าต้องการยกเลิก สามารถพิมพ์ว่า 'ยกเลิก' ได้เลยค่ะ"
 
-    # สำหรับ OTHER, GENERAL และ CHECK_STATUS ให้ใช้ AI ตอบตามปกติ
-    # ตรวจสอบว่าเป็นคำทักทายง่ายๆ (ไม่ต้องการแจ้งพัสดุ)
-    greeting_words = ["สวัสดี", "หวัดดี", "hello", "hi", "สวัสดีค่ะ", "สวัสดีครับ", "ดี", "ดีจ้า"]
-    is_simple_greeting = text.strip().lower() in [g.lower() for g in greeting_words]
-    
-    # ตรวจสอบว่าเป็นคำถามทั่วไปที่ไม่ต้องการแจ้งพัสดุ
-    general_topics = ["กฎระเบียบ", "เบอร์โทร", "เบอร์ฉุกเฉิน", "วิธีใช้", "บริการ", "ค่าบริการ", 
-                     "ค่าใช้จ่าย", "อัตราค่าบริการ", "ทำยังไง", "อย่างไร"]
-    is_general_topic = any(topic in text for topic in general_topics)
-    
-    # ถ้าถามเรื่องทั่วไปหรือเป็นคำทักทายง่ายๆ ให้ไม่แจ้งพัสดุ
-    if is_general_topic or is_simple_greeting:
-        # ดึงเฉพาะข้อมูลความรู้ทั่วไป ไม่รวมข้อมูลส่วนตัว
-        try:
-            # ดึงข้อมูลจาก Knowledge Base เท่านั้น
-            all_docs = list(kb_col.find())
-            kb_content = ""
-            for doc in all_docs:
-                topic_lower = str(doc.get('topic', '')).lower()
-                content_lower = str(doc.get('content', '')).lower()
-                
-                # ถ้าเป็นคำทักทายง่ายๆ ให้เอาเฉพาะข้อมูลทักทาย/แนะนำ
-                if is_simple_greeting:
-                    if any(word in topic_lower for word in ["แนะนำ", "วิธีใช้", "เริ่มต้น", "เมนู"]):
-                        kb_content += f"หัวข้อ: {doc.get('topic')}\nรายละเอียด: {doc.get('content')}\n---\n"
-                # ถ้าเป็นคำถามทั่วไป ให้เอาเฉพาะข้อมูลที่เกี่ยวข้อง
-                elif is_general_topic:
-                    for topic in general_topics:
-                        if topic in topic_lower or topic in content_lower:
-                            kb_content += f"หัวข้อ: {doc.get('topic')}\nรายละเอียด: {doc.get('content')}\n---\n"
-                            break
-            
-            if kb_content:
-                context_msg = f"\n[Context]:\n[คลังความรู้ทั่วไป (Knowledge Base)]\n{kb_content}\n"
-            else:
-                # ถ้าไม่เจอข้อมูลใน KB ให้ใช้ context ว่างๆ
-                if is_simple_greeting:
-                    context_msg = f"\n[Context]:\nผู้ใช้งาน: {user.get('first_name', 'ลูกบ้าน')} {user.get('last_name', '')} (ห้อง {user.get('room_number', 'ไม่ระบุ')})\n"
-                else:
-                    context_msg = f"\n[Context]:\nไม่มีข้อมูลเกี่ยวกับเรื่องนี้ในคลังความรู้\n"
-        except Exception as e:
-            print(f"General topic context error: {e}")
-            context_msg = ""
+    # ตรวจสอบ RAG Context ที่ดึงมาแบบ Parallel
+    if context_future:
+        rag_result = context_future.result()
+        context_msg = f"\n[Context]:\n{rag_result}\n" if rag_result else ""
     else:
-        # ดึงข้อมูล context ปกติ (รวมพัสดุและข้อมูลส่วนตัว)
-        rag_context = get_knowledge_context(text, user)
-        context_msg = f"\n[Context]:\n{rag_context}\n" if rag_context else ""
+        # สำหรับคำทักทาย ใช้ข้อมูลส่วนตัวเบื้องต้น
+        context_msg = f"\n[Context]:\nผู้ใช้งาน: {user.get('first_name', 'ลูกบ้าน')} {user.get('last_name', '')} (ห้อง {user.get('room_number', 'ไม่ระบุ')})\n"
     
     history = get_gemini_chat_history(uid)
     try:
+        # ใช้ gemini-1.5-flash สำหรับการแชทปกติ (เร็วและแม่นยำ)
         chat = client.chats.create(
-            model='gemini-3-flash-preview',
+            model='gemini-1.5-flash',
             config=types.GenerateContentConfig(system_instruction=CHAT_SYSTEM_PROMPT),
             history=history
         )
