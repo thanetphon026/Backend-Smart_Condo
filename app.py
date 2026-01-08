@@ -2000,12 +2000,11 @@ def send_notification_async(user_id, message, image_url=None):
     except Exception as e:
         print(f"Async Notification Error: {e}")
 
-def notify_user_platform_agnostic(user, message, image_url=None):
+def notify_user_platform_agnostic(user, message, image_url=None, update_history=False):
     """
     ฟังก์ชันแจ้งเตือนพหุแพลตฟอร์ม (LINE Only):
     - ส่ง Push Message ทันทีแบบ Async (ถ้ามี LINE ID)
-    - ไม่บันทึกเข้า Chat History
-    - Web Chat ยังใช้งานได้ปกติ (แจ้งร้องเรียน, ถามคำถาม, ค้นหาข้อมูล)
+    - สามารถเลือกอัพเดตเข้า Chat History เพื่อให้แสดงผลบน Web Chat ได้
     """
     if not user:
         print("⚠️ [Notify] No user provided for notification")
@@ -2018,11 +2017,13 @@ def notify_user_platform_agnostic(user, message, image_url=None):
         print(f"📤 [Notify] Sending LINE notification to {uid}...")
         send_notification_async(uid, message, image_url)
     
-    # 2. ไม่อัพเดต Chat History สำหรับการแจ้งเตือน
-    # Web Chat ยังใช้งานได้ปกติ แต่ไม่แสดงการแจ้งเตือนระบบอัตโนมัติ
-    # update_chat_history(uid, "assistant", message, platform, image_url)
+    # 2. อัพเดต Chat History (ถ้าต้องการให้เห็นในหน้าเว็บ)
+    if update_history and uid:
+        platform = user.get('platform', 'line')
+        update_chat_history(uid, "assistant", message, platform, image_url)
     
     return True
+
 
 # ================= CONFIRM PARCEL AND NOTIFY (MODIFIED) =================
 
@@ -2243,20 +2244,13 @@ def resolve_complaint(complaint_id):
         )
         
         # 5. ฟังก์ชันย่อยสำหรับประมวลผลรูปภาพและส่งแจ้งเตือน (Async เพื่อความเร็ว)
-        def background_resolve_tasks(complaint_obj, admin_note, image_file, user_obj):
-            img_url = None
-            if image_file:
-                # [NEW] Validate Image
-                is_valid, _ = validate_image(image_file)
-                if is_valid:
-                    suffix = f".{image_file.filename.rsplit('.', 1)[1].lower()}" if '.' in image_file.filename else '.jpg'
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
-                        image_file.save(tf.name)
-                        temp_path = tf.name
-                    
+        def background_resolve_tasks(complaint_obj, admin_note, temp_image_path, user_obj):
+            try:
+                img_url = None
+                if temp_image_path and os.path.exists(temp_image_path):
                     try:
                         up_res = cloudinary.uploader.upload(
-                            temp_path,
+                            temp_image_path,
                             folder="complaints_resolved",
                             tags=["complaint_resolved", f"complaint:{str(complaint_obj['_id'])}"]
                         )
@@ -2265,34 +2259,49 @@ def resolve_complaint(complaint_id):
                             {"_id": complaint_obj["_id"]},
                             {"$set": {"resolved_image_url": img_url}}
                         )
+                        print(f"✅ Background Image Upload Success: {img_url}")
                     except Exception as e:
-                        print(f"Background Upload Error: {e}")
+                        print(f"❌ Background Upload Error: {e}")
                     finally:
-                        if os.path.exists(temp_path): os.remove(temp_path)
-            
-            # สร้างข้อความแจ้งเตือน
-            message = (
-                f"✅ การร้องเรียนของคุณได้รับการแก้ไขแล้ว!\n\n"
-                f"📌 เรื่อง: {complaint_obj.get('description', '')}\n"
-                f"🏠 ห้อง: {complaint_obj.get('room_number', '-')}\n"
-                f"📅 วันที่แจ้ง: {complaint_obj.get('timestamp', '').strftime('%d/%m/%Y') if complaint_obj.get('timestamp') else '-'}\n"
-                f"✅ ดำเนินการเสร็จ: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
-            )
-            if admin_note:
-                message += f"\n📝 หมายเหตุ: {admin_note}"
-            message += "\n\nขอบคุณที่แจ้งปัญหาค่ะ 🙏"
-            
-            # ส่งแจ้งเตือน (พหุแพลตฟอร์ม)
-            notify_user_platform_agnostic(user_obj, message, img_url)
+                        if os.path.exists(temp_image_path): os.remove(temp_image_path)
+                
+                # สร้างข้อความแจ้งเตือน
+                message = (
+                    f"✅ การร้องเรียนของคุณได้รับการแก้ไขแล้ว!\n\n"
+                    f"📌 เรื่อง: {complaint_obj.get('description', '')}\n"
+                    f"🏠 ห้อง: {complaint_obj.get('room_number', '-')}\n"
+                    f"📅 วันที่แจ้ง: {complaint_obj.get('timestamp', '').strftime('%d/%m/%Y') if complaint_obj.get('timestamp') else '-'}\n"
+                    f"✅ ดำเนินการเสร็จ: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+                )
+                if admin_note:
+                    message += f"\n📝 หมายเหตุ: {admin_note}"
+                message += "\n\nขอบคุณที่แจ้งปัญหาค่ะ 🙏"
+                
+                # ส่งแจ้งเตือน (พหุแพลตฟอร์ม)
+                notify_user_platform_agnostic(user_obj, message, img_url, update_history=True)
+                print(f"✅ Background Notification Sent to: {user_obj.get('line_user_id') if user_obj else 'Unknown'}")
+                
+            except Exception as e:
+                print(f"❌ Critical Error in background_resolve_tasks: {e}")
+                import traceback
+                traceback.print_exc()
 
-        # 6. ค้นหาผู้ใช้และเริ่มงานเบื้องหลัง
+        # 6. ค้นหาผู้ใช้
         user = users_col.find_one({"line_user_id": complaint.get("line_user_id")})
         
-        # ดึงไฟล์รูปภาพออกมาก่อน (เนื่องจาก request object อาจเข้าถึงไม่ได้ใน thread อื่น)
-        image_file = request.files['image'] if 'image' in request.files and request.files['image'].filename != '' else None
+        # 7. จัดการรูปภาพใน Main Thread ป้องกัน context issues
+        temp_path = None
+        if 'image' in request.files and request.files['image'].filename != '':
+            image_file = request.files['image']
+            is_valid, _ = validate_image(image_file)
+            if is_valid:
+                suffix = f".{image_file.filename.rsplit('.', 1)[1].lower()}" if '.' in image_file.filename else '.jpg'
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
+                    image_file.save(tf.name)
+                    temp_path = tf.name
         
-        # [SPEED OPTIMIZATION] ทำงานส่วนที่เหลือในพื้นหลังทั้งหมด
-        executor.submit(background_resolve_tasks, complaint, resolved_note, image_file, user)
+        # 8. [SPEED OPTIMIZATION] ทำงานส่วนที่เหลือในพื้นหลังทั้งหมด
+        executor.submit(background_resolve_tasks, complaint, resolved_note, temp_path, user)
         
         return jsonify({
             "status": "success",
@@ -2300,8 +2309,9 @@ def resolve_complaint(complaint_id):
         })
         
     except Exception as e:
-        print(f"Resolve Error: {e}")
+        print(f"❌ Resolve Error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
 # ================= AUDIT LOGS ENDPOINT =================
 
