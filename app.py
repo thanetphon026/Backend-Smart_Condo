@@ -2066,7 +2066,7 @@ def scan_parcel_api():
 def send_notification_async(user_id, message, image_url=None):
     """ส่ง LINE Async เพื่อไม่ให้บล็อคการทำงานหลัก"""
     try:
-        send_line_message(user_id, message, image_url)
+        executor.submit(send_line_message, user_id, message, image_url)
     except Exception as e:
         print(f"Async Notification Error: {e}")
 
@@ -2150,28 +2150,12 @@ def confirm_parcel_and_notify():
 
         image_url = data.get("image_url")
 
-        # 8. ส่ง LINE แจ้งเตือน (Strict Mode: ต้องส่งผ่านเท่านั้นถึงจะบันทึก)
-        sent_success = False
+        # 8. ส่ง LINE แจ้งเตือน Async
         if user and user.get("line_user_id"):
-            print(f"📤 กำลังส่งแจ้งเตือนไปยัง {user.get('line_user_id')}...")
-            sent_success = send_line_message(user["line_user_id"], message, image_url)
-            
-            if not sent_success:
-                print("❌ ส่งแจ้งเตือนไม่สำเร็จ -> ยกเลิกการบันทึก")
-                # ลบ record ที่เพิ่ง insert ไป (Rollback) หรือจริงๆ ควรย้าย insert ลงมาข้างล่าง
-                # แต่เพื่อความง่ายในการแก้โค้ดที่ structure เดิม
-                parcels_col.delete_one({"_id": parcels_col.find_one({"pin": pin})["_id"]})
-                return jsonify({
-                    "status": "error",
-                    "message": "ส่งแจ้งเตือน LINE ไม่สำเร็จ กรุณาลองใหม่ (ไม่ได้บันทึกพัสดุ)",
-                    "sent": False
-                }), 500
+            print(f"📤 กำลังส่งแจ้งเตือน Async ไปยัง {user.get('line_user_id')}...")
+            send_notification_async(user["line_user_id"], message, image_url)
         else:
-             print("⚠️ User has no LINE ID, saving anyway?")
-             # ถ้าไม่มี LINE ID ให้ผ่านไปก่อน? หรือจะบังคับ? 
-             # ตาม requirement "ต้องส่งเเล้วเท่านั้น" น่าจะหมายถึงถ้ามี LINE ต้องส่งให้ได้
-             # แต่ถ้าไม่มี LINE เลย อาจจะเป็นกรณี Manual
-             pass
+             print("⚠️ User has no LINE ID")
 
         notification_lines = []
         notification_lines.append(f"✅ ส่งแจ้งเตือนถึง: {user.get('display_name', 'Unknown')} (ห้อง {user.get('room_number', '-')})")
@@ -2185,8 +2169,7 @@ def confirm_parcel_and_notify():
             "notification_lines": notification_lines,
             "user_found": True
         })
-            "user_found": True
-        })
+
         
     except Exception as e:
         print(f"❌ Confirm Error: {e}")
@@ -2233,11 +2216,7 @@ def pickup_parcel():
         # 4. ค้นหาผู้ใช้จากห้อง
         user = users_col.find_one({"room_number": parcel.get("room_number")})
         
-        # 5. ส่ง LINE แจ้งเตือนการรับพัสดุ (Strict Mode)
-        # ต้องส่งก่อนอัพเดต หรือส่งแล้วเช็คผล
-        # แต่เราอัพเดตไปแล้วข้างบน (Line 2204) -> ต้องย้าย Logic การอัพเดตมาหลังส่ง หรือ Rollback
-        
-        # Rollback Strategy: Revert status if fail
+        # 5. ส่ง LINE แจ้งเตือนการรับพัสดุ Async
         if user and user.get("line_user_id"):
             message = (
                 f"✅ พัสดุของคุณถูกรับแล้ว!\n\n"
@@ -2250,21 +2229,10 @@ def pickup_parcel():
             )
             image_url = parcel.get("image_url")
             
-            print(f"📤 Sending pickup notification...")
-            success = send_line_message(user["line_user_id"], message, image_url)
+            print(f"📤 Sending async pickup notification...")
+            send_notification_async(user["line_user_id"], message, image_url)
             
-            if not success:
-                print("❌ Notify failed -> Rolling back status")
-                # Rollback status
-                parcels_col.update_one(
-                    {"_id": parcel["_id"]},
-                    {"$set": {"status": "pending", "pickup_time": None}} # Revert
-                )
-                # ลบ Audit Log ล่าสุดที่เพิ่งสร้าง? อาจจะยาก ไม่เป็นไร Audit Log "กดรับของ" อาจจะยังคงอยู่หรือปล่อยไว้
-                # แต่เพื่อความเนียน ควรลบ Audit Log ด้วยถ้าสำคัญ แต่ User ซีเรียสเรื่องสถานะพัสดุมากกว่า
-                return jsonify({"status": "error", "message": "ส่งแจ้งเตือนไม่สำเร็จ ระบบยกเลิกการรับของ"}), 500
-            
-            print(f"✅ Pickup notification sent for {user['line_user_id']}")
+            print(f"✅ Picked up successfully for {user['line_user_id']}")
         
         return jsonify({
             "status": "success",
@@ -2360,7 +2328,7 @@ def resolve_complaint(complaint_id):
                     if os.path.exists(temp_path): os.remove(temp_path)
         
         # 6. ส่ง LINE แจ้งเตือนไปยังผู้ใช้ (แก้ไขข้อความ)
-        # 6. ส่ง LINE แจ้งเตือนไปยังผู้ใช้ (Strict Mode)
+        # 6. ส่ง LINE แจ้งเตือนไปยังผู้ใช้ Async
         user = users_col.find_one({"line_user_id": complaint.get("line_user_id")})
         
         if user:
@@ -2377,25 +2345,10 @@ def resolve_complaint(complaint_id):
             
             message += "\n\nขอบคุณที่แจ้งปัญหาค่ะ 🙏"
             
-            print(f"📤 Sending resolve notification...")
-            success = send_line_message(user["line_user_id"], message, image_url)
+            print(f"📤 Sending async resolve notification...")
+            send_notification_async(user["line_user_id"], message, image_url)
             
-            if not success:
-                print("❌ Resolve notification failed -> Rolling back")
-                # Rollback status = pending
-                complaints_col.update_one(
-                    {"_id": obj_id},
-                    {"$set": {
-                        "status": "pending",
-                        "resolved_at": None,
-                        "resolved_by": None,
-                        "resolved_note": None,
-                        "resolved_image_url": None
-                    }}
-                )
-                return jsonify({"status": "error", "message": "ส่งแจ้งเตือนไม่สำเร็จ ยกเลิกการปิดงาน"}), 500
-                
-            print(f"✅ Resolve notification sent for {user['line_user_id']}")
+            print(f"✅ Resolved successfully for {user['line_user_id']}")
         
         return jsonify({
             "status": "success",
