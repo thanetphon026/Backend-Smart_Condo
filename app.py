@@ -3006,6 +3006,12 @@ def check_user_registration_status():
         print(f"User Status Error: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+# ================= ยิง Cron เข้า =================
+@app.route('/healthz', methods=['GET'])
+def health_check():
+    return "OK", 200
+
 # ================= ROOT ENDPOINT =================
 
 @app.route('/')
