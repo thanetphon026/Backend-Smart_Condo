@@ -1094,9 +1094,8 @@ def process_text_logic(user, text):
     
     history = get_gemini_chat_history(uid)
     try:
-        # ใช้ gemini-1.5-flash สำหรับการแชทปกติ (เร็วและแม่นยำ)
         chat = client.chats.create(
-            model='gemini-1.5-flash',
+            model='gemini-3-flash-preview',
             config=types.GenerateContentConfig(system_instruction=CHAT_SYSTEM_PROMPT),
             history=history
         )
