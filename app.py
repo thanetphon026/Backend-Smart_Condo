@@ -2157,6 +2157,17 @@ def pickup_parcel():
         
         # 5. ส่งแจ้งเตือนการรับพัสดุ (พหุแพลตฟอร์ม: LINE + Web) -- [SPEED OPTIMIZATION] Async
         if user:
+            # Construct message for pickup
+            message = (
+                f"✅ พัสดุของคุณถูกรับแล้ว!\n\n"
+                f"📦 พัสดุ: {parcel.get('tracking_number', '-')}\n"
+                f"🏠 ห้อง: {parcel.get('room_number', '-')}\n"
+                f"🚚 ขนส่ง: {parcel.get('transport', '-')}\n"
+                f"🔑 PIN: {parcel.get('pin', '-')}\n"
+                f"⏰ เวลารับ: {format_datetime(datetime.datetime.now())}\n\n"
+                f"ขอบคุณที่ใช้บริการค่ะ"
+            )
+            image_url = parcel.get("image_url")
             executor.submit(notify_user_platform_agnostic, user, message, image_url)
         
         return jsonify({
@@ -2257,6 +2268,18 @@ def resolve_complaint(complaint_id):
         
         # [SPEED OPTIMIZATION] Offload notification to background thread
         if user:
+            # Construct message for resolved complaint
+            message = (
+                f"✅ การร้องเรียนของคุณได้รับการแก้ไขแล้ว!\n\n"
+                f"📌 เรื่อง: {complaint.get('description', '')}\n"
+                f"🏠 ห้อง: {complaint.get('room_number', '-')}\n"
+                f"📅 วันที่แจ้ง: {complaint.get('timestamp', '').strftime('%d/%m/%Y') if complaint.get('timestamp') else '-'}\n"
+                f"✅ ดำเนินการเสร็จ: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+            )
+            if resolved_note:
+                message += f"\n📝 หมายเหตุ: {resolved_note}"
+            message += "\n\nขอบคุณที่แจ้งปัญหาค่ะ 🙏"
+            
             executor.submit(notify_user_platform_agnostic, user, message, image_url)
         
         return jsonify({
