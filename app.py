@@ -109,27 +109,45 @@ try:
     audit_logs_col = db["audit_logs"]
     chat_history_col = db["chat_history"]
 
+    # [MODIFIED] Consolidated index creation logic
     def ensure_indexes():
         """สร้าง Indexes เพื่อเพิ่มความเร็วในการค้นหา"""
         try:
-            # Users: ค้นหาตาม line_user_id และ platform
-            users_col.create_index([("line_user_id", 1)], unique=True)
+            # Users: ค้นหาตาม line_user_id (Unique)
+            try:
+                # If existing index is not unique, we'll catch the error and move on
+                users_col.create_index([("line_user_id", 1)], unique=True)
+            except:
+                users_col.create_index([("line_user_id", 1)])
+            
             users_col.create_index([("platform", 1)])
             users_col.create_index([("last_active", -1)])
+            users_col.create_index([("room_number", 1)])
             
-            # Complaints: ค้นหาตาม status, priority, timestamp
+            # Complaints: ค้นหาตาม status, priority, timestamp (NOT Unique for user)
             complaints_col.create_index([("status", 1)])
             complaints_col.create_index([("priority", 1)])
             complaints_col.create_index([("timestamp", -1)])
             complaints_col.create_index([("line_user_id", 1)])
+            complaints_col.create_index([("status", 1), ("priority", -1), ("timestamp", -1)])
+            complaints_col.create_index([("room_number", 1)])
             
             # Parcels: ค้นหาตาม status, pin, timestamp
             parcels_col.create_index([("status", 1)])
-            parcels_col.create_index([("pin", 1)], unique=True)
-            parcels_col.create_index([("timestamp", -1)])
+            try:
+                parcels_col.create_index([("pin", 1)], unique=True)
+            except:
+                parcels_col.create_index([("pin", 1)])
             
-            # Audit Logs: สร้าง Index สำหรับ sort timestamp เพื่อให้โหลดเร็ว
+            parcels_col.create_index([("timestamp", -1)])
+            parcels_col.create_index([("status", 1), ("timestamp", -1)])
+            parcels_col.create_index([("room_number", 1)])
+            
+            # Audit Logs
             audit_logs_col.create_index([("timestamp", -1)])
+            
+            # Chat history
+            chat_history_col.create_index([("line_user_id", 1), ("timestamp", -1)])
             
             print("✅ MongoDB Indexes ensured.")
         except Exception as e:
@@ -161,36 +179,7 @@ cloudinary.config(
     secure=True
 )
 
-# ================= DATABASE INDEXES FOR PERFORMANCE =================
-def create_indexes():
-    """
-    สร้าง Indexes เพื่อเพิ่มความเร็วในการค้นหา (รองรับกรณีที่มี index เดิมอยู่แล้ว)
-    """
-    try:
-        # Parcels indexes
-        parcels_col.create_index([("status", 1), ("timestamp", -1)])
-        parcels_col.create_index([("room_number", 1)])
-        parcels_col.create_index([("pin", 1)], unique=True)
-        
-        # Complaints indexes
-        complaints_col.create_index([("status", 1), ("priority", -1), ("timestamp", -1)])
-        complaints_col.create_index([("room_number", 1)])
-        # line_user_id มักมีอยู่แล้วเป็น unique index ให้ข้ามถ้าซ้ำ
-        complaints_col.create_index([("line_user_id", 1)], unique=True)
-        
-        # Users indexes
-        users_col.create_index([("line_user_id", 1)], unique=True)
-        users_col.create_index([("room_number", 1)])
-        
-        # Chat history indexes
-        chat_history_col.create_index([("line_user_id", 1), ("timestamp", -1)])
-        
-        print("✅ Database indexes verified/created")
-    except Exception as e:
-        print(f"⚠️ Index creation notice: {e}")
-
-# เรียกใช้งานตอนเริ่มแอป
-create_indexes()
+# Redundant index creation removed (consolidated in ensure_indexes)
 
 # ================= LINE BOT CONFIGURATION =================
 line_configuration = Configuration(
@@ -3010,7 +2999,7 @@ def check_user_registration_status():
 
 # ================= ยิง Cron เข้า =================
 @app.route('/healthz', methods=['GET'])
-def health_check():
+def healthz_check():
     return "OK", 200
 
 # ================= ROOT ENDPOINT =================
