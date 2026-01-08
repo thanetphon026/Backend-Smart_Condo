@@ -181,37 +181,35 @@ def analyze_urgency_from_description(user_desc):
         if not user_desc: return "Low"
         user_desc_lower = user_desc.lower()
         
-        # เงื่อนไขความสำคัญสูง (ต้องแก้ไขวันนี้)
+        # เกณฑ์ความสำคัญ:
+        # 🔴 HIGH (ต้องแก้ไขภายในวันนี้)
         high_keywords = [
             "ไฟไหม้", "ไฟลุก", "ไฟช็อต", "ไฟฟ้าลัดวงจร", "ไฟดูด", "ไฟสปาร์ค",
             "น้ำท่วม", "น้ำรั่วมาก", "น้ำซึมมาก", "น้ำแตก", "ท่อน้ำแตก", "ท่อประปาแตก",
             "แก๊สรั่ว", "กลิ่นแก๊ส", "แก๊สหอบ", "แก๊สผิดปกติ",
-            "โจร", "ขโมย", "ปล้น", "งัดแงะ", "เข้าไปในห้อง",
-            "อันตราย", "ฉุกเฉิน", "ช่วยด่วน", "รีบด่วน", "ด่วนมาก", "เร่งด่วน",
-            "บันไดหนีไฟ", "ทางหนีไฟ", "อุปกรณ์ป้องกัน", "ระเบิด", "ลุกไหม้",
-            "ไฟฟ้าช็อต", "ไฟดับทั้งอาคาร", "ไฟดับทั้งหมด"
+            "ทางหนีไฟอุดตัน", "บันไดหนีไฟ", "ทางหนีไฟ",
+            "ประตูหน้าต่างเสียหาย", "ล็อคไม่ได้", "ปิดล็อคไม่ได้", "ประตูพัง", "หน้าต่างพัง",
+            "โจร", "ขโมย", "ปล้น", "งัดแงะ", "อันตราย", "ฉุกเฉิน", "ด่วนมาก", "ระเบิด"
         ]
         
-        # เงื่อนไขความสำคัญกลาง (แก้ไขภายใน 1-2 วัน)
+        # 🟡 MEDIUM (แก้ไขได้ภายใน 1-2 วัน)
         medium_keywords = [
-            "แอร์เสีย", "เครื่องปรับอากาศ", "แอร์ไม่เย็น", "แอร์รั่ว", "แอร์น้ำหยด",
-            "ไฟฟ้าเสีย", "ไฟไม่ติด", "สวิทช์เสีย", "ปลั๊กไฟเสีย", "เบรกเกอร์",
-            "ประตูเสีย", "ล็อคประตู", "กุญแจ", "ประตูเปิดไม่ติด", "ประตูพัง",
-            "ปั๊มน้ำ", "น้ำไม่ไหล", "น้ำตัน", "น้ำอ่อนแรง",
-            "ส้วมตัน", "ชักโครก", "ท่อตัน", "ชักโครกไม่ลง",
-            "เครื่องทำน้ำร้อน", "เครื่องทำน้ำอุ่น", "น้ำไม่ร้อน",
-            "ลิฟต์", "ลิฟต์ขัดข้อง", "ลิฟต์ไม่ทำงาน"
+            "เครื่องปรับอากาศ", "แอร์เสีย", "แอร์ไม่เย็น", "แอร์รั่ว", "แอร์น้ำหยด",
+            "ไฟฟ้าบางส่วนเสีย", "ไฟไม่ติด", "สวิทช์เสีย", "ปลั๊กไฟเสีย", "เบรกเกอร์",
+            "ประตูล็อคขัดข้อง", "ล็อคประตู", "กุญแจ", "ลูกบิดเสีย",
+            "ปั๊มน้ำ", "น้ำไม่ไหล", "น้ำอ่อน", 
+            "ส้วมตัน", "ชักโครก", "ท่อตัน", "กดไม่ลง",
+            "เครื่องทำน้ำร้อน", "เครื่องทำน้ำอุ่น", "น้ำไม่ร้อน"
         ]
         
-        # เงื่อนไขความสำคัญต่ำ (แก้ไขภายใน 3-5 วัน)
+        # 🟢 LOW (แก้ไขได้ภายใน 3-5 วัน)
         low_keywords = [
-            "สีลอก", "ผนังร้าว", "รอยร้าว", "สีแตก", "สีหลุด",
-            "ฝ้าเพดาน", "ฝ้ารั่ว", "ฝ้าแตกร้าว", "ฝ้าโก่ง",
-            "พื้นกระเทาะ", "พื้นไม้", "พื้นปาร์เก้",
-            "หลอดไฟ", "ไฟส่อสว่าง", "ไฟหน่วง", "ไฟกระพริบ",
-            "เต้ารับ", "ปลั๊กไฟ", "ปลั๊กหลวม", "ปลั๊กหลุด",
-            "ที่จับประตู", "ลูกบิด", "ลูกบิดหลวม",
-            "มุ้งลวด", "มุ้งลวดเสีย", "มุ้งลวดฉีก"
+            "สีลอก", "สีผนังลอก", "สีร่อน",
+            "ผนังร้าว", "รอยร้าว", "ร้าวเล็กน้อย",
+            "ฝ้าเพดาน", "ฝ้ารั่ว", "จุดชื้น", "คราบน้ำ",
+            "เครื่องใช้ไฟฟ้าขัดข้อง", "เครื่องใช้ไฟฟ้า",
+            "ที่จับประตูหลวม", "ลูกบิดหลวม", "บานพับ",
+            "มุ้งลวด", "หลอดไฟ", "ไฟกระพริบ"
         ]
         
         for kw in high_keywords:
@@ -1173,7 +1171,7 @@ def handle_image_message(event):
                         time.sleep(1)
                         upload_file = client.files.get(name=upload_file.name)
 
-                    # 🔥 ปรับปรุง Vision Prompt ให้ละเอียดขึ้น
+                    # 🔥 ปรับปรุง Vision Prompt ให้ละเอียดขึ้น (Updated Criteria)
                     vision_prompt = (
                         f"คำอธิบายจากลูกบ้าน: '{user_desc}'\n\n"
                         
@@ -1208,7 +1206,7 @@ def handle_image_message(event):
                         "3. สรุปผลการวิเคราะห์ทั้งสองส่วนรวมกัน\n\n"
                         "Format ตอบ: 'Summary || Urgency || Detailed_Analysis'\n"
                         "- Summary: สรุปปัญหาทางเทคนิคสั้นๆ (ภาษาไทย) ไม่เกิน 100 ตัวอักษร\n"
-                        "- Urgency: ประเมินความเร่งด่วน (High, Medium, Low)\n"
+                        "- Urgency: ประเมินความเร่งด่วน (High, Medium, Low) ตามเกณฑ์ด้านบนอย่างเคร่งครัด\n"
                         "- Detailed_Analysis: แสดงผลการวิเคราะห์โดยแบ่งเป็น 2 หัวข้อหลัก:\n"
                         "  • วิเคราะห์ตามรายละเอียดและรูปภาพ: [เนื้อหา]\n"
                         "  • วิเคราะห์ภาพรวมกว้างๆ ของรูปภาพ: [เนื้อหา]\n"
@@ -2092,12 +2090,25 @@ def confirm_parcel_and_notify():
 
         image_url = data.get("image_url")
 
-        # 8. ส่ง LINE แจ้งเตือน Async
-        if user and user.get("line_user_id"):
-            print(f"📤 กำลังส่งแจ้งเตือน Async ไปยัง {user.get('line_user_id')}...")
-            send_notification_async(user["line_user_id"], message, image_url)
+        # 8. ส่งแจ้งเตือน (LINE หรือ Web)
+        if user:
+            # ตรวจสอบ platform
+            platform = user.get("platform", "line")
+            
+            # ถ้ามี LINE ID ให้ส่ง LINE Notification (กรณี User ผูก LINE ไว้แล้ว)
+            if user.get("line_user_id"):
+                print(f"📤 กำลังส่งแจ้งเตือน Async ไปยัง {user.get('line_user_id')}...")
+                send_notification_async(user["line_user_id"], message, image_url)
+            
+            # ถ้าผู้ใช้อยู่บนหน้าเว็บ (หรือไม่มี LINE) ให้บันทึกเข้า Chat History เพื่อ Polling
+            if platform == 'web' or not user.get("line_user_id"):
+                 # บันทึกเป็นข้อความจาก 'assistant'
+                 save_full_chat_history(user.get("line_user_id"), "assistant", message, platform)
+                 # อัพเดตใน users collection เพื่อให้ polling เจอล่าสุด
+                 update_chat_history(user.get("line_user_id"), "assistant", message)
+                 print(f"💾 Saved web notification for {user.get('line_user_id')}")
         else:
-             print("⚠️ User has no LINE ID")
+             print("⚠️ User not found for notification")
 
         notification_lines = []
         notification_lines.append(f"✅ ส่งแจ้งเตือนถึง: {user.get('display_name', 'Unknown')} (ห้อง {user.get('room_number', '-')})")
@@ -2158,8 +2169,8 @@ def pickup_parcel():
         # 4. ค้นหาผู้ใช้จากห้อง
         user = users_col.find_one({"room_number": parcel.get("room_number")})
         
-        # 5. ส่ง LINE แจ้งเตือนการรับพัสดุ Async
-        if user and user.get("line_user_id"):
+        # 5. ส่งแจ้งเตือนการรับพัสดุ (LINE หรือ Web)
+        if user:
             message = (
                 f"✅ พัสดุของคุณถูกรับแล้ว!\n\n"
                 f"📦 พัสดุ: {parcel.get('tracking_number', '-')}\n"
@@ -2171,10 +2182,18 @@ def pickup_parcel():
             )
             image_url = parcel.get("image_url")
             
-            print(f"📤 Sending async pickup notification...")
-            send_notification_async(user["line_user_id"], message, image_url)
+            # ส่ง LINE ถ้ามี
+            if user.get("line_user_id"):
+                print(f"📤 Sending async pickup notification...")
+                send_notification_async(user["line_user_id"], message, image_url)
+                
+            # บันทึก Web Chat History ถ้าเป็น Web Platform
+            platform = user.get("platform", "line")
+            if platform == 'web' or not user.get("line_user_id"):
+                save_full_chat_history(user.get("line_user_id"), "assistant", message, platform)
+                update_chat_history(user.get("line_user_id"), "assistant", message)
             
-            print(f"✅ Picked up successfully for {user['line_user_id']}")
+            print(f"✅ Picked up notification processed for {user.get('line_user_id')}")
         
         return jsonify({
             "status": "success",
@@ -2269,8 +2288,7 @@ def resolve_complaint(complaint_id):
                 finally:
                     if os.path.exists(temp_path): os.remove(temp_path)
         
-        # 6. ส่ง LINE แจ้งเตือนไปยังผู้ใช้ (แก้ไขข้อความ)
-        # 6. ส่ง LINE แจ้งเตือนไปยังผู้ใช้ Async
+        # 6. ส่งแจ้งเตือนไปยังผู้ใช้ (LINE หรือ Web)
         user = users_col.find_one({"line_user_id": complaint.get("line_user_id")})
         
         if user:
@@ -2287,10 +2305,18 @@ def resolve_complaint(complaint_id):
             
             message += "\n\nขอบคุณที่แจ้งปัญหาค่ะ 🙏"
             
-            print(f"📤 Sending async resolve notification...")
-            send_notification_async(user["line_user_id"], message, image_url)
+            # ส่ง LINE ถ้ามี
+            if user.get("line_user_id"):
+                print(f"📤 Sending async resolve notification...")
+                send_notification_async(user["line_user_id"], message, image_url)
             
-            print(f"✅ Resolved successfully for {user['line_user_id']}")
+            # บันทึก Web Chat History
+            platform = user.get("platform", "line")
+            if platform == 'web' or not user.get("line_user_id"):
+                save_full_chat_history(user.get("line_user_id"), "assistant", message, platform)
+                update_chat_history(user.get("line_user_id"), "assistant", message)
+            
+            print(f"✅ Resolved notification processed for {user.get('line_user_id')}")
         
         return jsonify({
             "status": "success",
@@ -2731,7 +2757,7 @@ def process_web_complaint_image(user, image_path):
                 "3. สรุปผลการวิเคราะห์ทั้งสองส่วนรวมกัน\n\n"
                 "Format ตอบ: 'Summary || Urgency || Detailed_Analysis'\n"
                 "- Summary: สรุปปัญหาทางเทคนิคสั้นๆ (ภาษาไทย) ไม่เกิน 100 ตัวอักษร\n"
-                "- Urgency: ประเมินความเร่งด่วน (High, Medium, Low)\n"
+                "- Urgency: ประเมินความเร่งด่วน (High, Medium, Low) ตามเกณฑ์ด้านบนอย่างเคร่งครัด\n"
                 "- Detailed_Analysis: แสดงผลการวิเคราะห์โดยแบ่งเป็น 2 หัวข้อหลัก:\n"
                 "  • วิเคราะห์ตามรายละเอียดและรูปภาพ: [เนื้อหา]\n"
                 "  • วิเคราะห์ภาพรวมกว้างๆ ของรูปภาพ: [เนื้อหา]\n"
@@ -2815,12 +2841,11 @@ def process_web_complaint_image(user, image_path):
             {"$set": {"complaint_state": "normal", "draft_desc": None}}
         )
         
-        # 7. สร้างข้อความตอบกลับ (แก้ไขข้อความ)
+        # 7. สร้างข้อความตอบกลับ (ไม่ต้องแสดงระดับความสำคัญตามที่ user request)
         success_msg = (
             f"✅ รับแจ้งร้องเรียนเรียบร้อยแล้วค่ะ!\n\n"
             f"📌 เรื่อง: {user_desc}\n"
             f"📷 ได้รับรูปภาพแล้ว\n"
-            f"📊 ระดับความสำคัญ: {final_urgency}\n"
             f"เจ้าหน้าที่จะรีบดำเนินการตรวจสอบให้นะคะ ขอบคุณค่ะ 🙏"
         )
         
