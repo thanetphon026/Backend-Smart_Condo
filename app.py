@@ -153,15 +153,43 @@ executor = ThreadPoolExecutor(max_workers=3)
 # [UPDATED] Setup Gemini Client (New SDK)
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+# ================= CLOUDINARY SETUP =================
 cloudinary.config(
-    cloud_name=CLOUDINARY_CLOUD_NAME,
-    api_key=CLOUDINARY_API_KEY,
-    api_secret=CLOUDINARY_API_SECRET,
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
     secure=True
 )
 
-line_configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
-line_handler = WebhookHandler(LINE_CHANNEL_SECRET)
+# ================= DATABASE INDEXES FOR PERFORMANCE =================
+try:
+    # Parcels indexes
+    parcels_col.create_index([("status", 1), ("timestamp", -1)])
+    parcels_col.create_index([("room_number", 1)])
+    parcels_col.create_index([("pin", 1)])
+    
+    # Complaints indexes
+    complaints_col.create_index([("status", 1), ("priority", -1), ("timestamp", -1)])
+    complaints_col.create_index([("room_number", 1)])
+    complaints_col.create_index([("line_user_id", 1)])
+    
+    # Users indexes
+    users_col.create_index([("line_user_id", 1)])
+    users_col.create_index([("room_number", 1)])
+    
+    # Chat history indexes
+    chat_history_col.create_index([("line_user_id", 1), ("timestamp", -1)])
+    
+    print("✅ Database indexes created successfully")
+except Exception as e:
+    print(f"⚠️ Index creation warning: {e}")
+
+# ================= LINE BOT CONFIGURATION =================
+line_configuration = Configuration(
+    access_token=os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+)
+
+line_handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
 @app.before_request
 def log_request_info():
@@ -1371,10 +1399,22 @@ def health_check():
 
 # Helper for consistent datetime formatting (ISO 8601 UTC)
 def format_datetime(dt):
+    """
+    Format datetime to Thai-friendly readable format: DD/MM/YYYY HH:MM
+    """
     if not dt:
         return "-"
-    # Ensure we treat it as UTC for Production (Render)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        # Convert to Bangkok timezone
+        bkk_tz = pytz.timezone('Asia/Bangkok')
+        if dt.tzinfo is None:
+            # Assume UTC if no timezone info
+            dt = pytz.utc.localize(dt)
+        bkk_time = dt.astimezone(bkk_tz)
+        return bkk_time.strftime("%d/%m/%Y %H:%M")
+    except Exception as e:
+        print(f"⚠️ Datetime format error: {e}")
+        return "-"
 
 @app.route('/api/dashboard', methods=['GET'])
 @require_api_token
