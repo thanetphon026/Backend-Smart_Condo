@@ -8,3 +8,4 @@ line-bot-sdk
 requests
 gunicorn
 Werkzeug
+pytz

@@ -14,6 +14,7 @@ import csv
 import io
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+import pytz
 
 # [UPDATED] Google GenAI (New SDK)
 from google import genai
@@ -624,7 +625,12 @@ def get_knowledge_context(user_text, user):
         parcel_context = f"รายการพัสดุ:\n🏠 ห้อง {user.get('room_number', '-')}\n📦 ตอนนี้ยังไม่มีพัสดุค้างอยู่นะคะ" # Default ไม่มีพัสดุ
         
         if user.get('room_number'):
-            my_parcels = list(parcels_col.find({"room_number": user['room_number'], "status": "pending"}))
+            # ค้นหาพัสดุของห้องตัวเอง (ใช้ Regex เพื่อความยืดหยุ่น เช่น "814" หรือ "ห้อง 814")
+            room_clean = str(user['room_number']).replace("ห้อง", "").strip()
+            my_parcels = list(parcels_col.find({
+                "room_number": {"$regex": f".*{room_clean}.*"}, 
+                "status": "pending"
+            }))
             if my_parcels:
                 count = len(my_parcels)
                 # Header สำหรับมีพัสดุ
@@ -669,13 +675,11 @@ def get_knowledge_context(user_text, user):
         # ค้นหาใน Knowledge Base แบบ Hybrid (DB Search -> Python Re-ranking)
         search_query = {}
         if ai_keywords:
-            regex_patterns = [{"$regex": kw, "$options": "i"} for kw in ai_keywords]
-            search_query = {
-                "$or": [
-                    {"topic": {"$in": regex_patterns}},
-                    {"content": {"$in": regex_patterns}}
-                ]
-            }
+            or_conditions = []
+            for kw in ai_keywords:
+                or_conditions.append({"topic": {"$regex": kw, "$options": "i"}})
+                or_conditions.append({"content": {"$regex": kw, "$options": "i"}})
+            search_query = {"$or": or_conditions}
         
         # 1. Fetch Candidates (ดึงมา 15 รายการเพื่อมาจัดอันดับต่อ)
         candidates = list(kb_col.find(search_query).limit(15))
@@ -747,13 +751,14 @@ def analyze_intent(text):
         
         prompt = (
             f"Classify user intent: '{text}'\n"
-            "Return ONLY one word:\n"
-            "COMPLAINT_START (แค่เริ่มแจ้งแต่ยังไม่มีข้อมูล), "
-            "COMPLAINT_DETAIL (แจ้งห้องหรือรายละเอียดปัญหาแล้ว), "
-            "CANCEL (ขอยกเลิก), "
-            "CHECK_STATUS (ติดตามงาน), "
-            "GENERAL (สอบถามกฎ/ข้อมูลทั่วไป), "
-            "OTHER (ทักทาย/อื่นๆ)"
+            "Categories:\n"
+            "1. COMPLAINT_START: User wants to report an issue but hasn't provided details yet (e.g., 'แจ้งซ่อม', 'มีปัญหาครับ', 'ร้องเรียนหน่อย', 'แจ้งเรื่อง').\n"
+            "2. COMPLAINT_DETAIL: User provides specific details of a problem (e.g., 'ไฟทางเดินเสีย', 'น้ำรั่วที่ระเบียง', 'แอร์ไม่เย็นเลย', 'ไฟติดๆดับๆ').\n"
+            "3. CANCEL: User wants to cancel or says they don't want to report anymore, including typos (e.g., 'ยกเลิก', 'ไม่แจ้งแล้ว', 'ไม่เจ้ง', 'ไม่เเจ่งล้', 'พอแล้ว').\n"
+            "4. CHECK_STATUS: Asking about ticket status.\n"
+            "5. GENERAL: General questions to the bot or about rules/info.\n"
+            "6. OTHER: Greetings or unrelated.\n"
+            "Return ONLY the category name."
         )
         
         response = client.models.generate_content(
@@ -926,69 +931,7 @@ def process_text_logic(user, text):
             f"ลงทะเบียน 814 สมชาย ใจดี 0812345678"
         )
     
-    # ตรวจสอบก่อนว่าผู้ใช้ถามเกี่ยวกับ "กฎ" หรือ "รายละเอียด" ของการแจ้งร้องเรียน
-    rule_keywords = ["กฎการแจ้งร้องเรียน", "กฎการร้องเรียน", "รายละเอียดการแจ้งร้องเรียน", 
-                     "วิธีแจ้งร้องเรียน", "ขั้นตอนการแจ้งร้องเรียน", "ขอทราบการแจ้งร้องเรียน",
-                     "อยากทราบการแจ้งร้องเรียน", "อยากรู้การแจ้งร้องเรียน",
-                     "กฎแจ้งร้องเรียน", "วิธีร้องเรียน", "ขั้นตอนร้องเรียน",
-                     "อยากรู้วิธีแจ้งร้องเรียน", "อยากรู้ขั้นตอนแจ้งร้องเรียน"]
-    
-    general_keywords = ["สูบบุหรี่", "กฎการจอด", "เบอร์ตำรวจ", "กฎระเบียบ", 
-                       "เบอร์โทร", "เบอร์ฉุกเฉิน", "วิธีใช้", "บริการ",
-                       "ค่าบริการ", "ทำยังไง", "อย่างไร", "สอบถาม"]
-    
-    # ตรวจสอบว่าเป็นคำถามเกี่ยวกับกฎหรือรายละเอียดเท่านั้น (ไม่ใช่การแจ้งร้องเรียนจริง)
-    is_asking_about_rules = any(keyword in text for keyword in rule_keywords)
-    
-    # ตรวจสอบว่าเป็นคำถามทั่วไปที่ไม่ใช่การแจ้งร้องเรียน
-    is_general_inquiry = any(keyword in text for keyword in general_keywords)
-    
-    # ถ้าถามเกี่ยวกับกฎหรือรายละเอียด หรือเป็นคำถามทั่วไป ให้ถือว่าเป็น general_topic
-    if is_asking_about_rules or is_general_inquiry:
-        # ดึงข้อมูลจาก Knowledge Base เท่านั้น
-        try:
-            all_docs = list(kb_col.find())
-            kb_content = ""
-            for doc in all_docs:
-                topic_lower = str(doc.get('topic', '')).lower()
-                content_lower = str(doc.get('content', '')).lower()
-                text_lower = text.lower()
-                
-                # หาข้อมูลที่เกี่ยวข้องกับการแจ้งร้องเรียน (ถ้าถามเกี่ยวกับกฎ)
-                if is_asking_about_rules:
-                    if any(word in topic_lower for word in ["แจ้งร้องเรียน", "ร้องเรียน", "วิธีแจ้ง"]):
-                        kb_content += f"หัวข้อ: {doc.get('topic')}\nรายละเอียด: {doc.get('content')}\n---\n"
-                
-                # หาข้อมูลที่เกี่ยวข้องกับคำถามทั่วไป
-                if is_general_inquiry:
-                    # ตรวจสอบว่ามีหัวข้อที่ตรงกับคำถาม
-                    topic_match = any(keyword.lower() in topic_lower for keyword in general_keywords)
-                    content_match = any(keyword.lower() in content_lower for keyword in general_keywords)
-                    
-                    if topic_match or content_match:
-                        kb_content += f"หัวข้อ: {doc.get('topic')}\nรายละเอียด: {doc.get('content')}\n---\n"
-            
-            if kb_content:
-                context_msg = f"\n[Context]:\n[คลังความรู้ทั่วไป (Knowledge Base)]\n{kb_content}\n"
-            else:
-                context_msg = f"\n[Context]:\nไม่มีข้อมูลเกี่ยวกับเรื่องนี้ในคลังความรู้\n"
-            
-            history = get_gemini_chat_history(uid)
-            try:
-                chat = client.chats.create(
-                    model='gemini-3-flash-preview',
-                    config=types.GenerateContentConfig(system_instruction=CHAT_SYSTEM_PROMPT),
-                    history=history
-                )
-                res = chat.send_message(f"{text}\n{context_msg}")
-                return res.text.strip()
-            except Exception as e:
-                print(f"Chat Error: {e}")
-                return "ขออภัย ระบบขัดข้องชั่วคราวค่ะ"
-                
-        except Exception as e:
-            print(f"General topic context error: {e}")
-            return "ขออภัยค่ะ เกิดข้อผิดพลาดในการดึงข้อมูล"
+    # [REMOVED] Redundant GENERAL block to ensure personal context is always processed correctly.
     
     # ================= แก้ไขส่วนสำคัญ: เพิ่มการตรวจสอบความตั้งใจแบบละเอียด =================
     
@@ -1053,33 +996,34 @@ def process_text_logic(user, text):
         intent = intent_future.result()
 
     # ตรวจสอบสถานะและดำเนินการตาม intent
-    if intent == "CANCEL" or text.lower() in ["ยกเลิก", "cancel"]:
+    # [UPDATED] Robust cancellation handling via AI
+    if intent == "CANCEL" or text.lower() in ["ยกเลิก", "cancel", "ไม่แจ้งแล้ว", "พอแล้ว"]:
         users_col.update_one(
             {"line_user_id": uid}, 
             {"$set": {"complaint_state": "normal", "draft_desc": None}}
         )
-        return "❌ ยกเลิกรายการให้แล้วค่ะ"
+        return "❌ ยกเลิกรายการให้แล้วค่ะ หากต้องการแจ้งเรื่องใหม่ทักน้องบอตได้เสมอนะคะ"
 
     # COMPLAINT Logic: จัดการตามความละเอียดของข้อความ
     if intent in ["COMPLAINT_START", "COMPLAINT_DETAIL"]:
         if state == 'normal':
             if intent == "COMPLAINT_START":
                 users_col.update_one({"line_user_id": uid}, {"$set": {"complaint_state": "filing_desc"}})
-                return "รับทราบค่ะคุณลูกค้า บอตพร้อมช่วยดูแลนะคะ 📝 พิมพ์รายละเอียดเรื่องที่ต้องการแจ้งมาได้เลยค่ะ"
+                return "รับทราบค่ะคุณลูกค้า บอตพร้อมช่วยดูแลนะคะ 📝 รบกวนคุณลูกค้าพิมพ์รายละเอียดปัญหาที่พบมาได้เลยค่ะ"
             else:
-                # COMPLAINT_DETAIL: มีข้อมูลแล้ว บันทึกและขอรูป
+                # COMPLAINT_DETAIL: มีข้อมูลแล้ว บันทึกและขอรูปทันที
                 users_col.update_one(
                     {"line_user_id": uid}, 
                     {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
                 )
-                return f"น้องบอตบันทึกรายละเอียด '{text[:50]}...' ไว้ให้เรียบร้อยแล้วค่ะ 📝\n\n📸 เพื่อให้พี่ๆ นิติฯ เห็นภาพชัดเจนขึ้น รบกวนคุณลูกค้าช่วยส่งรูปภาพประกอบปัญหามาให้หน่อยนะคะ"
+                return f"รับทราบปัญหา '{text}...' ค่ะ น้องบอตบันทึกข้อมูลไว้แล้ว 📝\n\n📸 เพื่อให้ช่างตรวจสอบได้ตรงจุด รบกวนคุณลูกค้าถ่ายรูปหน้างานส่งมาให้น้องบอตหน่อยนะคะ"
 
     if state == 'filing_desc':
         users_col.update_one(
             {"line_user_id": uid}, 
             {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
         )
-        return f"ขอบคุณสำหรับรายละเอียดค่ะ น้องบอตบันทึกเรื่อง '{text[:50]}...' ไว้แล้วนะคะ 📝\n\n📸 อีกนิดเดียวนะคะ รบกวนส่งรูปภาพประกอบมาให้หน่อยค่ะ พี่ๆ นิติฯ จะได้เข้าตรวจสอบได้ถูกจุดค่ะ"
+        return f"ขอบคุณสำหรับรายละเอียดค่ะ น้องบอตบันทึกเรื่อง '{text[:50]}' ไว้แล้วนะคะ 📝\n\n📸 อีกนิดเดียวนะคะ รบกวนส่งรูปภาพประกอบมาให้หน่อยค่ะ พี่ๆ นิติฯ จะได้เข้าตรวจสอบได้ถูกจุดค่ะ"
 
     if state == 'waiting_image':
         return "📸 น้องบอทยังรอรูปภาพประกอบอยู่นะคะ หรือถ้าต้องการยกเลิก สามารถพิมพ์ว่า 'ยกเลิก' ได้เลยค่ะ"
