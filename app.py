@@ -15,6 +15,7 @@ import io
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 import pytz
+import requests # Move to top for performance
 
 # [UPDATED] Google GenAI (New SDK)
 from google import genai
@@ -166,8 +167,8 @@ try:
 except Exception as e:
     print(f"❌ MongoDB Error: {e}")
 
-# Initialize ThreadPoolExecutor for background tasks
-executor = ThreadPoolExecutor(max_workers=3)
+# Initialize ThreadPoolExecutor for background tasks (Increased for speed)
+executor = ThreadPoolExecutor(max_workers=50)
 
 # [UPDATED] Setup Gemini Client (New SDK)
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -305,7 +306,7 @@ def log_admin_action(action, performed_by, target=None, details=None):
 
 # ================= CHAT HISTORY HELPER =================
 
-def save_full_chat_history(line_user_id, role, message, platform="line"):
+def save_full_chat_history(line_user_id, role, message, platform="line", image_url=None):
     """
     บันทึกประวัติแชททั้งหมดใน collection แยก
     Args:
@@ -324,6 +325,7 @@ def save_full_chat_history(line_user_id, role, message, platform="line"):
             "role": role,
             "message": message,
             "platform": platform,
+            "image_url": image_url,
             "timestamp": datetime.datetime.utcnow()
         }
         
@@ -779,16 +781,22 @@ def analyze_intent(text):
         print(f"⚠️ Intent Analysis Error: {e}")
         return "OTHER"
 
-def update_chat_history(uid, role, message):
+def update_chat_history(uid, role, message, platform="line", image_url=None):
+    """
+    อัพเดตประวัติการสนทนาใน Users collection และ Chat History collection
+    """
     if role == 'assistant': role = 'model'
     entry = {"role": role, "parts": [message], "timestamp": datetime.datetime.utcnow()}
+    if image_url:
+        entry["image_url"] = image_url
+
     users_col.update_one(
         {"line_user_id": uid},
         {"$push": {"chat_history": {"$each": [entry], "$slice": -10}}}
     )
     
-    # บันทึกใน chat_history collection ด้วย
-    save_full_chat_history(uid, role, message, "line")
+    # บันทึกใน chat_history collection ด้วย (ใช้ platform ที่ระบุ)
+    save_full_chat_history(uid, role, message, platform, image_url)
 
 def get_gemini_chat_history(uid):
     user = users_col.find_one({"line_user_id": uid})
@@ -1075,9 +1083,9 @@ def handle_text_message(event):
 
         user = get_or_create_user(uid, "line", display_name, picture_url)
         
-        update_chat_history(uid, 'user', event.message.text)
+        update_chat_history(uid, 'user', event.message.text, platform="line")
         reply = process_text_logic(user, event.message.text)
-        update_chat_history(uid, 'model', reply)
+        update_chat_history(uid, 'model', reply, platform="line")
         
         line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=reply)]))
 
@@ -1265,6 +1273,7 @@ def handle_image_message(event):
                     f"เจ้าหน้าที่จะรีบดำเนินการตรวจสอบให้นะคะ ขอบคุณค่ะ 🙏"
                 )
                 
+                update_chat_history(uid, 'model', success_msg, platform="line")
                 line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=success_msg)]))
                 
             except Exception as e:
@@ -1986,29 +1995,26 @@ def send_notification_async(user_id, message, image_url=None):
 def notify_user_platform_agnostic(user, message, image_url=None):
     """
     ฟังก์ชันแจ้งเตือนพหุแพลตฟอร์ม (LINE + Web):
-    - ถ้าเป็นผู้ใช้ LINE: ส่ง Push Message ทันทีแบบ Async
-    - ถ้าเป็นผู้ใช้ Web: บันทึกเข้า Chat History เพื่อให้หน้าเว็บดึงไปโชว์
-    - ถ้าเป็นผู้ใช้ที่เคยเล่นทั้งสอง: ส่งเข้าทั้งสองทางเพื่อให้ไม่พลาดทุกข่าวสาร
+    - ส่ง Push Message ทันทีแบบ Async (ถ้ามี LINE ID)
+    - บันทึกเข้า Chat History เพื่อให้หน้าเว็บดึงไปโชว์ (Web Polling)
     """
     if not user:
         print("⚠️ [Notify] No user provided for notification")
         return False
 
     uid = user.get('line_user_id')
-    platform = user.get('platform', 'line')
+    # ใช้ platform ล่าสุดของผู้ใช้ หรือ default เป็น web ถ้ากำลังเปิดเว็บอยู่
+    platform = user.get('platform', 'web') 
     
-    # 1. ส่ง LINE (Async) - ทำเสมอถ้ามี LINE ID (เพราะ LINE เป็นช่องทางหลัก)
-    if uid and len(uid) > 10: # ตรวจสอบความเป็น LINE ID คร่าวๆ
+    # 1. ส่ง LINE (Async)
+    if uid and len(uid) > 10: 
         print(f"📤 [Notify] Sending LINE notification to {uid}...")
         send_notification_async(uid, message, image_url)
     
-    # 2. ส่งเข้า Web Chat History (เพื่อให้ Polling เจอบนหน้าเว็บ)
-    # เราทำเสมอถ้า platform คือ web หรือถ้าต้องการให้ข้อมูลซิงค์กัน
+    # 2. อัพเดต Chat History (เพื่อให้ Web Polling เจอ)
+    # ฟังก์ชัน update_chat_history จะบันทึกทั้งใน Users และ Chat History Collection อัตโนมัติ
     print(f"💾 [Notify] Syncing notification to Database for {uid} (Platform: {platform})")
-    
-    # บันทึกเป็นบทสนทนาจากโมเดล/ระบบ
-    save_full_chat_history(uid, "assistant", message, platform)
-    update_chat_history(uid, "assistant", message)
+    update_chat_history(uid, "assistant", message, platform, image_url)
     
     return True
 
@@ -2230,61 +2236,61 @@ def resolve_complaint(complaint_id):
             details=f"Description: {complaint.get('description', '')[:50]}..., Note: {resolved_note}"
         )
         
-        # 5. ถ้ามีรูปภาพให้อัพโหลด (ใช้ upload preset)
-        image_url = None
-        if 'image' in request.files:
-            file = request.files['image']
-            if file.filename != '':
+        # 5. ฟังก์ชันย่อยสำหรับประมวลผลรูปภาพและส่งแจ้งเตือน (Async เพื่อความเร็ว)
+        def background_resolve_tasks(complaint_obj, admin_note, image_file, user_obj):
+            img_url = None
+            if image_file:
                 # [NEW] Validate Image
-                is_valid, error_msg = validate_image(file)
-                if not is_valid:
-                    return jsonify({"status": "error", "message": error_msg}), 400
-                
-                suffix = f".{file.filename.rsplit('.', 1)[1].lower()}" if '.' in file.filename else '.jpg'
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
-                    file.save(tf.name)
-                    temp_path = tf.name
-                
-                try:
-                    up_res = cloudinary.uploader.upload(
-                        temp_path,
-                        folder="complaints_resolved",
-                        tags=["complaint_resolved", f"complaint:{complaint_id}"]
-                    )
-                    image_url = up_res.get('secure_url')
+                is_valid, _ = validate_image(image_file)
+                if is_valid:
+                    suffix = f".{image_file.filename.rsplit('.', 1)[1].lower()}" if '.' in image_file.filename else '.jpg'
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
+                        image_file.save(tf.name)
+                        temp_path = tf.name
                     
-                    # บันทึก URL รูปภาพลงใน complaint
-                    complaints_col.update_one(
-                        {"_id": obj_id},
-                        {"$set": {"resolved_image_url": image_url}}
-                    )
-                except Exception as e:
-                    print(f"Image upload error: {e}")
-                finally:
-                    if os.path.exists(temp_path): os.remove(temp_path)
-        
-        # 6. ส่งแจ้งเตือนไปยังผู้ใช้ (พหุแพลตฟอร์ม: LINE + Web) -- [FIX] Fetch user first & Async
-        user = users_col.find_one({"line_user_id": complaint.get("line_user_id")})
-        
-        # [SPEED OPTIMIZATION] Offload notification to background thread
-        if user:
-            # Construct message for resolved complaint
+                    try:
+                        up_res = cloudinary.uploader.upload(
+                            temp_path,
+                            folder="complaints_resolved",
+                            tags=["complaint_resolved", f"complaint:{str(complaint_obj['_id'])}"]
+                        )
+                        img_url = up_res.get('secure_url')
+                        complaints_col.update_one(
+                            {"_id": complaint_obj["_id"]},
+                            {"$set": {"resolved_image_url": img_url}}
+                        )
+                    except Exception as e:
+                        print(f"Background Upload Error: {e}")
+                    finally:
+                        if os.path.exists(temp_path): os.remove(temp_path)
+            
+            # สร้างข้อความแจ้งเตือน
             message = (
                 f"✅ การร้องเรียนของคุณได้รับการแก้ไขแล้ว!\n\n"
-                f"📌 เรื่อง: {complaint.get('description', '')}\n"
-                f"🏠 ห้อง: {complaint.get('room_number', '-')}\n"
-                f"📅 วันที่แจ้ง: {complaint.get('timestamp', '').strftime('%d/%m/%Y') if complaint.get('timestamp') else '-'}\n"
+                f"📌 เรื่อง: {complaint_obj.get('description', '')}\n"
+                f"🏠 ห้อง: {complaint_obj.get('room_number', '-')}\n"
+                f"📅 วันที่แจ้ง: {complaint_obj.get('timestamp', '').strftime('%d/%m/%Y') if complaint_obj.get('timestamp') else '-'}\n"
                 f"✅ ดำเนินการเสร็จ: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
             )
-            if resolved_note:
-                message += f"\n📝 หมายเหตุ: {resolved_note}"
+            if admin_note:
+                message += f"\n📝 หมายเหตุ: {admin_note}"
             message += "\n\nขอบคุณที่แจ้งปัญหาค่ะ 🙏"
             
-            executor.submit(notify_user_platform_agnostic, user, message, image_url)
+            # ส่งแจ้งเตือน (พหุแพลตฟอร์ม)
+            notify_user_platform_agnostic(user_obj, message, img_url)
+
+        # 6. ค้นหาผู้ใช้และเริ่มงานเบื้องหลัง
+        user = users_col.find_one({"line_user_id": complaint.get("line_user_id")})
+        
+        # ดึงไฟล์รูปภาพออกมาก่อน (เนื่องจาก request object อาจเข้าถึงไม่ได้ใน thread อื่น)
+        image_file = request.files['image'] if 'image' in request.files and request.files['image'].filename != '' else None
+        
+        # [SPEED OPTIMIZATION] ทำงานส่วนที่เหลือในพื้นหลังทั้งหมด
+        executor.submit(background_resolve_tasks, complaint, resolved_note, image_file, user)
         
         return jsonify({
             "status": "success",
-            "message": "Complaint resolved successfully"
+            "message": "บันทึกสถานะเรียบร้อยแล้ว (กำลังส่งแจ้งเตือนในพื้นหลัง)"
         })
         
     except Exception as e:
@@ -2618,13 +2624,11 @@ def web_chat_api():
             })
         
         # ประมวลผลข้อความผ่าน Logic กลาง (เหมือน LINE)
-        update_chat_history(uid, 'user', msg)
+        update_chat_history(uid, 'user', msg, platform="web")
         reply = process_text_logic(user, msg)
-        update_chat_history(uid, 'model', reply)
+        update_chat_history(uid, 'model', reply, platform="web")
         
-        # บันทึกใน chat_history สำหรับ web
-        save_full_chat_history(uid, 'user', msg, "web")
-        save_full_chat_history(uid, 'assistant', reply, "web")
+        # [REDUNDANCY REMOVED] update_chat_history now handles save_full_chat_history automatically
 
         return jsonify({
             "reply": reply, 
@@ -2855,6 +2859,7 @@ def get_chat_history(user_id):
                 "role": item.get("role", ""),
                 "message": item.get("message", ""),
                 "platform": item.get("platform", "line"),
+                "image_url": item.get("image_url"), # เพิ่ม image_url สำหรับเว็บ
                 "timestamp": item.get("timestamp", "").strftime("%Y-%m-%d %H:%M:%S") if item.get("timestamp") else ""
             })
         
