@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytz
 import requests # Move to top for performance
 
-# [UPDATED] Google GenAI (New SDK)
+# Google GenAI (New SDK)
 from google import genai
 from google.genai import types
 
@@ -111,7 +111,7 @@ try:
     audit_logs_col = db["audit_logs"]
     chat_history_col = db["chat_history"]
 
-    # [MODIFIED] Consolidated index creation logic
+    # Consolidated index creation logic
     def ensure_indexes():
         """สร้าง Indexes เพื่อเพิ่มความเร็วในการค้นหา"""
         try:
@@ -170,7 +170,7 @@ except Exception as e:
 # Initialize ThreadPoolExecutor for background tasks (Increased for speed)
 executor = ThreadPoolExecutor(max_workers=50)
 
-# [UPDATED] Setup Gemini Client (New SDK)
+# Setup Gemini Client (New SDK)
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ================= CLOUDINARY SETUP =================
@@ -549,8 +549,7 @@ def find_users_by_name_fuzzy(name):
 
 # ================= AI & RAG HELPERS (MODIFIED) =================
 
-# [UPDATED PROMPT] เพิ่มกฎให้ตอบตามรูปแบบเป๊ะๆ
-# [UPDATED PROMPT] ปรับให้มีความเป็นมนุษย์ สุภาพ และเห็นอกเห็นใจมากขึ้น และตอบกระชับ
+# ปรับให้มีความเป็นมนุษย์ สุภาพ และเห็นอกเห็นใจมากขึ้น และตอบกระชับ
 CHAT_SYSTEM_PROMPT = """
 คุณคือ "น้องบอตนิติ" ผู้ช่วยอัจฉริยะประจำคอนโดลุมพินี พาร์ค
 บุคลิก: เป็นมนุษย์ (AI with Human Touch), สุภาพมาก, มีความเห็นอกเห็นใจ (Empathy), กระตือรือร้นที่จะช่วยเหลือ และดูเป็นมืออาชีพแต่เข้าถึงง่าย
@@ -587,12 +586,12 @@ CHAT_SYSTEM_PROMPT = """
    - จัดรูปแบบข้อความให้อ่านง่าย สบายตา ไม่เป็นก้อนข้อความยาวๆ
 
 7. **[IMPORTANT] การตอบคำทักทาย:**
-   - ตอบทักทายกลับแบบมนุษย์ที่สดใส เช่น "สวัสดีค่ะ คุณ [ชื่อ] วันนี้มีอะไรให้น้องบอตนิติช่วยดูแลไหมคะ?"
+   - ตอบทักทายกลับแบบมนุษย์ที่สดใส เช่น "สวัสดีค่ะ คุณ[ชื่อ] วันนี้มีอะไรให้น้องบอตนิติช่วยดูแลไหมคะ?"
    - **ห้าม** นำข้อมูลพัสดุหรือประวัติร้องเรียนมาตอบในคำทักทายสั้นๆ
 
 8. **[IMPORTANT] การใช้ชื่อผู้ใช้:**
-   - เมื่อระบุชื่อผู้ใช้ ให้เว้นวรรคหน้าคำว่า "คุณ" และตามด้วยชื่อ แล้วเว้นวรรคหลังด้วย
-   - ตัวอย่างที่ถูก: "สวัสดีค่ะ คุณ สมชาย วันนี้มีอะไรให้ช่วยไหมคะ"
+   - เมื่อระบุชื่อผู้ใช้ ให้เว้นวรรคหน้าคำว่า คุณตามด้วยชื่อ แล้วเว้นวรรคหลังด้วย
+   - ตัวอย่างที่ถูก: "สวัสดีค่ะ คุณสมชาย วันนี้มีอะไรให้ช่วยไหมคะ"
    - ตัวอย่างที่ผิด: "สวัสดีค่ะคุณสมชายวันนี้มีอะไรให้ช่วยไหมคะ" (ไม่มีการเว้นวรรค)
 """
 
@@ -605,9 +604,9 @@ def extract_keywords(user_text):
     try:
         analysis_prompt = (
             f"จงวิเคราะห์ข้อความของผู้ใช้: '{user_text}'\n"
-            "สกัดคำหลัก (Keywords) ที่เป็นภาษาไทย 2-3 คำ สำหรับใช้ค้นหาในคู่มือส่วนกลางคอนโด\n"
-            "เน้นคำนามหรือคำกริยาสำคัญ (เช่น แอร์, เลี้ยงสัตว์, จอดรถ, แจ้งร้องเรียน)\n"
-            "ตอบแค่คำหลักคั่นด้วยช่องว่างเท่านั้น"
+            "สกัดคำหลัก (Keywords) ภาษาไทย 2-3 คำ ที่ครอบคลุมสาระสำคัญสำหรับการค้นหาในคู่มือดิจิทัลของนิติบุคคลคอนโด\n"
+            "เน้นคำที่เป็น: อุปกรณ์ (เช่น แอร์, ท่อ), กฎระเบียบ (เช่น สัตว์เลี้ยง, ที่จอดรถ), หรือกิจกรรม (เช่น จ่ายค่ากลาง, จองห้องประชุม)\n"
+            "ตัดคำขยายหรือคำฟุ่มเฟือยออก ตอบเฉพาะคำหลักคั่นด้วยช่องว่างเท่านั้น"
         )
         keyword_res = client.models.generate_content(
             model='gemini-3-flash-preview',
@@ -621,7 +620,7 @@ def get_knowledge_context(user_text, user):
     """
     ดึงข้อมูล Context ทั้งหมด:
     1. ข้อมูลส่วนตัว (Users)
-    2. พัสดุของห้องตัวเอง (Parcels) - [FORMAT UPDATED]
+    2. พัสดุของห้องตัวเอง (Parcels)
     3. การแจ้งร้องเรียนของตัวเอง (Complaints)
     4. ความรู้ทั่วไป (Knowledge Base)
     """
@@ -631,7 +630,7 @@ def get_knowledge_context(user_text, user):
         # --- PART 1: ข้อมูลส่วนตัว (Personal Data) ---
         user_info = f"ผู้ใช้งาน: {user.get('first_name', 'ลูกบ้าน')} {user.get('last_name', '')} (ห้อง {user.get('room_number', 'ไม่ระบุ')})"
         
-        # 1.1 Parcels (ดูเฉพาะห้องตัวเอง) - [UPDATED FORMAT]
+        # 1.1 Parcels (ดูเฉพาะห้องตัวเอง)
         # ข้อมูลพัสดุจะถูกนำไปใช้ในฟังก์ชัน process_text_logic เท่านั้น
         parcel_context = f"รายการพัสดุ:\n🏠 ห้อง {user.get('room_number', '-')}\n📦 ตอนนี้ยังไม่มีพัสดุค้างอยู่นะคะ" # Default ไม่มีพัสดุ
         
@@ -928,7 +927,7 @@ def handle_registration(user, text):
         f"ตอนนี้คุณสามารถใช้งานแชตบอตได้เต็มรูปแบบแล้วค่ะ 🎉"
     )
 
-# ================= LOGIC HANDLER (แก้ไขส่วนสำคัญ) =================
+# ================= LOGIC HANDLER =================
 
 def process_text_logic(user, text):
     uid = user['line_user_id']
@@ -948,9 +947,8 @@ def process_text_logic(user, text):
             f"ลงทะเบียน 814 สมชาย ใจดี 0812345678"
         )
     
-    # [REMOVED] Redundant GENERAL block to ensure personal context is always processed correctly.
-    
-    # ================= แก้ไขส่วนสำคัญ: เพิ่มการตรวจสอบความตั้งใจแบบละเอียด =================
+
+    # ================= Intent Analysis =================
     
     # 1. ตรวจสอบว่าผู้ใช้ต้องการเริ่มต้นกระบวนการแจ้งร้องเรียน (รวมถึงการพิมพ์ผิด)
     # ขยายรายการคำที่ต้องการเริ่มต้นกระบวนการ (รวมคำพิมพ์ผิดที่พบบ่อย)
@@ -992,7 +990,7 @@ def process_text_logic(user, text):
             users_col.update_one({"line_user_id": uid}, {"$set": {"complaint_state": "filing_desc"}})
             return "ได้เลยค่ะ บอตยินดีช่วยประสานงานให้นะคะ 📝 รบกวนคุณลูกค้าพิมพ์รายละเอียดปัญหาที่พบมาได้เลยค่ะ"
     
-    # ================= ⚡ AI OPTIMIZATION: PARALLEL PROCESSING =================
+    # ================= AI Processing =================
     
     # ดึง Intent และ Context พร้อมกันเพื่อลดเวลา (Parallel)
     with ThreadPoolExecutor() as executor:
@@ -1013,7 +1011,7 @@ def process_text_logic(user, text):
         intent = intent_future.result()
 
     # ตรวจสอบสถานะและดำเนินการตาม intent
-    # [UPDATED] Robust cancellation handling via AI
+    # Robust cancellation handling via AI
     if intent == "CANCEL" or text.lower() in ["ยกเลิก", "cancel", "ไม่แจ้งแล้ว", "พอแล้ว"]:
         users_col.update_one(
             {"line_user_id": uid}, 
@@ -1098,7 +1096,7 @@ def handle_text_message(event):
         
         line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=reply)]))
 
-# ================= 3. แก้ไขฟังก์ชัน handle_image_message (เปลี่ยนข้อความ) =================
+# ================= Handle Image Message =================
 
 @line_handler.add(MessageEvent, message=ImageMessageContent)
 def handle_image_message(event):
@@ -1149,7 +1147,7 @@ def handle_image_message(event):
                         time.sleep(1)
                         upload_file = client.files.get(name=upload_file.name)
 
-                    # 🔥 ปรับปรุง Vision Prompt ให้ละเอียดขึ้น (Updated Criteria)
+                    # ปรับปรุง Vision Prompt ให้ละเอียดขึ้น
                     vision_prompt = (
                         f"คำอธิบายจากลูกบ้าน: '{user_desc}'\n\n"
                         
@@ -1220,7 +1218,7 @@ def handle_image_message(event):
                             detailed_analysis = parts[2].strip()
                             
                             # ผสาน Summary และ Detailed Analysis เพื่อแสดงในระบบ
-                            # ปรับปรุงรูปแบบการแสดงผลตามที่ User ต้องการ
+                            # ปรับปรุงรูปแบบการแสดงผลตามที่ต้องการ
                             final_ai_summary = (
                                 f"{ai_summary_text}\n\n"
                                 f"🤖 วิเคราะห์เชิงลึก:\n"
@@ -1275,7 +1273,7 @@ def handle_image_message(event):
                     {"$set": {"complaint_state": "normal", "draft_desc": None}}
                 )
                 
-                # 7. ตอบกลับผู้ใช้ (แก้ไขข้อความ)
+                # 7. ตอบกลับผู้ใช้
                 success_msg = (
                     f"✅ รับแจ้งร้องเรียนเรียบร้อยแล้วค่ะ!\n\n"
                     f"📌 เรื่อง: {user_desc}\n"
@@ -1543,7 +1541,7 @@ def get_all_users():
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# ================= 5. แก้ไขฟังก์ชัน get_all_complaints =================
+# ================= Complaints API =================
 
 @app.route('/api/complaints', methods=['GET'])
 @require_api_token
@@ -1578,7 +1576,7 @@ def get_all_complaints():
             "urgency_level": 1
         }).limit(100))
         
-        # 🔥 ปรับปรุง Sorting Logic ใหม่
+        # Sorting Logic
         def get_priority_score(priority):
             priority_map = {
                 'high': 100,
@@ -1780,7 +1778,7 @@ def search_parcels_optimized():
             "image_url": 1,
             "timestamp": 1,
             "_id": 1
-        }).sort("timestamp", -1).limit(100))
+        }).sort("timestamp", -1))  # ไม่จำกัดจำนวน - พัสดุรอรับสามารถเก็บได้ไม่จำกัด
         
         result = []
         for i in items:
@@ -1885,7 +1883,7 @@ def scan_parcel_api():
 
     file = request.files['image']
     
-    # [NEW] Validate Image
+    # Validate Image
     is_valid, error_msg = validate_image(file)
     if not is_valid:
         return jsonify({"status": "error", "message": error_msg}), 400
@@ -2006,7 +2004,7 @@ def notify_user_platform_agnostic(user, message, image_url=None):
     """
     ฟังก์ชันแจ้งเตือนพหุแพลตฟอร์ม (LINE Only):
     - ส่ง Push Message ทันทีแบบ Async (ถ้ามี LINE ID)
-    - ไม่บันทึกเข้า Chat History เพื่อให้หน้าเว็บดึงไปโชว์ (เอาออกตามคำขอของ User)
+    - ไม่บันทึกเข้า Chat History
     - Web Chat ยังใช้งานได้ปกติ (แจ้งร้องเรียน, ถามคำถาม, ค้นหาข้อมูล)
     """
     if not user:
@@ -2020,7 +2018,7 @@ def notify_user_platform_agnostic(user, message, image_url=None):
         print(f"📤 [Notify] Sending LINE notification to {uid}...")
         send_notification_async(uid, message, image_url)
     
-    # 2. [REMOVED] ไม่อัพเดต Chat History สำหรับการแจ้งเตือน (เอาออกตามคำขอของ User)
+    # 2. ไม่อัพเดต Chat History สำหรับการแจ้งเตือน
     # Web Chat ยังใช้งานได้ปกติ แต่ไม่แสดงการแจ้งเตือนระบบอัตโนมัติ
     # update_chat_history(uid, "assistant", message, platform, image_url)
     
@@ -2314,7 +2312,7 @@ def get_audit_logs():
     try:
         # ดึง logs ล่าสุด 30 รายการ (เรียงจากใหม่ไปเก่า) ตามคำขอของ user
         # ใช้ projection เลือกเฉพาะ field ที่จำเป็น
-        # [SPEED FIX] Force strict limit and ensure index exists
+        # Force strict limit and ensure index exists
         try:
             audit_logs_col.create_index([("timestamp", -1)]) 
         except: 
@@ -2327,7 +2325,7 @@ def get_audit_logs():
             "timestamp": 1,
             "details": 1,
             "_id": 0
-        }).sort("timestamp", -1).limit(20))
+        }).sort("timestamp", -1).limit(20))  # แสดง 20 รายการล่าสุด
         
         result = []
         for log in logs:
@@ -2523,7 +2521,153 @@ def api_cleanup_images():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# ================= WEB CHAT API (แก้ไขให้รองรับการแจ้งร้องเรียนพร้อมรูปภาพ) =================
+# ================= AUTO-CLEANUP OLD DATA =================
+
+def cleanup_old_resolved_complaints():
+    """
+    ลบร้องเรียนที่ status='resolved' และเก่ากว่า 90 วัน
+    """
+    try:
+        ninety_days_ago = datetime.datetime.now() - datetime.timedelta(days=90)
+        
+        # ค้นหาและลบ
+        result = complaints_col.delete_many({
+            "status": "resolved",
+            "timestamp": {"$lt": ninety_days_ago}
+        })
+        
+        deleted_count = result.deleted_count
+        print(f"🗑️  Deleted {deleted_count} old resolved complaints")
+        
+        # บันทึก audit log
+        if deleted_count > 0:
+            audit_logs_col.insert_one({
+                "action": "Auto Cleanup - Complaints",
+                "performed_by": "system",
+                "target": f"{deleted_count} complaints",
+                "details": f"Deleted {deleted_count} resolved complaints older than 90 days",
+                "timestamp": get_bkk_now()
+            })
+        
+        return deleted_count
+    except Exception as e:
+        print(f"❌ Cleanup complaints error: {e}")
+        return 0
+
+def cleanup_old_picked_parcels():
+    """
+    ลบพัสดุที่ status='pickedup' และเก่ากว่า 90 วัน
+    """
+    try:
+        ninety_days_ago = datetime.datetime.now() - datetime.timedelta(days=90)
+        
+        # ค้นหาพัสดุที่จะลบ
+        old_parcels = list(parcels_col.find({
+            "status": "pickedup",
+            "pickup_time": {"$lt": ninety_days_ago}
+        }))
+        
+        if len(old_parcels) == 0:
+            print("✅ No old parcels to cleanup")
+            return 0
+            
+        # ลบรูปจาก Cloudinary
+        for parcel in old_parcels:
+            try:
+                image_url = parcel.get("image_url")
+                if image_url and "cloudinary.com" in image_url:
+                    parts = image_url.split("/")
+                    if len(parts) > 0:
+                        filename = parts[-1].split(".")[0]
+                        folder = parts[-2] if len(parts) > 1 else ""
+                        public_id = f"{folder}/{filename}" if folder else filename
+                        cloudinary.uploader.destroy(public_id)
+                        print(f"🗑️  Deleted cloud image: {public_id}")
+            except Exception as e:
+                print(f"Error deleting parcel image: {e}")
+        
+        # ลบจากฐานข้อมูล
+        result = parcels_col.delete_many({
+            "status": "pickedup",
+            "pickup_time": {"$lt": ninety_days_ago}
+        })
+        
+        deleted_count = result.deleted_count
+        print(f"🗑️  Deleted {deleted_count} old picked parcels")
+        
+        # บันทึก audit log
+        if deleted_count > 0:
+            audit_logs_col.insert_one({
+                "action": "Auto Cleanup - Parcels",
+                "performed_by": "system",
+                "target": f"{deleted_count} parcels",
+                "details": f"Deleted {deleted_count} picked parcels older than 90 days",
+                "timestamp": get_bkk_now()
+            })
+        
+        return deleted_count
+    except Exception as e:
+        print(f"❌ Cleanup parcels error: {e}")
+        return 0
+
+def cleanup_old_audit_logs():
+    """
+    ลบ audit logs ที่เก่ากว่า 90 วัน
+    """
+    try:
+        ninety_days_ago = datetime.datetime.now() - datetime.timedelta(days=90)
+        
+        # ค้นหาและลบ
+        result = audit_logs_col.delete_many({
+            "timestamp": {"$lt": ninety_days_ago}
+        })
+        
+        deleted_count = result.deleted_count
+        print(f"🗑️  Deleted {deleted_count} old audit logs")
+        
+        return deleted_count
+    except Exception as e:
+        print(f"❌ Cleanup audit logs error: {e}")
+        return 0
+
+@app.route('/api/admin/cleanup-old-data', methods=['POST'])
+@require_api_token
+def api_cleanup_old_data():
+    """
+    API สำหรับลบข้อมูลเก่าอัตโนมัติ (ควรเรียกจาก cron job)
+    - ลบร้องเรียนที่ปิดงานแล้ว (resolved) มากกว่า 90 วัน
+    - ลบพัสดุที่รับแล้ว (pickedup) มากกว่า 90 วัน
+    """
+    try:
+        print("\n🔄 Starting auto-cleanup process...")
+        
+        complaints_deleted = cleanup_old_resolved_complaints()
+        parcels_deleted = cleanup_old_picked_parcels()
+        audit_logs_deleted = cleanup_old_audit_logs()
+        
+        total_deleted = complaints_deleted + parcels_deleted + audit_logs_deleted
+        
+        print(f"✅ Cleanup completed: {total_deleted} items deleted\n")
+        
+        return jsonify({
+            "status": "success",
+            "message": "Cleanup completed successfully",
+            "deleted": {
+                "complaints": complaints_deleted,
+                "parcels": parcels_deleted,
+                "audit_logs": audit_logs_deleted,
+                "total": total_deleted
+            },
+            "timestamp": get_bkk_now().isoformat()
+        })
+    except Exception as e:
+        print(f"❌ Cleanup API error: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+# ================= WEB CHAT API =================
 
 @app.route('/api/web/chat', methods=['POST'])
 @require_api_token
@@ -2551,14 +2695,14 @@ def web_chat_api():
         if image_base64:
             if user.get('complaint_state') == 'waiting_image' and user.get('draft_desc'):
                 try:
-                    # [NEW] ตรวจสอบนามสกุลจาก image_type
+                    # ตรวจสอบนามสกุลจาก image_type
                     if image_type.lower() not in ALLOWED_EXTENSIONS:
                         return jsonify({"error": f"นามสกุลไฟล์ .{image_type} ไม่รองรับ"}), 400
 
                     # ถอดรหัส base64
                     image_data = base64.b64decode(image_base64)
                     
-                    # [NEW] ตรวจสอบขนาดข้อมูลหลังถอดรหัส
+                    # ตรวจสอบขนาดข้อมูลหลังถอดรหัส
                     if len(image_data) > MAX_FILE_SIZE:
                         return jsonify({"error": f"ไฟล์มีขนาดใหญ่เกินไป (สูงสุด {MAX_FILE_SIZE // (1024*1024)}MB)"}), 400
 
@@ -2616,9 +2760,7 @@ def web_chat_api():
                 }
             })
 
-        # [REMOVED] Redundant manual registration check. 
-        # process_text_logic already handles registration prompts and human-like greetings.
-        
+
         # ถ้าไม่มีรูปภาพ (เป็นข้อความธรรมดา)
         if not msg: 
             return jsonify({
@@ -2650,7 +2792,7 @@ def web_chat_api():
 
 def process_web_complaint_image(user, image_path):
     """
-    ประมวลผลรูปภาพการแจ้งร้องเรียนจากเว็บ (แก้ไขข้อความ)
+    ประมวลผลรูปภาพการแจ้งร้องเรียนจากเว็บ
     """
     try:
         uid = user['line_user_id']
@@ -2805,7 +2947,7 @@ def process_web_complaint_image(user, image_path):
             {"$set": {"complaint_state": "normal", "draft_desc": None}}
         )
         
-        # 7. สร้างข้อความตอบกลับ (ไม่ต้องแสดงระดับความสำคัญตามที่ user request)
+        # 7. สร้างข้อความตอบกลับ
         success_msg = (
             f"✅ รับแจ้งร้องเรียนเรียบร้อยแล้วค่ะ!\n\n"
             f"📌 เรื่อง: {user_desc}\n"
@@ -2821,7 +2963,7 @@ def process_web_complaint_image(user, image_path):
         traceback.print_exc()
         return "เกิดข้อผิดพลาดในการประมวลผลค่ะ โปรดลองอีกครั้ง"
 
-# ================= 6. เพิ่ม API สำหรับตรวจสอบการวิเคราะห์ (สำหรับ debugging) =================
+# ================= Debug API =================
 
 @app.route('/api/debug/analyze', methods=['POST'])
 @require_api_token
