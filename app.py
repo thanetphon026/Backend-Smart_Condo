@@ -1983,6 +1983,35 @@ def send_notification_async(user_id, message, image_url=None):
     except Exception as e:
         print(f"Async Notification Error: {e}")
 
+def notify_user_platform_agnostic(user, message, image_url=None):
+    """
+    ฟังก์ชันแจ้งเตือนพหุแพลตฟอร์ม (LINE + Web):
+    - ถ้าเป็นผู้ใช้ LINE: ส่ง Push Message ทันทีแบบ Async
+    - ถ้าเป็นผู้ใช้ Web: บันทึกเข้า Chat History เพื่อให้หน้าเว็บดึงไปโชว์
+    - ถ้าเป็นผู้ใช้ที่เคยเล่นทั้งสอง: ส่งเข้าทั้งสองทางเพื่อให้ไม่พลาดทุกข่าวสาร
+    """
+    if not user:
+        print("⚠️ [Notify] No user provided for notification")
+        return False
+
+    uid = user.get('line_user_id')
+    platform = user.get('platform', 'line')
+    
+    # 1. ส่ง LINE (Async) - ทำเสมอถ้ามี LINE ID (เพราะ LINE เป็นช่องทางหลัก)
+    if uid and len(uid) > 10: # ตรวจสอบความเป็น LINE ID คร่าวๆ
+        print(f"📤 [Notify] Sending LINE notification to {uid}...")
+        send_notification_async(uid, message, image_url)
+    
+    # 2. ส่งเข้า Web Chat History (เพื่อให้ Polling เจอบนหน้าเว็บ)
+    # เราทำเสมอถ้า platform คือ web หรือถ้าต้องการให้ข้อมูลซิงค์กัน
+    print(f"💾 [Notify] Syncing notification to Database for {uid} (Platform: {platform})")
+    
+    # บันทึกเป็นบทสนทนาจากโมเดล/ระบบ
+    save_full_chat_history(uid, "assistant", message, platform)
+    update_chat_history(uid, "assistant", message)
+    
+    return True
+
 # ================= CONFIRM PARCEL AND NOTIFY (MODIFIED) =================
 
 @app.route('/api/confirm', methods=['POST'])
@@ -2063,25 +2092,8 @@ def confirm_parcel_and_notify():
 
         image_url = data.get("image_url")
 
-        # 8. ส่งแจ้งเตือน (LINE หรือ Web)
-        if user:
-            # ตรวจสอบ platform
-            platform = user.get("platform", "line")
-            
-            # ถ้ามี LINE ID ให้ส่ง LINE Notification (กรณี User ผูก LINE ไว้แล้ว)
-            if user.get("line_user_id"):
-                print(f"📤 กำลังส่งแจ้งเตือน Async ไปยัง {user.get('line_user_id')}...")
-                send_notification_async(user["line_user_id"], message, image_url)
-            
-            # ถ้าผู้ใช้อยู่บนหน้าเว็บ (หรือไม่มี LINE) ให้บันทึกเข้า Chat History เพื่อ Polling
-            if platform == 'web' or not user.get("line_user_id"):
-                 # บันทึกเป็นข้อความจาก 'assistant'
-                 save_full_chat_history(user.get("line_user_id"), "assistant", message, platform)
-                 # อัพเดตใน users collection เพื่อให้ polling เจอล่าสุด
-                 update_chat_history(user.get("line_user_id"), "assistant", message)
-                 print(f"💾 Saved web notification for {user.get('line_user_id')}")
-        else:
-             print("⚠️ User not found for notification")
+        # 8. ส่งแจ้งเตือน (พหุแพลตฟอร์ม: LINE + Web)
+        notify_user_platform_agnostic(user, message, image_url)
 
         notification_lines = []
         notification_lines.append(f"✅ ส่งแจ้งเตือนถึง: {user.get('display_name', 'Unknown')} (ห้อง {user.get('room_number', '-')})")
@@ -2142,31 +2154,8 @@ def pickup_parcel():
         # 4. ค้นหาผู้ใช้จากห้อง
         user = users_col.find_one({"room_number": parcel.get("room_number")})
         
-        # 5. ส่งแจ้งเตือนการรับพัสดุ (LINE หรือ Web)
-        if user:
-            message = (
-                f"✅ พัสดุของคุณถูกรับแล้ว!\n\n"
-                f"📦 พัสดุ: {parcel.get('tracking_number', '-')}\n"
-                f"🏠 ห้อง: {parcel.get('room_number', '-')}\n"
-                f"🚚 ขนส่ง: {parcel.get('transport', '-')}\n"
-                f"🔑 PIN: {parcel.get('pin', '-')}\n"
-                f"⏰ เวลารับ: {format_datetime(datetime.datetime.now())}\n\n"
-                f"ขอบคุณที่ใช้บริการค่ะ"
-            )
-            image_url = parcel.get("image_url")
-            
-            # ส่ง LINE ถ้ามี
-            if user.get("line_user_id"):
-                print(f"📤 Sending async pickup notification...")
-                send_notification_async(user["line_user_id"], message, image_url)
-                
-            # บันทึก Web Chat History ถ้าเป็น Web Platform
-            platform = user.get("platform", "line")
-            if platform == 'web' or not user.get("line_user_id"):
-                save_full_chat_history(user.get("line_user_id"), "assistant", message, platform)
-                update_chat_history(user.get("line_user_id"), "assistant", message)
-            
-            print(f"✅ Picked up notification processed for {user.get('line_user_id')}")
+        # 5. ส่งแจ้งเตือนการรับพัสดุ (พหุแพลตฟอร์ม: LINE + Web)
+        notify_user_platform_agnostic(user, message, image_url)
         
         return jsonify({
             "status": "success",
@@ -2261,35 +2250,8 @@ def resolve_complaint(complaint_id):
                 finally:
                     if os.path.exists(temp_path): os.remove(temp_path)
         
-        # 6. ส่งแจ้งเตือนไปยังผู้ใช้ (LINE หรือ Web)
-        user = users_col.find_one({"line_user_id": complaint.get("line_user_id")})
-        
-        if user:
-            message = (
-                f"✅ การร้องเรียนของคุณได้รับการแก้ไขแล้ว!\n\n"
-                f"📌 เรื่อง: {complaint.get('description', '')}\n"
-                f"🏠 ห้อง: {complaint.get('room_number', '-')}\n"
-                f"📅 วันที่แจ้ง: {complaint.get('timestamp', '').strftime('%d/%m/%Y') if complaint.get('timestamp') else '-'}\n"
-                f"✅ ดำเนินการเสร็จ: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
-            )
-            
-            if resolved_note:
-                message += f"\n📝 หมายเหตุ: {resolved_note}"
-            
-            message += "\n\nขอบคุณที่แจ้งปัญหาค่ะ 🙏"
-            
-            # ส่ง LINE ถ้ามี
-            if user.get("line_user_id"):
-                print(f"📤 Sending async resolve notification...")
-                send_notification_async(user["line_user_id"], message, image_url)
-            
-            # บันทึก Web Chat History
-            platform = user.get("platform", "line")
-            if platform == 'web' or not user.get("line_user_id"):
-                save_full_chat_history(user.get("line_user_id"), "assistant", message, platform)
-                update_chat_history(user.get("line_user_id"), "assistant", message)
-            
-            print(f"✅ Resolved notification processed for {user.get('line_user_id')}")
+        # 6. ส่งแจ้งเตือนไปยังผู้ใช้ (พหุแพลตฟอร์ม: LINE + Web)
+        notify_user_platform_agnostic(user, message, image_url)
         
         return jsonify({
             "status": "success",
@@ -2585,8 +2547,8 @@ def web_chat_api():
                 finally:
                     if 'temp_path' in locals() and os.path.exists(temp_path): os.remove(temp_path)
             else:
-                # กรณีส่งรูปมาแต่ไม่ได้อยู่ในสถานะรอรูป (เช่น ส่งเล่น หรือส่งผิด)
-                reply_msg = "📷 ได้รับรูปภาพแล้วค่ะ\nหากต้องการแจ้งร้องเรียน/แจ้งซ่อม กรุณาพิมพ์รายละเอียดปัญหาเข้ามาก่อนนะคะ แล้วระบบจะแจ้งให้ส่งรูปภาพอีกครั้งค่ะ"
+                # กรณีส่งรูปมาแต่ไม่ได้อยู่ในสถานะรอรูป
+                reply_msg = "ได้รับรูปแล้วค่ะ 📸 (ไม่ได้อยู่ในโหมดแจ้งร้องเรียน)\nหากต้องการแจ้งซ่อม/ร้องเรียน กรุณาพิมพ์รายละเอียดเข้ามาก่อนนะคะ"
                 
                 update_chat_history(uid, 'user', '[ส่งรูปภาพ]')
                 update_chat_history(uid, 'model', reply_msg)
@@ -2611,35 +2573,22 @@ def web_chat_api():
                 }
             })
 
-        # ตรวจสอบว่าผู้ใช้ลงทะเบียนแล้วหรือยัง
-        if not is_registered(user):
-            current_name = user.get('display_name', 'ลูกบ้าน')
-            
-            # ถ้าข้อความไม่ใช่คำสั่งลงทะเบียน ให้แจ้งให้ลงทะเบียน
-            if not msg.strip().startswith("ลงทะเบียน"):
-                reply = (
-                    f"สวัสดีคุณ {current_name}! 👋\n\n"
-                    f"📝 กรุณาลงทะเบียนเพื่อใช้งานแชตบอตนิติบุคคล\n\n"
-                    f"พิมพ์: ลงทะเบียน [เลขห้อง] [ชื่อ] [นามสกุล] [เบอร์โทร]\n\n"
-                    f"ตัวอย่าง:\n"
-                    f"ลงทะเบียน 814 สมชาย ใจดี 0812345678"
-                )
-                
-                # บันทึกประวัติแชท
-                update_chat_history(uid, 'user', msg)
-                update_chat_history(uid, 'model', reply)
-                
-                # บันทึกใน chat_history สำหรับ web
-                save_full_chat_history(uid, 'user', msg, "web")
-                save_full_chat_history(uid, 'assistant', reply, "web")
-
-                return jsonify({
-                    "reply": reply, 
-                    "status": "registration_required",
-                    "is_registered": False
-                })
+        # [REMOVED] Redundant manual registration check. 
+        # process_text_logic already handles registration prompts and human-like greetings.
         
-        # ถ้าลงทะเบียนแล้ว
+        # ถ้าไม่มีรูปภาพ (เป็นข้อความธรรมดา)
+        if not msg: 
+            return jsonify({
+                "status": "connected", 
+                "user_info": {
+                    "line_user_id": user['line_user_id'],
+                    "display_name": user.get('display_name'),
+                    "picture_url": user.get('picture_url'),
+                    "is_registered": is_registered(user)
+                }
+            })
+        
+        # ประมวลผลข้อความผ่าน Logic กลาง (เหมือน LINE)
         update_chat_history(uid, 'user', msg)
         reply = process_text_logic(user, msg)
         update_chat_history(uid, 'model', reply)
