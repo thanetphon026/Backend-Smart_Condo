@@ -1006,9 +1006,51 @@ Rules:
         if any(kw in text_lower for kw in question_keywords):
             return False, []
         
-        confirmation_keywords = ["ขอรับนอกเวลา", "จะรับนอกเวลา", "รับพัสดุนอกเวลา", "ยืนยันรับนอกเวลา", "ลงทะเบียนรับนอกเวลา"]
-        is_intent = any(kw in text_lower for kw in confirmation_keywords)
         return is_intent, []
+
+def interpret_parcel_selection(text, total_items):
+    """
+    แปลความหมายการเลือกพัสดุจากข้อความ (Natural Language to Indices)
+    รองรับ: "1-3", "1 ถึง 3", "ทั้งหมด", "อันแรกกับอันสุดท้าย"
+    Returns: list of 0-based indices e.g., [0, 2]
+    """
+    try:
+        prompt = f"""Human wants to select items from a list of {total_items} items.
+Text: "{text}"
+
+Output JSON only: specific 1-based indices.
+Rules:
+- "ทั้งหมด", "all", "ทุกอัน" -> all indices [1, 2, ..., {total_items}]
+- "1-3", "1 to 3", "1 ถึง 3" -> [1, 2, 3]
+- "1, 3" -> [1, 3]
+- "อันแรก" -> [1]
+- If invalid/unsure -> []
+
+Example JSON: {{"indices": [1, 2, 3]}}"""
+
+        response = client.models.generate_content(
+            model='gemini-3-flash-preview',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+        
+        import json
+        result = json.loads(response.text.strip())
+        indices = result.get("indices", [])
+        
+        # Validate indices
+        valid_indices = []
+        for idx in indices:
+            if 1 <= idx <= total_items:
+                valid_indices.append(idx - 1) # Convert to 0-based
+        
+        return valid_indices
+        
+    except Exception as e:
+        print(f"❌ Selection Interpretation Error: {e}")
+        return []
 
 def detect_after_hours_cancel_intent(text):
     """
@@ -1088,6 +1130,17 @@ def process_text_logic(user, text):
             f"ลงทะเบียน 814 สมชาย ใจดี 0812345678"
         )
     
+    # ================= PRIORITY CANCELLATION (COMPLAINT STATUS) =================
+    # ตรวจสอบว่ากำลังแจ้งร้องเรียนอยู่หรือไม่ ถ้าใช่ และพิมพ์ "ยกเลิก" ให้จบการร้องเรียนทันที (ไม่ไปทำรายการพัสดุ)
+    if state in ['filing_desc', 'waiting_image']:
+        cancel_keywords = ["ยกเลิก", "cancel", "ไม่แจ้งแล้ว", "พอแล้ว", "ออก", "exit"]
+        if any(kw in text.strip().lower() for kw in cancel_keywords):
+            users_col.update_one(
+                {"line_user_id": uid}, 
+                {"$set": {"complaint_state": "normal", "draft_desc": None}}
+            )
+            return "❌ ยกเลิกการแจ้งร้องเรียนเรียบร้อยค่ะ หากมีเรื่องให้ช่วยเรียกน้องบอตใหม่ได้เสมอนะคะ"
+    
     # ================= AFTER-HOURS PARCEL LOGIC =================
     
     # 1. ตรวจสอบว่าผู้ใช้อยู่ในสถานะการเลือกพัสดุนอกเวลาหรือไม่
@@ -1097,34 +1150,34 @@ def process_text_logic(user, text):
         # ผู้ใช้กำลังเลือกพัสดุที่ต้องการรับนอกเวลา
         pending_parcel_pins = user.get('after_hours_pending_pins', [])
         
-        try:
-            # แปลงข้อความเป็นตัวเลข (ตัวอย่าง: "1,3" หรือ "1 3" หรือ "1,2,3")
-            selected_indices = []
-            # รองรับทั้ง comma และ space
-            parts = text.replace(',', ' ').split()
-            for part in parts:
-                if part.strip().isdigit():
-                    selected_indices.append(int(part.strip()))
-            
-            if not selected_indices:
-                return "❌ กรุณาพิมพ์ตัวเลขของพัสดุที่ต้องการรับนอกเวลาค่ะ\n\nตัวอย่าง: 1,3 หรือ 1 3"
-            
-            # ตรวจสอบว่าตัวเลขที่เลือกอยู่ในช่วงที่ถูกต้อง
-            selected_pins = []
-            for idx in selected_indices:
-                if 1 <= idx <= len(pending_parcel_pins):
-                    selected_pins.append(pending_parcel_pins[idx - 1])
-                else:
-                    return f"❌ ตัวเลข {idx} ไม่ถูกต้องค่ะ กรุณาเลือกระหว่าง 1-{len(pending_parcel_pins)}"
-            
-            # อัพเดตพัสดุที่เลือกให้เป็น after-hours
-            parcels_col.update_many(
-                {"pin": {"$in": selected_pins}},
-                {"$set": {
-                    "is_after_hours": True,
-                    "after_hours_confirmed_at": datetime.datetime.now()
-                }}
-            )
+        # ใช้ AI แปลความหมายการเลือก (รองรับ "1-3", "ทั้งหมด" ฯลฯ)
+        selected_indices = interpret_parcel_selection(text, len(pending_parcel_pins))
+        
+        # Fallback: Manual Parsing (เผื่อ AI พลาด หรือกรณี Simple)
+        if not selected_indices:
+             try:
+                parts = text.replace(',', ' ').replace('-', ' ').split()
+                for part in parts:
+                    if part.strip().isdigit():
+                        idx = int(part.strip())
+                        if 1 <= idx <= len(pending_parcel_pins):
+                            selected_indices.append(idx - 1)
+             except:
+                pass
+
+        if not selected_indices:
+             return f"❌ ไม่เข้าใจคำสั่งค่ะ กรุณาระบุรหัสพัสดุ เช่น '1, 3' หรือ 'ทั้งหมด' หรือ '1 ถึง 3'"
+
+        selected_pins = [pending_parcel_pins[i] for i in selected_indices]
+        
+        # อัพเดตพัสดุที่เลือกให้เป็น after-hours
+        parcels_col.update_many(
+            {"pin": {"$in": selected_pins}},
+            {"$set": {
+                "is_after_hours": True,
+                "after_hours_confirmed_at": datetime.datetime.now()
+            }}
+        )
             
             # อัพเดต user preference
             users_col.update_one(
