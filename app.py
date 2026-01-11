@@ -948,9 +948,7 @@ def handle_registration(user, text):
 
 # ================= AFTER-HOURS PARCEL HELPERS =================
 
-        confirmation_keywords = ["ขอรับนอกเวลา", "จะรับนอกเวลา", "รับพัสดุนอกเวลา", "ยืนยันรับนอกเวลา", "ลงทะเบียนรับนอกเวลา"]
-        is_confirm = any(kw in text_lower for kw in confirmation_keywords)
-        return is_confirm, []
+
 
 def detect_after_hours_intent(text):
     """
