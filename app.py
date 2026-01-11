@@ -824,6 +824,8 @@ def update_chat_history(uid, role, message, platform="line", image_url=None):
     
     # บันทึกใน chat_history collection ด้วย (ใช้ platform ที่ระบุ)
     save_full_chat_history(uid, role, message, platform, image_url)
+    
+    return entry["timestamp"]
 
 def get_gemini_chat_history(uid):
     user = users_col.find_one({"line_user_id": uid})
@@ -3422,13 +3424,14 @@ def web_chat_api():
         # ประมวลผลข้อความผ่าน Logic กลาง (เหมือน LINE)
         update_chat_history(uid, 'user', msg, platform="web")
         reply = process_text_logic(user, msg)
-        update_chat_history(uid, 'model', reply, platform="web")
+        ts = update_chat_history(uid, 'model', reply, platform="web")
         
         # [REDUNDANCY REMOVED] update_chat_history now handles save_full_chat_history automatically
 
         return jsonify({
             "reply": reply, 
             "status": "success",
+            "timestamp": ts.isoformat() if ts else datetime.datetime.utcnow().isoformat(),
             "is_registered": is_registered(user)
         })
 
