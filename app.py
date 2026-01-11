@@ -1179,31 +1179,31 @@ def process_text_logic(user, text):
             }}
         )
             
-            # อัพเดต user preference
-            users_col.update_one(
-                {"line_user_id": uid},
-                {"$set": {
-                    "after_hours_preference": True,
-                    "after_hours_state": None,
-                    "after_hours_pending_pins": None
-                }}
-            )
-            
-            # บันทึก Audit Log
-            log_admin_action(
-                action="After-Hours Registration",
-                performed_by=f"User ({user.get('room_number', '-')})",
-                target=f"Parcels: {', '.join(selected_pins)}",
-                details=f"User confirmed {len(selected_pins)} parcel(s) for after-hours pickup"
-            )
-            
-            parcel_list = "\n".join([f"  • PIN {pin}" for pin in selected_pins])
-            return (
-                f"✅ บันทึกเรียบร้อยแล้วค่ะ!\n\n"
-                f"📦 พัสดุที่ลงทะเบียนรับนอกเวลา ({len(selected_pins)} ชิ้น):\n{parcel_list}\n\n"
-                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n\n"
-                f"ทางนิติบุคคลจะเตรียมพัสดุไว้ให้ค่ะ ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
-            )
+        # อัพเดต user preference
+        users_col.update_one(
+            {"line_user_id": uid},
+            {"$set": {
+                "after_hours_preference": True,
+                "after_hours_state": None,
+                "after_hours_pending_pins": None
+            }}
+        )
+        
+        # บันทึก Audit Log
+        log_admin_action(
+            action="After-Hours Registration",
+            performed_by=f"User ({user.get('room_number', '-')})",
+            target=f"Parcels: {', '.join(selected_pins)}",
+            details=f"User confirmed {len(selected_pins)} parcel(s) for after-hours pickup"
+        )
+        
+        parcel_list = "\n".join([f"  • PIN {pin}" for pin in selected_pins])
+        return (
+            f"✅ บันทึกเรียบร้อยแล้วค่ะ!\n\n"
+            f"📦 พัสดุที่ลงทะเบียนรับนอกเวลา ({len(selected_pins)} ชิ้น):\n{parcel_list}\n\n"
+            f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n\n"
+            f"ทางนิติบุคคลจะเตรียมพัสดุไว้ให้ค่ะ ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
+        )
             
         except Exception as e:
             print(f"❌ After-Hours Selection Error: {e}")
