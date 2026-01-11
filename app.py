@@ -2667,10 +2667,22 @@ def pickup_parcel():
             return jsonify({"status": "error", "message": "ไม่พบพัสดุหรือรับไปแล้ว"}), 404
         
         # 2. อัพเดตสถานะเป็น picked_up
-        parcels_col.update_one(
+        update_result = parcels_col.update_one(
             {"_id": parcel["_id"]},
             {"$set": {"status": "picked_up", "pickup_time": datetime.datetime.now()}}
         )
+        
+        print(f"📦 [Pickup] PIN {pin}: Matched {update_result.matched_count}, Modified {update_result.modified_count}")
+
+        # Verify Update
+        if update_result.modified_count == 0:
+             # Try fetching again to see status
+             check_p = parcels_col.find_one({"_id": parcel["_id"]})
+             print(f"⚠️ [Pickup Warning] DB Not Modified. Current Status: {check_p.get('status')}")
+             if check_p and check_p.get('status') == 'picked_up':
+                 pass # Already picked up?
+             else:
+                 return jsonify({"status": "error", "message": "Failed to update parcel status"}), 500
         
         # 3. บันทึก Audit Log (เปลี่ยนชื่อให้ตรงกับความต้องการของ user)
         log_admin_action(
@@ -2683,10 +2695,10 @@ def pickup_parcel():
         # 4. ค้นหาผู้ใช้จากห้อง
         user = users_col.find_one({"room_number": parcel.get("room_number")})
         
-        # 5. ส่งแจ้งเตือนการรับพัสดุ (เฉพาะรับในเวลาปกติ)
-        # [USER REQUEST] รับนอกเวลาจะไม่มีเเจ้งเตือนว่ารับของเเล้ว
+        # 5. ส่งแจ้งเตือนการรับพัสดุ (ส่งทุกกรณี ตาม Request ล่าสุด)
         is_after_hours = parcel.get("is_after_hours", False)
-        if user and not is_after_hours:
+        
+        if user:
             # Construct message for pickup
             message = (
                 f"✅ พัสดุของคุณถูกรับแล้ว!\n\n"
@@ -2694,14 +2706,19 @@ def pickup_parcel():
                 f"🏠 ห้อง: {parcel.get('room_number', '-')}\n"
                 f"🚚 ขนส่ง: {parcel.get('transport', '-')}\n"
                 f"🔑 PIN: {parcel.get('pin', '-')}\n"
-                f"⏰ เวลารับ: {format_datetime(datetime.datetime.now())}\n\n"
-                f"ขอบคุณที่ใช้บริการค่ะ"
+                f"⏰ เวลารับ: {format_datetime(datetime.datetime.now())}\n"
             )
+            
+            if is_after_hours:
+                message += f"(รายการลงทะเบียนรับนอกเวลา)\n"
+                
+            message += f"\nขอบคุณที่ใช้บริการค่ะ"
+
             image_url = parcel.get("image_url")
             executor.submit(notify_user_platform_agnostic, user, message, image_url, update_history=True)
-        elif is_after_hours:
-            print(f"ℹ️ Skip notification for after-hours parcel: {pin}")
-
+            print(f"📤 [Pickup] Notification sent to {user.get('display_name')}")
+        else:
+            print(f"ℹ️ [Pickup] User not found for room {parcel.get('room_number')}, skip notification")
         
         return jsonify({
             "status": "success",
