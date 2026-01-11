@@ -948,95 +948,126 @@ def handle_registration(user, text):
 
 # ================= AFTER-HOURS PARCEL HELPERS =================
 
+        confirmation_keywords = ["ขอรับนอกเวลา", "จะรับนอกเวลา", "รับพัสดุนอกเวลา", "ยืนยันรับนอกเวลา", "ลงทะเบียนรับนอกเวลา"]
+        is_confirm = any(kw in text_lower for kw in confirmation_keywords)
+        return is_confirm, []
+
 def detect_after_hours_intent(text):
     """
-    ตรวจจับความต้องการรับพัสดุนอกเวลาด้วย AI (Semantic Detection)
-    ไม่ใช้การ match keyword แบบตายตัว เพื่อให้ยืดหยุ่นและแม่นยำมากขึ้น
-    
-    Returns:
-        bool: True ถ้าตรวจพบความต้องการรับนอกเวลา, False ถ้าไม่ใช่
+    ตรวจจับความต้องการรับพัสดุนอกเวลา และระบุพัสดุ (ถ้ามี)
+    Returns: (is_intent, target_pins)
     """
     try:
-        prompt = f"""วิเคราะห์ข้อความต่อไปนี้ว่าผู้ใช้ต้องการ **ลงทะเบียน/ยืนยันรับพัสดุนอกเวลา** หรือไม่:
+        prompt = f"""วิเคราะห์ข้อความว่าผู้ใช้ต้องการ **ลงทะเบียน/ยืนยันรับพัสดุนอกเวลา** หรือไม่
 
-"{text}"
+ข้อความ: "{text}"
 
-⚠️ **สำคัญ**: แยกระหว่าง "คำถาม/สงสัย" กับ "การยืนยัน/ลงทะเบียน"
+Output Format (JSON):
+{{
+  "intent": "YES" or "NO",
+  "target_pins": ["12345"] or "ALL" or []
+}}
 
-✅ **ตอบ YES** เฉพาะกรณีที่ผู้ใช้:
-- ยืนยันว่าจะรับนอกเวลา (เช่น "ผมจะรับนอกเวลา", "ขอรับพัสดุนอกเวลา", "ลงทะเบียนรับนอกเวลา")
-- แจ้งความประสงค์ชัดเจน (เช่น "รับตอนดึก", "รับช่วงเย็น", "รับ 20:00")
-
-❌ **ตอบ NO** ถ้าผู้ใช้:
-- **ถามคำถาม/สงสัย** (เช่น "ต้องการรับนอกเวลาทำไงครับ", "รับนอกเวลาได้ไหม", "นอกเวลาคือเวลาไหน")
-- ตรวจสอบข้อมูล (เช่น "มีพัสดุรับนอกเวลาไหม", "พัสดุของผมเป็นนอกเวลาไหม")
-- พูดถึงเรื่องอื่น (เช่น แจ้งร้องเรียน, สอบถามทั่วไป)
-
-**ตัวอย่าง:**
-- "ผมจะมารับพัสดุนอกเวลาครับ" → YES (ยืนยัน)
-- "ต้องการรับนอกเวลาทำไงครับ" → NO (ถามคำถาม)
-- "รับนอกเวลาได้มั้ย" → NO (สงสัย)
-- "ขอรับพัสดุตอนดึก" → YES (ยืนยัน)
-
-ตอบเพียง YES หรือ NO เท่านั้น"""
+Rules:
+1. YES ถ้าต้องการรับพัสดุนอกเวลา (เช่น "ขอรับนอกเวลา", "รับนอกเวลาเลข 12345", "รับตอนดึก")
+2. NO ถ้าเป็นคำถาม หรือเรื่องอื่น
+3. target_pins:
+   - ถ้ามีเลขพัสดุ/PIN ในข้อความ ให้ใส่ใน list
+   - ถ้าบอกว่า "ทั้งหมด" หรือ "ทุกชิ้น" ให้ใส่ "ALL"
+   - ถ้าไม่ระบุเลข ให้ใส่ []
+"""
 
         response = client.models.generate_content(
             model='gemini-3-flash-preview',
-            contents=prompt
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
         )
         
-        result = response.text.strip().upper()
-        is_after_hours_intent = "YES" in result
+        import json
+        result = json.loads(response.text.strip())
+        is_intent = result.get("intent") == "YES"
+        target_pins = result.get("target_pins")
         
-        print(f"🔍 After-Hours Intent Detection: '{text}' → {is_after_hours_intent}")
-        return is_after_hours_intent
+        # Normalize
+        if target_pins == "ALL":
+            target_pins = "ALL"
+        elif isinstance(target_pins, list):
+            target_pins = [str(p) for p in target_pins]
+        else:
+            target_pins = []
+
+        return is_intent, target_pins
         
     except Exception as e:
-        print(f"❌ After-Hours Intent Detection Error: {e}")
-        # Fallback: ใช้ keyword matching (เฉพาะคำยืนยัน ไม่ใช่คำถาม)
+        print(f"❌ After-Hours Intent Error: {e}")
+        # Fallback keyword matching
         text_lower = text.lower()
-        
-        # คำถาม/สงสัย - ถ้าเจอให้ return False
         question_keywords = ["ทำไง", "ได้ไหม", "ได้มั้ย", "ยังไง", "อย่างไร", "คือ", "เวลาไหน", "?"]
         if any(kw in text_lower for kw in question_keywords):
-            return False
+            return False, []
         
-        # คำยืนยัน - ถ้าเจอให้ return True
         confirmation_keywords = ["ขอรับนอกเวลา", "จะรับนอกเวลา", "รับพัสดุนอกเวลา", "ยืนยันรับนอกเวลา", "ลงทะเบียนรับนอกเวลา"]
-        return any(kw in text_lower for kw in confirmation_keywords)
+        is_intent = any(kw in text_lower for kw in confirmation_keywords)
+        return is_intent, []
 
 def detect_after_hours_cancel_intent(text):
     """
-    ตรวจจับความต้องการ **ยกเลิก** รับพัสดุนอกเวลาด้วย AI
+    ตรวจจับความต้องการ **ยกเลิก** รับพัสดุนอกเวลา และระบุพัสดุ (ถ้ามี)
+    Returns: (is_cancel, target_pins)
+    - is_cancel (bool): True ถ้าต้องการยกเลิก
+    - target_pins (list): รายการ PIN ที่ต้องการยกเลิก ถ้าเป็น None/Empty หมายถึง "ทั้งหมด" หรือ "ไม่ระบุ"
     """
     try:
-        prompt = f"""วิเคราะห์ข้อความต่อไปนี้ว่าผู้ใช้ต้องการ **ยกเลิก** หรือ **ไม่ต้องการ** รับพัสดุนอกเวลา (ที่เคยแจ้งไว้) หรือไม่:
+        prompt = f"""วิเคราะห์ข้อความของผู้ใช้เกี่ยวกับพัสดุว่าต้องการ "ยกเลิกการรับนอกเวลา" หรือไม่
 
-"{text}"
+ข้อความ: "{text}"
 
-✅ **ตอบ YES** เฉพาะกรณีที่ผู้ใช้:
-- แจ้งขอยกเลิก (เช่น "ยกเลิกรับนอกเวลา", "ไม่รับนอกเวลาแล้ว", "เปลี่ยนใจรับในเวลาปกติแทน")
-- แจ้งว่าสะดวกรับในเวลาแทน (เช่น "จะไปรับตอนบ่ายแทน", "สะดวกรับในเวลาปกติ")
+Output Format (JSON):
+{{
+  "intent": "CANCEL" or "NO",
+  "target_pins": ["12345", "67890"] or "ALL" or []
+}}
 
-❌ **ตอบ NO** ถ้าผู้ใช้:
-- ยืนยันการรับพัสดุ (เช่น "โอเครับนอกเวลา", "ยืนยัน")
-- พูดเรื่องอื่น (เช่น แจ้งร้องเรียน)
-
-ตอบเพียง YES หรือ NO เท่านั้น"""
+Rules:
+1. INTENT = "CANCEL" ถ้าผู้ใช้ต้องการยกเลิกรับนอกเวลา (เช่น "ไม่รับนอกเวลาแล้ว", "ยกเลิกอันแรก", "ยกเลิก 12345", "เปลี่ยนใจ")
+2. INTENT = "NO" ถ้าเป็นเรื่องอื่น หรือยืนยันการรับ
+3. target_pins:
+   - ถ้าระบุเลขพัสดุ/PIN ชัดเจน ให้ใส่ใน list
+   - ถ้าพูดว่า "ทั้งหมด", "ทุกอัน" ให้ใส่ "ALL"
+   - ถ้าไม่ได้ระบุเจาะจง ให้ใส่ [] (Empty List)
+"""
 
         response = client.models.generate_content(
             model='gemini-3-flash-preview',
-            contents=prompt
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
         )
         
-        result = response.text.strip().upper()
-        return "YES" in result
+        import json
+        result = json.loads(response.text.strip())
+        is_cancel = result.get("intent") == "CANCEL"
+        target_pins = result.get("target_pins")
+        
+        # Normalize target_pins
+        if target_pins == "ALL":
+            target_pins = "ALL"
+        elif isinstance(target_pins, list):
+            target_pins = [str(p) for p in target_pins]
+        else:
+            target_pins = []
+
+        return is_cancel, target_pins
         
     except Exception as e:
-        print(f"❌ After-Hours Cancel Intent Error: {e}")
+        print(f"❌ Cancel Intent Error: {e}")
         # Fallback keyword matching
         cancel_keywords = ["ยกเลิกรับนอกเวลา", "ไม่รับนอกเวลา", "เปลี่ยนใจ", "รับในเวลาปกติ", "ยกเลิกการรับนอกเวลา"]
-        return any(kw in text.lower() for kw in cancel_keywords)
+        is_cancel = any(kw in text.lower() for kw in cancel_keywords)
+        return is_cancel, []
 
 # ================= REGISTRATION HANDLER =================
 
@@ -1136,7 +1167,9 @@ def process_text_logic(user, text):
             return "❌ เกิดข้อผิดพลาดค่ะ กรุณาลองใหม่อีกครั้ง"
     
     # 2. ตรวจจับความต้องการรับนอกเวลาด้วย AI
-    if detect_after_hours_intent(text):
+    is_ah_intent, target_pins = detect_after_hours_intent(text)
+    
+    if is_ah_intent:
         room_number = user.get('room_number')
         
         # ดึงพัสดุคงค้างของผู้ใช้
@@ -1150,8 +1183,58 @@ def process_text_logic(user, text):
                 "ขออภัยค่ะ ตอนนี้คุณไม่มีพัสดุค้างอยู่ในระบบ 📦\n\n"
                 "หากมีพัสดุมาถึงภายหลัง คุณสามารถแจ้งน้องบอตได้เลยนะคะ"
             )
+
+        # Smart Registration: If user specified PINs/ALL
+        parcels_to_register = []
         
-        # กรณีมีพัสดุเพียง 1 ชิ้น - ยืนยันทันที
+        if target_pins:
+            if target_pins == "ALL":
+                parcels_to_register = pending_parcels
+            else:
+                for p in pending_parcels:
+                    p_pin = str(p.get("pin", ""))
+                    p_track = str(p.get("tracking_number", ""))
+                    # Check match
+                    for t in target_pins:
+                        if t in p_pin or t in p_track:
+                            parcels_to_register.append(p)
+                            break
+        
+        # Case 1: Automatic Registration found
+        if parcels_to_register:
+             # Update to DB
+            reg_pins = [p["pin"] for p in parcels_to_register]
+            parcels_col.update_many(
+                {"pin": {"$in": reg_pins}},
+                {"$set": {
+                    "is_after_hours": True,
+                    "after_hours_confirmed_at": datetime.datetime.now()
+                }}
+            )
+            users_col.update_one(
+                {"line_user_id": uid},
+                {"$set": {"after_hours_preference": True}}
+            )
+            
+            # Audit Log
+            log_admin_action(
+                action="After-Hours Registration",
+                performed_by=f"User ({room_number})",
+                target=f"Parcels: {', '.join(reg_pins)}",
+                details=f"Smart registration for {len(reg_pins)} items"
+            )
+            
+            parcel_list = "\n".join([f"  • PIN {p['pin']} ({p.get('transport','-')})" for p in parcels_to_register])
+            return (
+                f"✅ ลงทะเบียนรับนอกเวลาเรียบร้อย {len(parcels_to_register)} รายการค่ะ!\n\n"
+                f"{parcel_list}\n\n"
+                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n"
+                f"ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
+            )
+
+        # Case 2: No specific PINs, fallback to manual selection
+        
+        # กรณีมีพัสดุเพียง 1 ชิ้น - ยืนยันทันที (Logic เดิม)
         if len(pending_parcels) == 1:
             pin = pending_parcels[0]['pin']
             transport = pending_parcels[0].get('transport', '-')
@@ -1219,42 +1302,92 @@ def process_text_logic(user, text):
             )
 
     # 3. ตรวจจับการยกเลิกรับนอกเวลา
-    if detect_after_hours_cancel_intent(text):
+    is_cancel, target_pins = detect_after_hours_cancel_intent(text)
+    if is_cancel:
         room_number = user.get('room_number')
         
-        # ค้นหาพัสดุที่เคยตั้งค่าเป็น is_after_hours = True ไว้
-        # และยังไม่ได้ถูกรับ (status = pending)
-        after_hours_parcels = list(parcels_col.find({
+        # ดึงรายการพัสดุนอกเวลาทั้งหมดของผู้ใช้นี้ (ที่เป็น pending)
+        current_ah_parcels = list(parcels_col.find({
             "room_number": room_number,
             "status": "pending",
             "is_after_hours": True
         }))
         
-        if not after_hours_parcels:
+        if not current_ah_parcels:
             return "ไม่พบรายการพัสดุที่ลงทะเบียนรับนอกเวลาไว้ค่ะ 📦"
+
+        # Determine which parcels to cancel
+        parcels_to_cancel = []
+        
+        if target_pins == "ALL" or not target_pins:
+            # ถ้า user ไม่ระบุ หรือบอกว่าทั้งหมด -> ยกเลิกทั้งหมด (Safe default for consistency, or ask clarification? User complained about 'cancelling all' when specific was meant. 
+            # But if target_pins is empty from AI (meaning "didn't specify"), maybe we should cancel all as a fallback OR ask user. 
+            # However, prompt handles specific PINs. If 'target_pins' is [], it truly implies generic "cancel".
+            # BUT wait, the user said "Cancel parcel 13469 but system cancelled 2". 
+            # If AI works, target_pins will have ["13469"]. 
+            # So if target_pins is [], it means user said "Cancel after hours" (generic).
+            parcels_to_cancel = current_ah_parcels
+        else:
+            # Filter by matching PINs (fuzzy match or exact?)
+            # Prompt output PINs might be partial. Let's try to match.
+            for p in current_ah_parcels:
+                p_pin = str(p.get("pin", ""))
+                p_track = str(p.get("tracking_number", ""))
+                # Check if this parcel is in target_pins list (fuzzy check)
+                is_match = False
+                for t in target_pins:
+                    if t in p_pin or t in p_track:
+                        is_match = True
+                        break
+                if is_match:
+                    parcels_to_cancel.append(p)
             
-        # คืนค่าสถานะให้พัสดุ
-        result_update = parcels_col.update_many(
-            {"room_number": room_number, "status": "pending", "is_after_hours": True},
+            # Safety: If AI said specific PINs but we found none, maybe just inform user.
+            if not parcels_to_cancel:
+                 return f"❌ ไม่พบพัสดุที่ระบุ ({', '.join(target_pins)}) ในรายการนอกเวลาของคุณค่ะ"
+
+        if not parcels_to_cancel:
+            return "❌ ไม่มีการเปลี่ยนแปลงค่ะ"
+
+        # Update Database
+        cancel_pins = [p["pin"] for p in parcels_to_cancel]
+        
+        parcels_col.update_many(
+            {"pin": {"$in": cancel_pins}},
             {"$set": {
                 "is_after_hours": False,
                 "after_hours_confirmed_at": None
             }}
         )
         
-        # บันทึก Audit Log
+        # Audit Log
         log_admin_action(
             action="After-Hours Cancellation",
             performed_by=f"User ({room_number})",
             target=f"Room: {room_number}",
-            details=f"User cancelled after-hours registration for {result_update.modified_count} parcel(s)"
+            details=f"User cancelled after-hours: {', '.join(cancel_pins)}"
         )
+
+        # Re-fetch Status for Grounded Response
+        # 1. Cancelled items count
+        cancelled_count = len(parcels_to_cancel)
         
-        return (
-            f"✅ ยกเลิกการรับพัสดุนอกเวลาเรียบร้อยแล้วค่ะ!\n\n"
-            f"📦 พัสดุของคุณ ({result_update.modified_count} รายการ) ได้ถูกปรับกลับมาเป็นพัสดุรับในเวลาปกติแล้ว\n\n"
-            f"คุณสามารถติดต่อรับพัสดุได้ที่นิติบุคคลในเวลาทำการปกติค่า 🙏"
-        )
+        # 2. Remaining after-hours items (Query logic: pending AND is_after_hours=True)
+        remaining_ah = parcels_col.count_documents({
+            "room_number": room_number,
+            "status": "pending",
+            "is_after_hours": True
+        })
+        
+        # 3. Message construction
+        msg = f"✅ ยกเลิกรับนอกเวลาเรียบร้อย {cancelled_count} รายการค่ะ\n(PIN: {', '.join(cancel_pins)})"
+        
+        if remaining_ah > 0:
+            msg += f"\n\n📦 ยังเหลือพัสดุรับนอกเวลาอีก {remaining_ah} รายการครับ"
+        else:
+            msg += f"\n\nตอนนี้ไม่มีพัสดุรับนอกเวลาค้างแล้วครับ สามารถติดต่อรับได้ในเวลาทำการปกติ"
+            
+        return msg
 
     # ================= Intent Analysis =================
     
