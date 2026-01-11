@@ -1680,7 +1680,7 @@ def get_recent_activity():
                 "type": "complaint",
                 "message": f"แจ้งร้องเรียน: ห้อง {complaint.get('room_number', '-')}",
                 "details": f"{complaint.get('description', '-')[:30]}...",
-                "timestamp": complaint.get('timestamp').strftime("%Y-%m-%d %H:%M") if complaint.get('timestamp') else "-"
+                "timestamp": format_datetime(complaint.get('timestamp'))
             })
         
         # เรียงตามเวลา
@@ -1778,7 +1778,7 @@ def get_all_users():
             print(f"User data: {user_data}")  # สำหรับ debug
             result.append(user_data)
         
-        return jsonify(result)
+        return jsonify({"items": result})
         
     except Exception as e:
         print(f"Error getting users: {e}")
@@ -1983,7 +1983,7 @@ def search_users():
             
             result.append(user_data)
         
-        return jsonify(result)
+        return jsonify({"items": result})
         
     except Exception as e:
         print(f"Error searching users: {e}")
