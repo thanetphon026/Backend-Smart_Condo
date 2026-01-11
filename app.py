@@ -1666,8 +1666,16 @@ def get_recent_activity():
                 "timestamp": format_datetime(parcel.get('timestamp'))
             })
         
+        # [OPTIMIZATION] Batch fetch users for complaints in activity
+        complaint_user_ids = list(set(c.get("line_user_id") for c in recent_complaints if c.get("line_user_id")))
+        c_users_map = {}
+        if complaint_user_ids:
+            c_users_list = list(users_col.find({"line_user_id": {"$in": complaint_user_ids}}, {"line_user_id": 1, "display_name": 1}))
+            c_users_map = {u["line_user_id"]: u for u in c_users_list}
+        
         for complaint in recent_complaints:
-            user = users_col.find_one({"line_user_id": complaint.get("line_user_id")})
+            user_id = complaint.get("line_user_id")
+            user = c_users_map.get(user_id)
             activities.append({
                 "type": "complaint",
                 "message": f"แจ้งร้องเรียน: ห้อง {complaint.get('room_number', '-')}",
@@ -1889,8 +1897,8 @@ def get_parcels_frontend():
             
         items = list(parcels_col.find(query, {
             "room_number": 1, "recipient_name": 1, "pin": 1, "transport": 1, "courier": 1,
-            "tracking_number": 1, "image_url": 1, "timestamp": 1
-        }).sort("timestamp", -1).limit(1000))
+            "tracking_number": 1, "image_url": 1, "timestamp": 1, "is_after_hours": 1
+        }).sort("timestamp", -1).limit(200))
         result = []
         for i in items:
             result.append({
@@ -1898,10 +1906,11 @@ def get_parcels_frontend():
                 "room_number": i.get("room_number", "-"),
                 "recipient_name": i.get("recipient_name", "-"),
                 "pin": i.get("pin", "-"),
-                "courier": i.get("transport", "-"),
+                "courier": i.get("transport", "-") or i.get("courier", "-"),
                 "tracking_number": i.get("tracking_number", "-"),
                 "image_url": i.get("image_url", ""),
-                "timestamp": format_datetime(i.get('timestamp'))
+                "timestamp": format_datetime(i.get('timestamp')),
+                "is_after_hours": i.get("is_after_hours", False)
             })
         return jsonify({"items": result})
     except Exception as e:
@@ -2005,7 +2014,7 @@ def search_parcels_optimized():
                     {"transport": {"$regex": q, "$options": "i"}}
                 ]
         
-        # ใช้ projection เพื่อเลือกเฉพาะฟิลด์ที่จำเป็น
+        # [OPTIMIZATION] ใช้ projection และ limit เพื่อความเร็ว
         items = list(parcels_col.find(query, {
             "room_number": 1,
             "recipient_name": 1,
@@ -2015,8 +2024,9 @@ def search_parcels_optimized():
             "image_url": 1,
             "timestamp": 1,
             "is_after_hours": 1,
+            "after_hours_confirmed_at": 1,
             "_id": 1
-        }).sort("timestamp", -1))  # ไม่จำกัดจำนวน - พัสดุรอรับสามารถเก็บได้ไม่จำกัด
+        }).sort("timestamp", -1).limit(200)) # จำกัด 200 รายการล่าสุดเพื่อความเร็ว
         
         result = []
         for i in items:
@@ -2089,10 +2099,17 @@ def search_complaints_optimized():
             -(x.get('timestamp', datetime.datetime.min).timestamp())
         ))
 
+        # [OPTIMIZATION] Batch fetch users to avoids N+1 query
+        user_ids = list(set(c.get("line_user_id") for c in items if c.get("line_user_id")))
+        users_map = {}
+        if user_ids:
+            users_list = list(users_col.find({"line_user_id": {"$in": user_ids}}, {"line_user_id": 1, "display_name": 1}))
+            users_map = {u["line_user_id"]: u for u in users_list}
+
         result = []
         for c in items:
-            # หาข้อมูลผู้ใช้เพิ่มเติม
-            user = users_col.find_one({"line_user_id": c.get("line_user_id")})
+            user_id = c.get("line_user_id")
+            user = users_map.get(user_id)
             
             result.append({
                 "id": str(c.get('_id')),
