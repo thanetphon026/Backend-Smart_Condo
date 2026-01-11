@@ -134,7 +134,7 @@ try:
             complaints_col.create_index([("status", 1), ("priority", -1), ("timestamp", -1)])
             complaints_col.create_index([("room_number", 1)])
             
-            # Parcels: ค้นหาตาม status, pin, timestamp
+            # Parcels: ค้นหาตาม status, pin, timestamp, is_after_hours
             parcels_col.create_index([("status", 1)])
             try:
                 parcels_col.create_index([("pin", 1)], unique=True)
@@ -144,6 +144,8 @@ try:
             parcels_col.create_index([("timestamp", -1)])
             parcels_col.create_index([("status", 1), ("timestamp", -1)])
             parcels_col.create_index([("room_number", 1)])
+            parcels_col.create_index([("is_after_hours", 1)])  # สำหรับการแยกพัสดุนอกเวลา
+            parcels_col.create_index([("status", 1), ("is_after_hours", 1)])  # Compound index
             
             # Audit Logs
             audit_logs_col.create_index([("timestamp", -1)])
@@ -255,30 +257,47 @@ def analyze_urgency_from_description(user_desc):
 
 def determine_final_urgency(desc_urgency, ai_urgency, user_desc):
     """
-    กำหนดความสำคัญขั้นสุดท้ายโดยพิจารณาจากทั้งสองแหล่ง (Case-insensitive)
+    กำหนดความสำคัญขั้นสุดท้ายโดยพิจารณาจากทั้งสองแหล่ง
+    น้ำหนัก: AI Vision (รูป) 80%, Description 20%
     """
     try:
-        user_desc_lower = user_desc.lower()
+        user_desc_lower = user_desc.lower() if user_desc else ""
         
         # Normalize inputs
         desc_urgency = (desc_urgency or "Low").capitalize()
         ai_urgency = (ai_urgency or "Low").capitalize()
         
-        # 🔥 กฎพิเศษ (Safety First): ถ้ามีคำว่า "ไฟไหม้" หรืออันตรายร้ายแรง ให้สรุปเป็น High ทันที
-        emergency_keywords = ["ไฟไหม้", "ไฟลุก", "ไฟฟ้าลัดวงจร", "ประกายไฟ", "น้ำท่วม", "แก๊สรั่ว", "ระเบิด", "ไฟฟ้าช็อต", 
-                             "ไฟดับ", "ดับไฟ", "ไฟดับทั้งหมด", "เสาไฟล้ม", "เสาล้ม", "เสาไฟโค่น"]
-        if any(kw in user_desc_lower for kw in emergency_keywords):
+        # 🔥 กฎพิเศษ (Safety First): ถ้ามีคำว่า "ไฟไหม้" ในรูป หรืออันตรายร้ายแรง
+        # ให้สรุปเป็น High ทันที (เพราะปกติ AI Vision จะจับได้)
+        emergency_keywords = ["ไฟไหม้", "ไฟลุก", "ไฟฟ้าลัดวงจร", "ประกายไฟ", "น้ำท่วม", "แก๊สรั่ว", "ระเบิด", "ไฟฟ้าช็อต"]
+        if ai_urgency == "High" and any(kw in user_desc_lower for kw in emergency_keywords):
+            print(f"🔥 EMERGENCY DETECTED: AI={ai_urgency}, Desc contains emergency keywords")
             return "High"
         
-        # ถ้าความสำคัญเท่ากัน หรือแหล่งใดแหล่งหนึ่งเป็น High ให้ยึด High
-        if desc_urgency == "High" or ai_urgency == "High":
-            return "High"
-            
-        # ถ้าแหล่งใดแหล่งหนึ่งเป็น Medium ให้ยึด Medium (กันเหนียวดีกว่า Low)
-        if desc_urgency == "Medium" or ai_urgency == "Medium":
-            return "Medium"
-            
-        return "Low"
+        # แปลง urgency เป็น score (High=3, Medium=2, Low=1)
+        urgency_map = {"High": 3, "Medium": 2, "Low": 1}
+        ai_score = urgency_map.get(ai_urgency, 1)
+        desc_score = urgency_map.get(desc_urgency, 1)
+        
+        # คำนวณ weighted score (AI 80%, Desc 20%)
+        final_score = (ai_score * 0.8) + (desc_score * 0.2)
+        
+        # แปลง score กลับเป็น urgency level
+        # final_score: 1.0-1.66 = Low, 1.67-2.33 = Medium, 2.34-3.0 = High
+        if final_score >= 2.4:  # เกือบ High (2.4/3 = 80%)
+            final_urgency = "High"
+        elif final_score >= 1.6:  # ระหว่าง Low-Medium
+            final_urgency = "Medium"
+        else:
+            final_urgency = "Low"
+        
+        print(f"📊 Urgency Calculation (Weighted 80/20):")
+        print(f"   AI Vision: {ai_urgency} (score={ai_score}, weight=0.8)")
+        print(f"   Description: {desc_urgency} (score={desc_score}, weight=0.2)")
+        print(f"   Final Score: {final_score:.2f} → {final_urgency}")
+        
+        return final_urgency
+        
     except Exception as e:
         print(f"❌ Urgency Decision Error: {e}")
         return "Medium"
@@ -927,7 +946,47 @@ def handle_registration(user, text):
         f"ตอนนี้คุณสามารถใช้งานแชตบอตได้เต็มรูปแบบแล้วค่ะ 🎉"
     )
 
-# ================= LOGIC HANDLER =================
+# ================= AFTER-HOURS PARCEL HELPERS =================
+
+def detect_after_hours_intent(text):
+    """
+    ตรวจจับความต้องการรับพัสดุนอกเวลาด้วย AI (Semantic Detection)
+    ไม่ใช้การ match keyword แบบตายตัว เพื่อให้ยืดหยุ่นและแม่นยำมากขึ้น
+    
+    Returns:
+        bool: True ถ้าตรวจพบความต้องการรับนอกเวลา, False ถ้าไม่ใช่
+    """
+    try:
+        prompt = f"""วิเคราะห์ข้อความต่อไปนี้ว่าผู้ใช้ต้องการลงทะเบียน/ยืนยันรับพัสดุนอกเวลาหรือไม่:
+
+"{text}"
+
+คำแนะนำ:
+- ถ้าผู้ใช้พูดถึงการรับพัสดุนอกเวลา, รับพัสดุตอนดึก, รับพัสดุช่วงเย็น, หรือยืนยันรับนอกเวลา → ตอบ YES
+- ถ้าเป็นเรื่องอื่นๆ เช่น ถามพัสดุ, ถามข้อมูล, แจ้งร้องเรียน → ตอบ NO
+
+ตอบเพียง YES หรือ NO เท่านั้น"""
+
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt
+        )
+        
+        result = response.text.strip().upper()
+        is_after_hours_intent = "YES" in result
+        
+        print(f"🔍 After-Hours Intent Detection: '{text}' → {is_after_hours_intent}")
+        return is_after_hours_intent
+        
+    except Exception as e:
+        print(f"❌ After-Hours Intent Detection Error: {e}")
+        # Fallback: ใช้ keyword matching
+        text_lower = text.lower()
+        keywords = ["รับนอกเวลา", "นอกเวลา", "รับพัสดุนอกเวลา", "ยืนยันรับนอกเวลา", "รับตอนดึก", "รับช่วงเย็น"]
+        return any(kw in text_lower for kw in keywords)
+
+# ================= REGISTRATION HANDLER =================
+
 
 def process_text_logic(user, text):
     uid = user['line_user_id']
@@ -947,6 +1006,164 @@ def process_text_logic(user, text):
             f"ลงทะเบียน 814 สมชาย ใจดี 0812345678"
         )
     
+    # ================= AFTER-HOURS PARCEL LOGIC =================
+    
+    # 1. ตรวจสอบว่าผู้ใช้อยู่ในสถานะการเลือกพัสดุนอกเวลาหรือไม่
+    after_hours_state = user.get('after_hours_state')
+    
+    if after_hours_state == 'selecting':
+        # ผู้ใช้กำลังเลือกพัสดุที่ต้องการรับนอกเวลา
+        pending_parcel_pins = user.get('after_hours_pending_pins', [])
+        
+        try:
+            # แปลงข้อความเป็นตัวเลข (ตัวอย่าง: "1,3" หรือ "1 3" หรือ "1,2,3")
+            selected_indices = []
+            # รองรับทั้ง comma และ space
+            parts = text.replace(',', ' ').split()
+            for part in parts:
+                if part.strip().isdigit():
+                    selected_indices.append(int(part.strip()))
+            
+            if not selected_indices:
+                return "❌ กรุณาพิมพ์ตัวเลขของพัสดุที่ต้องการรับนอกเวลาค่ะ\n\nตัวอย่าง: 1,3 หรือ 1 3"
+            
+            # ตรวจสอบว่าตัวเลขที่เลือกอยู่ในช่วงที่ถูกต้อง
+            selected_pins = []
+            for idx in selected_indices:
+                if 1 <= idx <= len(pending_parcel_pins):
+                    selected_pins.append(pending_parcel_pins[idx - 1])
+                else:
+                    return f"❌ ตัวเลข {idx} ไม่ถูกต้องค่ะ กรุณาเลือกระหว่าง 1-{len(pending_parcel_pins)}"
+            
+            # อัพเดตพัสดุที่เลือกให้เป็น after-hours
+            parcels_col.update_many(
+                {"pin": {"$in": selected_pins}},
+                {"$set": {
+                    "is_after_hours": True,
+                    "after_hours_confirmed_at": datetime.datetime.now()
+                }}
+            )
+            
+            # อัพเดต user preference
+            users_col.update_one(
+                {"line_user_id": uid},
+                {"$set": {
+                    "after_hours_preference": True,
+                    "after_hours_state": None,
+                    "after_hours_pending_pins": None
+                }}
+            )
+            
+            # บันทึก Audit Log
+            log_admin_action(
+                action="After-Hours Registration",
+                performed_by=f"User ({user.get('room_number', '-')})",
+                target=f"Parcels: {', '.join(selected_pins)}",
+                details=f"User confirmed {len(selected_pins)} parcel(s) for after-hours pickup"
+            )
+            
+            parcel_list = "\n".join([f"  • PIN {pin}" for pin in selected_pins])
+            return (
+                f"✅ บันทึกเรียบร้อยแล้วค่ะ!\n\n"
+                f"📦 พัสดุที่ลงทะเบียนรับนอกเวลา ({len(selected_pins)} ชิ้น):\n{parcel_list}\n\n"
+                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n\n"
+                f"ทางนิติบุคคลจะเตรียมพัสดุไว้ให้ค่ะ ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
+            )
+            
+        except Exception as e:
+            print(f"❌ After-Hours Selection Error: {e}")
+            # รีเซ็ตสถานะ
+            users_col.update_one(
+                {"line_user_id": uid},
+                {"$set": {
+                    "after_hours_state": None,
+                    "after_hours_pending_pins": None
+                }}
+            )
+            return "❌ เกิดข้อผิดพลาดค่ะ กรุณาลองใหม่อีกครั้ง"
+    
+    # 2. ตรวจจับความต้องการรับนอกเวลาด้วย AI
+    if detect_after_hours_intent(text):
+        room_number = user.get('room_number')
+        
+        # ดึงพัสดุคงค้างของผู้ใช้
+        pending_parcels = list(parcels_col.find({
+            "room_number": room_number,
+            "status": "pending"
+        }).sort("timestamp", -1))
+        
+        if not pending_parcels:
+            return (
+                "ขออภัยค่ะ ตอนนี้คุณไม่มีพัสดุค้างอยู่ในระบบ 📦\n\n"
+                "หากมีพัสดุมาถึงภายหลัง คุณสามารถแจ้งน้องบอตได้เลยนะคะ"
+            )
+        
+        # กรณีมีพัสดุเพียง 1 ชิ้น - ยืนยันทันที
+        if len(pending_parcels) == 1:
+            pin = pending_parcels[0]['pin']
+            transport = pending_parcels[0].get('transport', '-')
+            tracking = pending_parcels[0].get('tracking_number', '-')
+            
+            # อัพเดตพัสดุเป็น after-hours
+            parcels_col.update_one(
+                {"pin": pin},
+                {"$set": {
+                    "is_after_hours": True,
+                    "after_hours_confirmed_at": datetime.datetime.now()
+                }}
+            )
+            
+            # อัพเดต user preference
+            users_col.update_one(
+                {"line_user_id": uid},
+                {"$set": {"after_hours_preference": True}}
+            )
+            
+            # บันทึก Audit Log
+            log_admin_action(
+                action="After-Hours Registration",
+                performed_by=f"User ({room_number})",
+                target=f"Parcel PIN: {pin}",
+                details=f"Single parcel after-hours registration via chatbot"
+            )
+            
+            return (
+                f"✅ บันทึกการรับนอกเวลาเรียบร้อยแล้วค่ะ!\n\n"
+                f"📦 พัสดุของคุณ:\n"
+                f"  • PIN: {pin}\n"
+                f"  • ขนส่ง: {transport}\n"
+                f"  • Tracking: {tracking}\n\n"
+                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n\n"
+                f"ทางนิติบุคคลจะเตรียมพัสดุไว้ให้ค่ะ ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
+            )
+        
+        # กรณีมีพัสดุหลายชิ้น - ให้เลือก
+        else:
+            parcel_list = []
+            pins = []
+            for idx, p in enumerate(pending_parcels, 1):
+                pin = p['pin']
+                transport = p.get('transport', '-')
+                tracking = p.get('tracking_number', '-')
+                parcel_list.append(f"{idx}. PIN {pin} - {transport} ({tracking})")
+                pins.append(pin)
+            
+            # บันทึกสถานะว่ากำลังรอการเลือก
+            users_col.update_one(
+                {"line_user_id": uid},
+                {"$set": {
+                    "after_hours_state": "selecting",
+                    "after_hours_pending_pins": pins
+                }}
+            )
+            
+            parcel_list_str = "\n".join(parcel_list)
+            return (
+                f"คุณมีพัสดุคงค้าง {len(pending_parcels)} ชิ้น:\n\n"
+                f"{parcel_list_str}\n\n"
+                f"📝 กรุณาพิมพ์ตัวเลขของพัสดุที่ต้องการรับนอกเวลา\n"
+                f"(เช่น: 1,3 หรือ 1 3 หรือ ทั้งหมด)"
+            )
 
     # ================= Intent Analysis =================
     
@@ -2092,7 +2309,7 @@ def confirm_parcel_and_notify():
         if room and room != "-":
             parcel_count = parcels_col.count_documents({"room_number": room, "status": "pending"})
 
-        # 7. สร้างข้อความแจ้งเตือน (Updated with count)
+        # 7. สร้างข้อความแจ้งเตือน (Updated with after-hours info)
         message = (
             f"📦 มีพัสดุมาใหม่ค่ะ!\n\n"
             f"🏠 ห้อง: {data.get('room_number', '-')}\n"
@@ -2100,14 +2317,17 @@ def confirm_parcel_and_notify():
             f"📦 Tracking: {data.get('tracking_number', '-')}\n"
             f"🔑 PIN: {pin}\n\n"
             f"📦 รวมพัสดุค้างทั้งหมด: {parcel_count} ชิ้น\n"
-            f"(กรุณาแจ้ง PIN และรับของได้ที่นิติบุคคลค่ะ)"
+            f"(กรุณาแจ้ง PIN และรับของได้ที่นิติบุคคลค่ะ)\n\n"
+            f"ℹ️ กรณีผู้ใช้มารับนอกเวลา (18:00-22:00 น.)\n"
+            f"กรุณาแจ้งน้องบอทด้วยนะคะ"
         )
 
         image_url = data.get("image_url")
 
         # 8. ส่งแจ้งเตือน (พหุแพลตฟอร์ม: LINE + Web) -- [SPEED OPTIMIZATION] Async
         if user:
-            executor.submit(notify_user_platform_agnostic, user, message, image_url)
+            executor.submit(notify_user_platform_agnostic, user, message, image_url, update_history=True)
+
 
         notification_lines = []
         notification_lines.append(f"✅ ส่งแจ้งเตือนถึง: {user.get('display_name', 'Unknown')} (ห้อง {user.get('room_number', '-')})")
@@ -2181,7 +2401,8 @@ def pickup_parcel():
                 f"ขอบคุณที่ใช้บริการค่ะ"
             )
             image_url = parcel.get("image_url")
-            executor.submit(notify_user_platform_agnostic, user, message, image_url)
+            executor.submit(notify_user_platform_agnostic, user, message, image_url, update_history=True)
+
         
         return jsonify({
             "status": "success",
@@ -2453,6 +2674,90 @@ def export_parcels():
         
     except Exception as e:
         print(f"Export Parcels Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ================= AFTER-HOURS PARCELS API =================
+
+@app.route('/api/parcels/after-hours', methods=['GET'])
+@require_api_token
+def get_after_hours_parcels():
+    """ดึงรายการพัสดุที่ลงทะเบียนรับนอกเวลาทั้งหมด"""
+    try:
+        # ดึงพัสดุที่ is_after_hours = true และ status = pending
+        parcels = list(parcels_col.find({
+            "is_after_hours": True,
+            "status": "pending"
+        }).sort("after_hours_confirmed_at", -1))
+        
+        result = []
+        for p in parcels:
+            result.append({
+                "id": str(p.get('_id')),
+                "room_number": p.get("room_number", "-"),
+                "recipient_name": p.get("recipient_name", "-"),
+                "pin": p.get("pin", "-"),
+                "transport": p.get("transport", "-"),
+                "tracking_number": p.get("tracking_number", "-"),
+                "image_url": p.get("image_url", ""),
+                "confirmed_at": format_datetime(p.get("after_hours_confirmed_at")),
+                "timestamp": format_datetime(p.get("timestamp"))
+            })
+        
+        return jsonify({"items": result})
+        
+    except Exception as e:
+        print(f"After-Hours Parcels API Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/parcels/after-hours/export', methods=['GET'])
+@require_api_token
+def export_after_hours_parcels():
+    """Export พัสดุนอกเวลาเป็น CSV/XLSX"""
+    try:
+        # ดึงพัสดุนอกเวลาทั้งหมด (รวมทั้งที่รับแล้ว)
+        parcels = list(parcels_col.find({
+            "is_after_hours": True
+        }).sort("after_hours_confirmed_at", -1))
+        
+        # สร้าง CSV ใน memory
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # เขียน header
+        writer.writerow([
+            'ห้อง', 'ชื่อผู้รับ', 'บริษัทขนส่ง', 'เลขพัสดุ',
+            'PIN', 'สถานะ', 'วันที่ยืนยันรับนอกเวลา', 'วันที่รับเข้า', 
+            'วันที่รับออก', 'รูปภาพ URL'
+        ])
+        
+        # เขียนข้อมูล
+        for parcel in parcels:
+            writer.writerow([
+                parcel.get('room_number', ''),
+                parcel.get('recipient_name', ''),
+                parcel.get('transport', ''),
+                parcel.get('tracking_number', ''),
+                parcel.get('pin', ''),
+                parcel.get('status', ''),
+                parcel.get('after_hours_confirmed_at', '').strftime('%Y-%m-%d %H:%M:%S') if parcel.get('after_hours_confirmed_at') else '',
+                parcel.get('timestamp', '').strftime('%Y-%m-%d %H:%M:%S') if parcel.get('timestamp') else '',
+                parcel.get('pickup_time', '').strftime('%Y-%m-%d %H:%M:%S') if parcel.get('pickup_time') else '',
+                parcel.get('image_url', '')
+            ])
+        
+        # สร้าง response
+        output.seek(0)
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=after_hours_parcels_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                "Content-Type": "text/csv; charset=utf-8-sig"  # UTF-8 BOM for Excel compatibility
+            }
+        )
+        
+    except Exception as e:
+        print(f"Export After-Hours Parcels Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 # ================= CLOUDINARY AUTO-DELETE HELPER =================
@@ -2839,16 +3144,18 @@ def process_web_complaint_image(user, image_path):
                 upload_file = client.files.get(name=upload_file.name)
 
             vision_prompt = (
-                f"คำอธิบายจากลูกบ้าน: '{user_desc}'\n\n"
+                f"⚠️ **สำคัญ**: วิเคราะห์รูปภาพเป็นหลัก (น้ำหนัก 80%) และใช้คำอธิบายจากผู้ใช้เป็นบริบทเสริม (น้ำหนัก 20%) เท่านั้น\n\n"
+                f"คำอธิบายจากลูกบ้าน (บริบทเสริม): '{user_desc}'\n\n"
                 
-                "📋 วิเคราะห์รูปภาพนี้ประกอบกับคำอธิบายข้างต้น:\n\n"
+                "📋 **วิเคราะห์รูปภาพนี้เป็นหลัก**:\n"
+                "ให้ความสำคัญกับสิ่งที่คุณเห็นในรูปภาพ มากกว่าคำอธิบายจากผู้ใช้\n\n"
                 
-                "เกณฑ์ความสำคัญ:\n"
+                "เกณฑ์ความสำคัญ (ตามที่เห็นในรูป):\n"
                 "🔴 HIGH (ต้องแก้ไขภายในวันนี้):\n"
-                "   • ไฟไหม้ ไฟฟ้าลัดวงจร ไฟช็อต\n"
+                "   • ไฟไหม้ ไฟฟ้าลัดวงจร ไฟช็อต ประกายไฟ\n"
                 "   • ไฟดับทั้งหมด ไฟดับทั้งอาคาร ไฟดับพื้นที่กว้าง\n"
                 "   • เสาไฟล้ม เสาไฟโค่น อุปกรณ์ไฟฟ้าหลักเสียหาย\n"
-                "   • น้ำท่วมในห้อง ระบบประปาแตก\n"
+                "   • น้ำท่วมในห้อง ระบบประปาแตก น้ำรั่วรุนแรง\n"
                 "   • แก๊สรั่ว กลิ่นแก๊ส\n"
                 "   • ทางหนีไฟอุดตัน\n"
                 "   • ประตูหน้าต่างเสียหายจนปิดล็อคไม่ได้\n\n"
@@ -2869,15 +3176,16 @@ def process_web_complaint_image(user, image_path):
                 "   • ที่จับประตูหลวม\n\n"
                 
                 "หน้าที่:\n"
-                "1. วิเคราะห์รูปภาพประกอบกับคำอธิบาย สรุปปัญหาเชิงเทคนิค\n"
+                "1. **วิเคราะห์รูปภาพเป็นหลัก** - ให้ความสำคัญกับสิ่งที่เห็นในรูป 80%\n"
                 "2. วิเคราะห์ภาพรวมของรูปภาพ (สภาพแวดล้อม ความเสียหายรอบๆ)\n"
-                "3. สรุปผลการวิเคราะห์ทั้งสองส่วนรวมกัน **อย่างกระชับ**\n\n"
+                "3. ใช้คำอธิบายจากผู้ใช้เป็นบริบทเสริมเท่านั้น ไม่ใช่ตัวหลัก (20%)\n"
+                "4. **ตัวอย่าง**: ถ้ารูปแสดงหลอดไฟธรรมดา แต่ผู้ใช้เขียนว่า 'ไฟไหม้!!!' → ควรตอบ Low หรือ Medium ตามรูป\n\n"
                 "Format ตอบ: 'Summary || Urgency || Detailed_Analysis'\n"
                 "- Summary: สรุปปัญหาสั้นๆ (ไม่เกิน 80 ตัวอักษร)\n"
-                "- Urgency: ประเมินความเร่งด่วน (High, Medium, Low) ตามเกณฑ์ด้านบนอย่างเคร่งครัด\n"
+                "- Urgency: ประเมินความเร่งด่วน (High, Medium, Low) **ตามรูปภาพเป็นหลัก**\n"
                 "- Detailed_Analysis: แสดงผลการวิเคราะห์แบบกระชับ แบ่งเป็น 2 หัวข้อหลัก:\n"
                 "  • วิเคราะห์ตามรายละเอียดและรูปภาพ: [เนื้อหากระชับ]\n"
-                "  • วิเคราะห์ภาพรวมของรูปภาพ: [เนื้อหากระชับ]\n"
+                "  • วิเคราะห์ภาพรวมของรูปภาพ: [เนื้อหากระชับ]"
             )
             
             print("🤖 กำลังวิเคราะห์ด้วย gemini-3-flash-preview...")
