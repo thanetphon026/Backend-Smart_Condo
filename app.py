@@ -981,7 +981,7 @@ def detect_after_hours_intent(text):
 ตอบเพียง YES หรือ NO เท่านั้น"""
 
         response = client.models.generate_content(
-            model='gemini-2.0-flash-exp',
+            model='gemini-3-flash-preview',
             contents=prompt
         )
         
@@ -1004,6 +1004,39 @@ def detect_after_hours_intent(text):
         # คำยืนยัน - ถ้าเจอให้ return True
         confirmation_keywords = ["ขอรับนอกเวลา", "จะรับนอกเวลา", "รับพัสดุนอกเวลา", "ยืนยันรับนอกเวลา", "ลงทะเบียนรับนอกเวลา"]
         return any(kw in text_lower for kw in confirmation_keywords)
+
+def detect_after_hours_cancel_intent(text):
+    """
+    ตรวจจับความต้องการ **ยกเลิก** รับพัสดุนอกเวลาด้วย AI
+    """
+    try:
+        prompt = f"""วิเคราะห์ข้อความต่อไปนี้ว่าผู้ใช้ต้องการ **ยกเลิก** หรือ **ไม่ต้องการ** รับพัสดุนอกเวลา (ที่เคยแจ้งไว้) หรือไม่:
+
+"{text}"
+
+✅ **ตอบ YES** เฉพาะกรณีที่ผู้ใช้:
+- แจ้งขอยกเลิก (เช่น "ยกเลิกรับนอกเวลา", "ไม่รับนอกเวลาแล้ว", "เปลี่ยนใจรับในเวลาปกติแทน")
+- แจ้งว่าสะดวกรับในเวลาแทน (เช่น "จะไปรับตอนบ่ายแทน", "สะดวกรับในเวลาปกติ")
+
+❌ **ตอบ NO** ถ้าผู้ใช้:
+- ยืนยันการรับพัสดุ (เช่น "โอเครับนอกเวลา", "ยืนยัน")
+- พูดเรื่องอื่น (เช่น แจ้งร้องเรียน)
+
+ตอบเพียง YES หรือ NO เท่านั้น"""
+
+        response = client.models.generate_content(
+            model='gemini-3-flash-preview',
+            contents=prompt
+        )
+        
+        result = response.text.strip().upper()
+        return "YES" in result
+        
+    except Exception as e:
+        print(f"❌ After-Hours Cancel Intent Error: {e}")
+        # Fallback keyword matching
+        cancel_keywords = ["ยกเลิกรับนอกเวลา", "ไม่รับนอกเวลา", "เปลี่ยนใจ", "รับในเวลาปกติ", "ยกเลิกการรับนอกเวลา"]
+        return any(kw in text.lower() for kw in cancel_keywords)
 
 # ================= REGISTRATION HANDLER =================
 
@@ -1184,6 +1217,44 @@ def process_text_logic(user, text):
                 f"📝 กรุณาพิมพ์ตัวเลขของพัสดุที่ต้องการรับนอกเวลา\n"
                 f"(เช่น: 1,3 หรือ 1 3 หรือ ทั้งหมด)"
             )
+
+    # 3. ตรวจจับการยกเลิกรับนอกเวลา
+    if detect_after_hours_cancel_intent(text):
+        room_number = user.get('room_number')
+        
+        # ค้นหาพัสดุที่เคยตั้งค่าเป็น is_after_hours = True ไว้
+        # และยังไม่ได้ถูกรับ (status = pending)
+        after_hours_parcels = list(parcels_col.find({
+            "room_number": room_number,
+            "status": "pending",
+            "is_after_hours": True
+        }))
+        
+        if not after_hours_parcels:
+            return "ไม่พบรายการพัสดุที่ลงทะเบียนรับนอกเวลาไว้ค่ะ 📦"
+            
+        # คืนค่าสถานะให้พัสดุ
+        result_update = parcels_col.update_many(
+            {"room_number": room_number, "status": "pending", "is_after_hours": True},
+            {"$set": {
+                "is_after_hours": False,
+                "after_hours_confirmed_at": None
+            }}
+        )
+        
+        # บันทึก Audit Log
+        log_admin_action(
+            action="After-Hours Cancellation",
+            performed_by=f"User ({room_number})",
+            target=f"Room: {room_number}",
+            details=f"User cancelled after-hours registration for {result_update.modified_count} parcel(s)"
+        )
+        
+        return (
+            f"✅ ยกเลิกการรับพัสดุนอกเวลาเรียบร้อยแล้วค่ะ!\n\n"
+            f"📦 พัสดุของคุณ ({result_update.modified_count} รายการ) ได้ถูกปรับกลับมาเป็นพัสดุรับในเวลาปกติแล้ว\n\n"
+            f"คุณสามารถติดต่อรับพัสดุได้ที่นิติบุคคลในเวลาทำการปกติค่า 🙏"
+        )
 
     # ================= Intent Analysis =================
     
