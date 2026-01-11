@@ -957,13 +957,26 @@ def detect_after_hours_intent(text):
         bool: True ถ้าตรวจพบความต้องการรับนอกเวลา, False ถ้าไม่ใช่
     """
     try:
-        prompt = f"""วิเคราะห์ข้อความต่อไปนี้ว่าผู้ใช้ต้องการลงทะเบียน/ยืนยันรับพัสดุนอกเวลาหรือไม่:
+        prompt = f"""วิเคราะห์ข้อความต่อไปนี้ว่าผู้ใช้ต้องการ **ลงทะเบียน/ยืนยันรับพัสดุนอกเวลา** หรือไม่:
 
 "{text}"
 
-คำแนะนำ:
-- ถ้าผู้ใช้พูดถึงการรับพัสดุนอกเวลา, รับพัสดุตอนดึก, รับพัสดุช่วงเย็น, หรือยืนยันรับนอกเวลา → ตอบ YES
-- ถ้าเป็นเรื่องอื่นๆ เช่น ถามพัสดุ, ถามข้อมูล, แจ้งร้องเรียน → ตอบ NO
+⚠️ **สำคัญ**: แยกระหว่าง "คำถาม/สงสัย" กับ "การยืนยัน/ลงทะเบียน"
+
+✅ **ตอบ YES** เฉพาะกรณีที่ผู้ใช้:
+- ยืนยันว่าจะรับนอกเวลา (เช่น "ผมจะรับนอกเวลา", "ขอรับพัสดุนอกเวลา", "ลงทะเบียนรับนอกเวลา")
+- แจ้งความประสงค์ชัดเจน (เช่น "รับตอนดึก", "รับช่วงเย็น", "รับ 20:00")
+
+❌ **ตอบ NO** ถ้าผู้ใช้:
+- **ถามคำถาม/สงสัย** (เช่น "ต้องการรับนอกเวลาทำไงครับ", "รับนอกเวลาได้ไหม", "นอกเวลาคือเวลาไหน")
+- ตรวจสอบข้อมูล (เช่น "มีพัสดุรับนอกเวลาไหม", "พัสดุของผมเป็นนอกเวลาไหม")
+- พูดถึงเรื่องอื่น (เช่น แจ้งร้องเรียน, สอบถามทั่วไป)
+
+**ตัวอย่าง:**
+- "ผมจะมารับพัสดุนอกเวลาครับ" → YES (ยืนยัน)
+- "ต้องการรับนอกเวลาทำไงครับ" → NO (ถามคำถาม)
+- "รับนอกเวลาได้มั้ย" → NO (สงสัย)
+- "ขอรับพัสดุตอนดึก" → YES (ยืนยัน)
 
 ตอบเพียง YES หรือ NO เท่านั้น"""
 
@@ -980,10 +993,17 @@ def detect_after_hours_intent(text):
         
     except Exception as e:
         print(f"❌ After-Hours Intent Detection Error: {e}")
-        # Fallback: ใช้ keyword matching
+        # Fallback: ใช้ keyword matching (เฉพาะคำยืนยัน ไม่ใช่คำถาม)
         text_lower = text.lower()
-        keywords = ["รับนอกเวลา", "นอกเวลา", "รับพัสดุนอกเวลา", "ยืนยันรับนอกเวลา", "รับตอนดึก", "รับช่วงเย็น"]
-        return any(kw in text_lower for kw in keywords)
+        
+        # คำถาม/สงสัย - ถ้าเจอให้ return False
+        question_keywords = ["ทำไง", "ได้ไหม", "ได้มั้ย", "ยังไง", "อย่างไร", "คือ", "เวลาไหน", "?"]
+        if any(kw in text_lower for kw in question_keywords):
+            return False
+        
+        # คำยืนยัน - ถ้าเจอให้ return True
+        confirmation_keywords = ["ขอรับนอกเวลา", "จะรับนอกเวลา", "รับพัสดุนอกเวลา", "ยืนยันรับนอกเวลา", "ลงทะเบียนรับนอกเวลา"]
+        return any(kw in text_lower for kw in confirmation_keywords)
 
 # ================= REGISTRATION HANDLER =================
 
@@ -1994,6 +2014,7 @@ def search_parcels_optimized():
             "tracking_number": 1,
             "image_url": 1,
             "timestamp": 1,
+            "is_after_hours": 1,
             "_id": 1
         }).sort("timestamp", -1))  # ไม่จำกัดจำนวน - พัสดุรอรับสามารถเก็บได้ไม่จำกัด
         
@@ -2007,7 +2028,8 @@ def search_parcels_optimized():
                 "courier": i.get("transport", "-"),
                 "tracking_number": i.get("tracking_number", "-"),
                 "image_url": i.get("image_url", ""),
-                "timestamp": format_datetime(i.get('timestamp'))
+                "timestamp": format_datetime(i.get('timestamp')),
+                "is_after_hours": i.get("is_after_hours", False)
             })
         
         return jsonify({"items": result})
@@ -2717,7 +2739,18 @@ def export_after_hours_parcels():
         # ดึงพัสดุนอกเวลาทั้งหมด (รวมทั้งที่รับแล้ว)
         parcels = list(parcels_col.find({
             "is_after_hours": True
-        }).sort("after_hours_confirmed_at", -1))
+        }))
+        
+        # เรียงลำดับตาม PIN (แปลงเป็น int ก่อนเรียง)
+        # ถ้า PIN ไม่ใช่ตัวเลข จะเอาไว้ท้ายสุด
+        def get_pin_sort_key(parcel):
+            pin = parcel.get('pin', '99999')
+            try:
+                return int(pin)
+            except (ValueError, TypeError):
+                return 99999
+        
+        parcels.sort(key=get_pin_sort_key)
         
         # สร้าง CSV ใน memory
         output = io.StringIO()
