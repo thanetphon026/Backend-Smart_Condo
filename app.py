@@ -2427,8 +2427,10 @@ def pickup_parcel():
         # 4. ค้นหาผู้ใช้จากห้อง
         user = users_col.find_one({"room_number": parcel.get("room_number")})
         
-        # 5. ส่งแจ้งเตือนการรับพัสดุ (พหุแพลตฟอร์ม: LINE + Web) -- [SPEED OPTIMIZATION] Async
-        if user:
+        # 5. ส่งแจ้งเตือนการรับพัสดุ (เฉพาะรับในเวลาปกติ)
+        # [USER REQUEST] รับนอกเวลาจะไม่มีเเจ้งเตือนว่ารับของเเล้ว
+        is_after_hours = parcel.get("is_after_hours", False)
+        if user and not is_after_hours:
             # Construct message for pickup
             message = (
                 f"✅ พัสดุของคุณถูกรับแล้ว!\n\n"
@@ -2441,6 +2443,8 @@ def pickup_parcel():
             )
             image_url = parcel.get("image_url")
             executor.submit(notify_user_platform_agnostic, user, message, image_url, update_history=True)
+        elif is_after_hours:
+            print(f"ℹ️ Skip notification for after-hours parcel: {pin}")
 
         
         return jsonify({
@@ -2680,20 +2684,23 @@ def export_parcels():
         # เขียน header
         writer.writerow([
             'ID', 'ห้อง', 'ชื่อผู้รับ', 'บริษัทขนส่ง', 'เลขพัสดุ',
-            'PIN', 'สถานะ', 'วันที่รับเข้า', 'วันที่รับออก', 
+            'PIN', 'สถานะ', 'ประเภทการรับ', 'วันที่รับเข้า', 'วันที่รับออก', 
             'รูปภาพ URL', 'หมายเหตุ'
         ])
         
         # เขียนข้อมูล
         for parcel in parcels:
+            pickup_type = "รับนอกเวลา" if parcel.get('is_after_hours') else "รับในเวลา"
             writer.writerow([
                 str(parcel.get('_id', '')),
                 parcel.get('room_number', ''),
                 parcel.get('recipient_name', ''),
                 parcel.get('transport', ''),
                 parcel.get('tracking_number', ''),
-                parcel.get('pin', ''),
+                # แปลง PIN เป็นตัวเลขเพื่อให้ Excel ไม่มองเป็น string ถ้าต้องการ (แต่ PIN 5 หลัก เก็บเป็น string ปลอดภัยกว่าเรื่อง 0 นำหน้า)
+                parcel.get('pin', ''), 
                 parcel.get('status', ''),
+                pickup_type,
                 parcel.get('timestamp', '').strftime('%Y-%m-%d %H:%M:%S') if parcel.get('timestamp') else '',
                 parcel.get('pickup_time', '').strftime('%Y-%m-%d %H:%M:%S') if parcel.get('pickup_time') else '',
                 parcel.get('image_url', ''),
@@ -2777,7 +2784,7 @@ def export_after_hours_parcels():
         writer.writerow([
             'ห้อง', 'ชื่อผู้รับ', 'บริษัทขนส่ง', 'เลขพัสดุ',
             'PIN', 'สถานะ', 'วันที่ยืนยันรับนอกเวลา', 'วันที่รับเข้า', 
-            'วันที่รับออก', 'รูปภาพ URL'
+            'วันที่รับออก', 'รูปภาพ URL', 'ช่องเซ็นชื่อ'
         ])
         
         # เขียนข้อมูล
@@ -2792,7 +2799,8 @@ def export_after_hours_parcels():
                 parcel.get('after_hours_confirmed_at', '').strftime('%Y-%m-%d %H:%M:%S') if parcel.get('after_hours_confirmed_at') else '',
                 parcel.get('timestamp', '').strftime('%Y-%m-%d %H:%M:%S') if parcel.get('timestamp') else '',
                 parcel.get('pickup_time', '').strftime('%Y-%m-%d %H:%M:%S') if parcel.get('pickup_time') else '',
-                parcel.get('image_url', '')
+                parcel.get('image_url', ''),
+                '________________' # ช่องเซ็นชื่อ
             ])
         
         # สร้าง response
