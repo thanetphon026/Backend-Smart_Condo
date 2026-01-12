@@ -2896,7 +2896,8 @@ def resolve_complaint(complaint_id):
                     status="resolved",
                     description=complaint_obj.get('description', ''),
                     room=complaint_obj.get('room_number', '-'),
-                    message=message
+                    message=message,
+                    image_url=img_url
                 )
                 
                 # ส่งแจ้งเตือน (พหุแพลตฟอร์ม)

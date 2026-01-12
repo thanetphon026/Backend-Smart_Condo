@@ -6,11 +6,14 @@ def create_text_flex(text, title="Smart Condo Bot", color="#1DB446"):
     """
     return {
         "type": "bubble",
-        "size": "giga",
+        "size": "mega",
         "body": {
             "type": "box",
             "layout": "vertical",
-            "paddingAll": "20px",
+            "paddingTop": "20px",
+            "paddingBottom": "20px",
+            "paddingStart": "20px",
+            "paddingEnd": "20px",
             "backgroundColor": "#FFFFFF",
             "contents": [
                 {
@@ -23,8 +26,7 @@ def create_text_flex(text, title="Smart Condo Bot", color="#1DB446"):
                             "width": "4px",
                             "height": "40px",
                             "backgroundColor": color,
-                            "cornerRadius": "2px",
-                            "margin": "none"
+                            "cornerRadius": "2px"
                         },
                         {
                             "type": "text",
@@ -50,11 +52,6 @@ def create_text_flex(text, title="Smart Condo Bot", color="#1DB446"):
                     "margin": "md"
                 }
             ]
-        },
-        "styles": {
-            "footer": {
-                "separator": True
-            }
         }
     }
 
@@ -204,7 +201,7 @@ def create_parcel_carousel(parcels):
         "contents": bubbles
     }
 
-def create_complaint_update_flex(status, description, room, message):
+def create_complaint_update_flex(status, description, room, message, image_url=None):
     """
     สร้าง Flex Message แจ้งอัพเดตสถานะร้องเรียน
     """
@@ -218,7 +215,7 @@ def create_complaint_update_flex(status, description, room, message):
         status_color = "#FF9900"
         status_text = "กำลังดำเนินการ"
         
-    return {
+    bubble = {
         "type": "bubble",
         "size": "mega",
         "header": {
@@ -242,7 +239,10 @@ def create_complaint_update_flex(status, description, room, message):
                 }
             ],
             "backgroundColor": status_color,
-             "paddingAll": "15px"
+            "paddingTop": "15px",
+            "paddingBottom": "15px",
+            "paddingStart": "15px",
+            "paddingEnd": "15px"
         },
         "body": {
             "type": "box",
@@ -280,3 +280,19 @@ def create_complaint_update_flex(status, description, room, message):
             ]
         }
     }
+
+    # Add Hero Image if available
+    if image_url:
+        bubble["hero"] = {
+            "type": "image",
+            "url": image_url,
+            "size": "full",
+            "aspectRatio": "20:13",
+            "aspectMode": "cover",
+            "action": {
+                "type": "uri",
+                "uri": image_url
+            }
+        }
+
+    return bubble
