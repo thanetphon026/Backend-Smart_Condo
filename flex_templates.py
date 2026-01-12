@@ -716,3 +716,248 @@ def create_after_hours_selection_flex(parcels, room_number):
     }
     
     return bubble
+
+def create_after_hours_confirmation_flex(registered_parcels, total_pending, total_registered, room_number):
+    """
+    สร้าง Flex Message สำหรับยืนยันการลงทะเบียนรับนอกเวลา
+    แสดงสรุปพัสดุที่ลงทะเบียนและสถานะทั้งหมด
+    """
+    remaining = total_pending - total_registered
+    
+    # สร้างรายการพัสดุที่ลงทะเบียน
+    parcel_items = []
+    for idx, p in enumerate(registered_parcels, 1):
+        pin = p.get('pin', '-')
+        transport = p.get('transport', '-')
+        
+        parcel_items.append({
+            "type": "box",
+            "layout": "horizontal",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"{idx}.",
+                    "size": "sm",
+                    "color": "#666666",
+                    "flex": 0,
+                    "margin": "none"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"PIN: {pin}",
+                            "size": "sm",
+                            "color": "#333333",
+                            "weight": "bold",
+                            "wrap": True
+                        },
+                        {
+                            "type": "text",
+                            "text": transport,
+                            "size": "xs",
+                            "color": "#999999",
+                            "wrap": True
+                        }
+                    ],
+                    "flex": 1,
+                    "spacing": "xs"
+                }
+            ],
+            "spacing": "sm",
+            "margin": "md"
+        })
+    
+    bubble = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "✅ ลงทะเบียนนอกเวลาสำเร็จ",
+                    "weight": "bold",
+                    "color": "#FFFFFF",
+                    "size": "md",
+                    "align": "center"
+                },
+                {
+                    "type": "text",
+                    "text": f"ห้อง {room_number}",
+                    "color": "#FFFFFF",
+                    "size": "xs",
+                    "align": "center",
+                    "margin": "sm"
+                }
+            ],
+            "backgroundColor": "#FF9900",
+            "paddingAll": "20px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "📊 สรุปสถานะพัสดุ",
+                            "weight": "bold",
+                            "size": "lg",
+                            "color": "#FF9900"
+                        },
+                        {
+                            "type": "separator",
+                            "margin": "md"
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "lg",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "พัสดุทั้งหมด",
+                                    "color": "#aaaaaa",
+                                    "size": "sm",
+                                    "flex": 3
+                                },
+                                {
+                                    "type": "text",
+                                    "text": f"{total_pending} ชิ้น",
+                                    "wrap": True,
+                                    "color": "#666666",
+                                    "size": "sm",
+                                    "flex": 2,
+                                    "align": "end",
+                                    "weight": "bold"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "✅ ลงนอกเวลาแล้ว",
+                                    "color": "#1DB446",
+                                    "size": "sm",
+                                    "flex": 3,
+                                    "weight": "bold"
+                                },
+                                {
+                                    "type": "text",
+                                    "text": f"{total_registered} ชิ้น",
+                                    "wrap": True,
+                                    "color": "#1DB446",
+                                    "size": "sm",
+                                    "flex": 2,
+                                    "align": "end",
+                                    "weight": "bold"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "⏳ ยังไม่ได้ลง",
+                                    "color": "#FF9900",
+                                    "size": "sm",
+                                    "flex": 3
+                                },
+                                {
+                                    "type": "text",
+                                    "text": f"{remaining} ชิ้น",
+                                    "wrap": True,
+                                    "color": "#FF9900",
+                                    "size": "sm",
+                                    "flex": 2,
+                                    "align": "end",
+                                    "weight": "bold"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "separator",
+                    "margin": "lg"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "lg",
+                    "spacing": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"📦 พัสดุที่ลงทะเบียน ({len(registered_parcels)} ชิ้น)",
+                            "weight": "bold",
+                            "size": "sm",
+                            "color": "#333333"
+                        }
+                    ] + parcel_items
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "🕐 เวลารับนอกเวลา",
+                            "size": "xs",
+                            "color": "#666666",
+                            "weight": "bold"
+                        },
+                        {
+                            "type": "text",
+                            "text": "18:00-22:00 น. ที่ Lobby",
+                            "size": "sm",
+                            "color": "#FF9900",
+                            "weight": "bold",
+                            "margin": "xs"
+                        }
+                    ]
+                },
+                {
+                    "type": "separator",
+                    "margin": "md"
+                },
+                {
+                    "type": "text",
+                    "text": "ทางนิติบุคคลจะเตรียมพัสดุไว้ให้ค่ะ\nขอบคุณที่แจ้งล่วงหน้านะคะ 🙏",
+                    "size": "xs",
+                    "color": "#999999",
+                    "align": "center",
+                    "wrap": True,
+                    "margin": "md"
+                }
+            ]
+        }
+    }
+    
+    return bubble

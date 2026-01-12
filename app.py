@@ -34,7 +34,7 @@ from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
-from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex
+from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex, create_after_hours_confirmation_flex
 from linebot.v3.webhooks import (
     MessageEvent, 
     TextMessageContent, 
@@ -1205,8 +1205,13 @@ def process_text_logic(user, text):
                     f"• 'ทั้งหมด' สำหรับทุกชิ้น"
                 )
             
-            # Remove duplicates
-            selected_pins = list(set(selected_pins))
+            # คำนวณสถิติพัสดุ
+            room_number = user.get('room_number', '-')
+            total_pending_count = parcels_col.count_documents({"room_number": room_number, "status": "pending"})
+            total_registered_count = len(selected_pins)
+            
+            # ดึงข้อมูลพัสดุที่ลงทะเบียนเต็มๆ
+            registered_parcels_full = list(parcels_col.find({"pin": {"$in": selected_pins}}))
             
             # อัพเดตพัสดุที่เลือกให้เป็น after-hours
             parcels_col.update_many(
@@ -1236,24 +1241,26 @@ def process_text_logic(user, text):
                 details=f"User confirmed {len(selected_pins)} parcel(s) for after-hours pickup"
             )
             
-            # สร้าง confirmation message
-            parcel_details = []
-            for pin in selected_pins:
-                parcel_info = next((p for p in pending_parcels_data if p['pin'] == pin), None)
-                if parcel_info:
-                    parcel_details.append(f"  • PIN {pin} - {parcel_info.get('transport', '-')}")
+            # สร้าง confirmation message แบบ FlexMessage
+            flex_content = create_after_hours_confirmation_flex(
+                registered_parcels_full,
+                total_pending_count,
+                total_registered_count,
+                room_number
+            )
             
-            parcel_list_str = "\\n".join(parcel_details) if parcel_details else "\\n".join([f"  • PIN {p}" for p in selected_pins])
-            
+            # สร้างข้อความสำรอง (alt_text)
             text_reply = (
-                f"✅ ลงทะเบียนรับนอกเวลาเรียบร้อยแล้วค่ะ!\\n\\n"
-                f"📦 พัสดุที่ลงทะเบียน ({len(selected_pins)} ชิ้น):\\n"
-                f"{parcel_list_str}\\n\\n"
-                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\\n\\n"
+                f"✅ ลงทะเบียนรับนอกเวลาเรียบร้อยแล้วค่ะ!\n\n"
+                f"📦 พัสดุที่ลงทะเบียน: {len(selected_pins)} ชิ้น\n"
+                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n\n"
                 f"ทางนิติบุคคลจะเตรียมพัสดุไว้ให้ค่ะ ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
             )
             
-            return text_reply
+            return {
+                "text": text_reply,
+                "flex": flex_content
+            }
             
         except Exception as e:
             print(f"❌ After-Hours Selection Error: {e}")
