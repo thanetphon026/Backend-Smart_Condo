@@ -2582,36 +2582,13 @@ def scan_parcel_api():
     finally:
         if os.path.exists(temp_path): os.remove(temp_path)
 
-def send_notification_async(user_id, message, image_url=None):
-    """ส่ง LINE Async เพื่อไม่ให้บล็อคการทำงานหลัก"""
+def send_notification_async(user_id, message, image_url=None, flex_contents=None):
+    """ส่ง LINE Async เพื่อไม่ให้บล็อคการทำงานหลัก - รองรับ FlexMessage"""
     try:
-        executor.submit(send_line_message, user_id, message, image_url)
+        executor.submit(send_line_message, user_id, message, image_url, flex_contents)
     except Exception as e:
         print(f"Async Notification Error: {e}")
 
-def notify_user_platform_agnostic(user, message, image_url=None, update_history=False):
-    """
-    ฟังก์ชันแจ้งเตือนพหุแพลตฟอร์ม (LINE Only):
-    - ส่ง Push Message ทันทีแบบ Async (ถ้ามี LINE ID)
-    - สามารถเลือกอัพเดตเข้า Chat History เพื่อให้แสดงผลบน Web Chat ได้
-    """
-    if not user:
-        print("⚠️ [Notify] No user provided for notification")
-        return False
-
-    uid = user.get('line_user_id')
-    
-    # 1. ส่ง LINE (Async)
-    if uid and len(uid) > 10: 
-        print(f"📤 [Notify] Sending LINE notification to {uid}...")
-        send_notification_async(uid, message, image_url)
-    
-    # 2. อัพเดต Chat History (ถ้าต้องการให้เห็นในหน้าเว็บ)
-    if update_history and uid:
-        platform = user.get('platform', 'line')
-        update_chat_history(uid, "assistant", message, platform, image_url)
-    
-    return True
 
 
 # ================= CONFIRM PARCEL AND NOTIFY (MODIFIED) =================
