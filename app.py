@@ -2684,8 +2684,9 @@ def confirm_parcel_and_notify():
         flex_content = create_parcel_carousel([parcel_data])
 
         # 8. ส่งแจ้งเตือน (พหุแพลตฟอร์ม: LINE + Web) -- [SPEED OPTIMIZATION] Async
+        # Note: image_url is embedded in flex_content, no need to send separately
         if user:
-            executor.submit(notify_user_platform_agnostic, user, message, image_url, update_history=True, flex_contents=flex_content)
+            executor.submit(notify_user_platform_agnostic, user, message, None, True, flex_content)
 
 
         notification_lines = []
@@ -2777,14 +2778,13 @@ def pickup_parcel():
                 message += f"(รายการลงทะเบียนรับนอกเวลา)\n"
                 
             message += f"\nขอบคุณที่ใช้บริการค่ะ"
-
-            image_url = parcel.get("image_url")
             
             # สร้าง Flex Message สำหรับการรับพัสดุ
+            # Note: image_url is embedded in flex_content, no need to send separately
             room = parcel.get('room_number', '-')
             flex_content = create_parcel_pickup_flex(parcel, room)
             
-            executor.submit(notify_user_platform_agnostic, user, message, image_url, update_history=True, flex_contents=flex_content)
+            executor.submit(notify_user_platform_agnostic, user, message, None, True, flex_content)
             print(f"📤 [Pickup] Notification sent to {user.get('display_name')}")
         else:
             print(f"ℹ️ [Pickup] User not found for room {parcel.get('room_number')}, skip notification")

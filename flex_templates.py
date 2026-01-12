@@ -66,6 +66,8 @@ def create_parcel_carousel(parcels):
         transport = p.get('transport', 'ไม่ระบุ')
         tracking = p.get('tracking_number', '-')
         room = p.get('room_number', '-')
+        recipient_name = p.get('recipient_name', '-')
+        image_url = p.get('image_url', '')
         
         # Determine icon/color based on transport (optional)
         header_color = "#FF9900" if "kerry" in transport.lower() else "#EF4C4C" if "post" in transport.lower() else "#1DB446"
@@ -110,7 +112,7 @@ def create_parcel_carousel(parcels):
                         "type": "text",
                         "text": pin,
                         "weight": "bold",
-                        "size": "4xl",
+                        "size": "3xl",
                         "align": "center",
                         "color": "#333333",
                         "margin": "md"
@@ -133,6 +135,28 @@ def create_parcel_carousel(parcels):
                         "margin": "lg",
                         "spacing": "sm",
                         "contents": [
+                            {
+                                "type": "box",
+                                "layout": "baseline",
+                                "contents": [
+                                    {
+                                        "type": "text",
+                                        "text": "ผู้รับ",
+                                        "color": "#aaaaaa",
+                                        "size": "sm",
+                                        "flex": 2
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": recipient_name,
+                                        "wrap": True,
+                                        "color": "#666666",
+                                        "size": "sm",
+                                        "flex": 4,
+                                        "weight": "bold"
+                                    }
+                                ]
+                            },
                             {
                                 "type": "box",
                                 "layout": "baseline",
@@ -183,17 +207,45 @@ def create_parcel_carousel(parcels):
             "footer": {
                 "type": "box",
                 "layout": "vertical",
+                "spacing": "sm",
                 "contents": [
-                     {
+                    {
                         "type": "text",
                         "text": "กรุณาแจ้ง PIN นี้กับนิติบุคคล",
-                        "color": "#aaaaaa",
+                        "color": "#666666",
                         "size": "xs",
                         "align": "center"
+                    },
+                    {
+                        "type": "separator",
+                        "margin": "sm"
+                    },
+                    {
+                        "type": "text",
+                        "text": "ℹ️ กรณีจะมารับนอกเวลา (18:00-22:00 น.)\nกรุณาแจ้งน้องบอทด้วยนะคะ",
+                        "color": "#FF9900",
+                        "size": "xxs",
+                        "align": "center",
+                        "wrap": True,
+                        "margin": "sm"
                     }
                 ]
             }
         }
+        
+        # Add hero image if available
+        if image_url and image_url.strip():
+            bubble["hero"] = {
+                "type": "image",
+                "url": image_url,
+                "size": "full",
+                "aspectRatio": "20:13",
+                "aspectMode": "cover",
+                "action": {
+                    "type": "uri",
+                    "uri": image_url
+                }
+            }
         bubbles.append(bubble)
         
     return {
@@ -304,6 +356,8 @@ def create_parcel_pickup_flex(parcel, room):
     pin = parcel.get('pin', '-')
     transport = parcel.get('transport', '-')
     tracking = parcel.get('tracking_number', '-')
+    recipient_name = parcel.get('recipient_name', '-')
+    image_url = parcel.get('image_url', '')
     is_after_hours = parcel.get('is_after_hours', False)
     
     bubble = {
@@ -357,6 +411,28 @@ def create_parcel_pickup_flex(parcel, room):
                     "margin": "lg",
                     "spacing": "sm",
                     "contents": [
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "ผู้รับ",
+                                    "color": "#aaaaaa",
+                                    "size": "sm",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": recipient_name,
+                                    "wrap": True,
+                                    "color": "#666666",
+                                    "size": "sm",
+                                    "flex": 4,
+                                    "weight": "bold"
+                                }
+                            ]
+                        },
                         {
                             "type": "box",
                             "layout": "baseline",
@@ -441,6 +517,20 @@ def create_parcel_pickup_flex(parcel, room):
             ]
         }
     }
+    
+    # Add hero image if available
+    if image_url and image_url.strip():
+        bubble["hero"] = {
+            "type": "image",
+            "url": image_url,
+            "size": "full",
+            "aspectRatio": "20:13",
+            "aspectMode": "cover",
+            "action": {
+                "type": "uri",
+                "uri": image_url
+            }
+        }
     
     return bubble
 
