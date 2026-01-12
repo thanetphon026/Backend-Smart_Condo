@@ -34,7 +34,7 @@ from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
-from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex, create_after_hours_confirmation_flex
+from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex, create_after_hours_confirmation_flex, create_after_hours_cancellation_flex
 from linebot.v3.webhooks import (
     MessageEvent, 
     TextMessageContent, 
@@ -1155,6 +1155,19 @@ def process_text_logic(user, text):
             pending_parcels_data = user.get('after_hours_pending_parcels', [])
             
             text_lower = text.lower().strip()
+            
+            # Check for cancellation during selection
+            if any(w in text_lower for w in ["ยกเลิก", "ไม่", "cancel", "no", "exit", "พอ"]):
+                users_col.update_one(
+                    {"line_user_id": uid},
+                    {"$set": {
+                        "after_hours_state": None,
+                        "after_hours_pending_pins": None,
+                        "after_hours_pending_parcels": None
+                    }}
+                )
+                return "❌ ยกเลิกการทำรายการเรียบร้อยค่ะ"
+
             selected_pins = []
             
             # ตรวจสอบคำตอบแบบง่าย (สำหรับชิ้นเดียว)
@@ -1368,24 +1381,18 @@ def process_text_logic(user, text):
         
         parcel_list_str = "\n".join(parcel_list)
         
-        if len(pending_parcels) == 1:
-            text_reply = (
-                f"คุณมีพัสดุคงค้าง 1 ชิ้น:\n\n"
-                f"{parcel_list_str}\n\n"
-                f"📝 ต้องการลงทะเบียนรับนอกเวลาใช่ไหมคะ?\n"
-                f"(ตอบ: 'ใช่', 'รับ', 'ตกลง' หรือระบุ PIN/เลขพัสดุ)\n\n"
-                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby"
-            )
-        else:
-            text_reply = (
-                f"คุณมีพัสดุคงค้าง {len(pending_parcels)} ชิ้น:\n\n"
-                f"{parcel_list_str}\n\n"
-                f"📝 กรุณาเลือกพัสดุที่ต้องการรับนอกเวลา\n"
-                f"(ตอบ: ตัวเลข เช่น '1,3' หรือ 'ทั้งหมด' หรือระบุ PIN/เลขพัสดุ)\n\n"
-                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby"
-            )
         
-        return text_reply
+        if len(pending_parcels) == 1:
+            flex_content = create_after_hours_selection_flex(pending_parcels, room_number)
+            text_reply = "คุณมีพัสดุคงค้าง 1 ชิ้น ต้องการลงทะเบียนรับนอกเวลาใช่ไหมคะ?"
+        else:
+            flex_content = create_after_hours_selection_flex(pending_parcels, room_number)
+            text_reply = f"คุณมีพัสดุคงค้าง {len(pending_parcels)} ชิ้น กรุณาเลือกรายการที่ต้องการรับนอกเวลาค่ะ"
+            
+        return {
+            "text": text_reply,
+            "flex": flex_content
+        }
 
 
     # 3. ตรวจจับการยกเลิกรับนอกเวลา
@@ -1407,20 +1414,11 @@ def process_text_logic(user, text):
         parcels_to_cancel = []
         
         if target_pins == "ALL" or not target_pins:
-            # ถ้า user ไม่ระบุ หรือบอกว่าทั้งหมด -> ยกเลิกทั้งหมด (Safe default for consistency, or ask clarification? User complained about 'cancelling all' when specific was meant. 
-            # But if target_pins is empty from AI (meaning "didn't specify"), maybe we should cancel all as a fallback OR ask user. 
-            # However, prompt handles specific PINs. If 'target_pins' is [], it truly implies generic "cancel".
-            # BUT wait, the user said "Cancel parcel 13469 but system cancelled 2". 
-            # If AI works, target_pins will have ["13469"]. 
-            # So if target_pins is [], it means user said "Cancel after hours" (generic).
             parcels_to_cancel = current_ah_parcels
         else:
-            # Filter by matching PINs (fuzzy match or exact?)
-            # Prompt output PINs might be partial. Let's try to match.
             for p in current_ah_parcels:
                 p_pin = str(p.get("pin", ""))
                 p_track = str(p.get("tracking_number", ""))
-                # Check if this parcel is in target_pins list (fuzzy check)
                 is_match = False
                 for t in target_pins:
                     if t in p_pin or t in p_track:
@@ -1429,7 +1427,6 @@ def process_text_logic(user, text):
                 if is_match:
                     parcels_to_cancel.append(p)
             
-            # Safety: If AI said specific PINs but we found none, maybe just inform user.
             if not parcels_to_cancel:
                  return f"❌ ไม่พบพัสดุที่ระบุ ({', '.join(target_pins)}) ในรายการนอกเวลาของคุณค่ะ"
 
@@ -1456,10 +1453,7 @@ def process_text_logic(user, text):
         )
 
         # Re-fetch Status for Grounded Response
-        # 1. Cancelled items count
         cancelled_count = len(parcels_to_cancel)
-        
-        # 2. Remaining after-hours items (Query logic: pending AND is_after_hours=True)
         remaining_ah = parcels_col.count_documents({
             "room_number": room_number,
             "status": "pending",
@@ -1467,14 +1461,18 @@ def process_text_logic(user, text):
         })
         
         # 3. Message construction
-        msg = f"✅ ยกเลิกรับนอกเวลาเรียบร้อย {cancelled_count} รายการค่ะ\n(PIN: {', '.join(cancel_pins)})"
+        flex_content = create_after_hours_cancellation_flex(
+            parcels_to_cancel, 
+            remaining_ah, 
+            room_number
+        )
         
-        if remaining_ah > 0:
-            msg += f"\n\n📦 ยังเหลือพัสดุรับนอกเวลาอีก {remaining_ah} รายการครับ"
-        else:
-            msg += f"\n\nตอนนี้ไม่มีพัสดุรับนอกเวลาค้างแล้วครับ สามารถติดต่อรับได้ในเวลาทำการปกติ"
+        text_reply = f"✅ ยกเลิกรับนอกเวลาเรียบร้อย {cancelled_count} รายการค่ะ"
             
-        return msg
+        return {
+            "text": text_reply,
+            "flex": flex_content
+        }
 
     # ================= Intent Analysis =================
     
