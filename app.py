@@ -1152,26 +1152,61 @@ def process_text_logic(user, text):
         try:
             # ผู้ใช้กำลังเลือกพัสดุที่ต้องการรับนอกเวลา
             pending_parcel_pins = user.get('after_hours_pending_pins', [])
+            pending_parcels_data = user.get('after_hours_pending_parcels', [])
             
-            # ใช้ AI แปลความหมายการเลือก (รองรับ "1-3", "ทั้งหมด" ฯลฯ)
-            selected_indices = interpret_parcel_selection(text, len(pending_parcel_pins))
+            text_lower = text.lower().strip()
+            selected_pins = []
             
-            # Fallback: Manual Parsing (เผื่อ AI พลาด หรือกรณี Simple)
-            if not selected_indices:
-                 try:
-                    parts = text.replace(',', ' ').replace('-', ' ').split()
-                    for part in parts:
-                        if part.strip().isdigit():
-                            idx = int(part.strip())
+            # ตรวจสอบคำตอบแบบง่าย (สำหรับชิ้นเดียว)
+            if len(pending_parcel_pins) == 1:
+                simple_yes = ["ใช่", "ใช้", "รับ", "ตกลง", "ok", "yes", "ค่ะ", "ครับ", "ได้", "เอา"]
+                if any(word in text_lower for word in simple_yes):
+                    selected_pins = pending_parcel_pins
+            
+            # ถ้ายังไม่ได้เลือก ลองหาจากการตอบแบบอื่น
+            if not selected_pins:
+                # 1. ตรวจสอบ "ทั้งหมด" หรือ "all"
+                if any(word in text_lower for word in ["ทั้งหมด", "ทั้งหมดเลย", "all", "ทุกชิ้น"]):
+                    selected_pins = pending_parcel_pins
+                
+                # 2. ตรวจสอบตัวเลข indices (1,2,3 หรือ 1 2 3 หรือ 1-3)
+                elif not selected_pins:
+                    try:
+                        # Parse numbers from text
+                        import re
+                        numbers = re.findall(r'\d+', text)
+                        indices = []
+                        for num_str in numbers:
+                            idx = int(num_str)
                             if 1 <= idx <= len(pending_parcel_pins):
-                                selected_indices.append(idx - 1)
-                 except:
-                    pass
-
-            if not selected_indices:
-                 return f"❌ ไม่เข้าใจคำสั่งค่ะ กรุณาระบุรหัสพัสดุ เช่น '1, 3' หรือ 'ทั้งหมด' หรือ '1 ถึง 3'"
-
-            selected_pins = [pending_parcel_pins[i] for i in selected_indices]
+                                indices.append(idx - 1)  # Convert to 0-based
+                        
+                        if indices:
+                            selected_pins = [pending_parcel_pins[i] for i in indices]
+                    except:
+                        pass
+                
+                # 3. ตรวจสอบว่ามี PIN หรือ tracking number ในข้อความ
+                if not selected_pins and pending_parcels_data:
+                    for parcel in pending_parcels_data:
+                        pin = str(parcel.get('pin', ''))
+                        tracking = str(parcel.get('tracking_number', ''))
+                        
+                        if pin in text or tracking in text:
+                            selected_pins.append(pin)
+            
+            # ตรวจสอบว่าเลือกได้หรือไม่
+            if not selected_pins:
+                return (
+                    f"❌ ไม่เข้าใจคำสั่งค่ะ\\n\\n"
+                    f"กรุณาตอบกลับด้วย:\\n"
+                    f"• ตัวเลข เช่น '1' หรือ '1,3'\\n"
+                    f"• PIN เช่น '{pending_parcel_pins[0] if pending_parcel_pins else '12345'}'\\n"
+                    f"• 'ทั้งหมด' สำหรับทุกชิ้น"
+                )
+            
+            # Remove duplicates
+            selected_pins = list(set(selected_pins))
             
             # อัพเดตพัสดุที่เลือกให้เป็น after-hours
             parcels_col.update_many(
@@ -1188,7 +1223,8 @@ def process_text_logic(user, text):
                 {"$set": {
                     "after_hours_preference": True,
                     "after_hours_state": None,
-                    "after_hours_pending_pins": None
+                    "after_hours_pending_pins": None,
+                    "after_hours_pending_parcels": None
                 }}
             )
             
@@ -1200,29 +1236,36 @@ def process_text_logic(user, text):
                 details=f"User confirmed {len(selected_pins)} parcel(s) for after-hours pickup"
             )
             
-            # parcel_list = "\\n".join([f"  • PIN {pin}" for pin in selected_pins])
+            # สร้าง confirmation message
+            parcel_details = []
+            for pin in selected_pins:
+                parcel_info = next((p for p in pending_parcels_data if p['pin'] == pin), None)
+                if parcel_info:
+                    parcel_details.append(f"  • PIN {pin} - {parcel_info.get('transport', '-')}")
+            
+            parcel_list_str = "\\n".join(parcel_details) if parcel_details else "\\n".join([f"  • PIN {p}" for p in selected_pins])
+            
             text_reply = (
-                f"✅ บันทึกเรียบร้อยแล้วค่ะ!\n\n"
-                f"📦 พัสดุที่ลงทะเบียนรับนอกเวลา ({len(selected_pins)} ชิ้น)\n"
-                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n\n"
+                f"✅ ลงทะเบียนรับนอกเวลาเรียบร้อยแล้วค่ะ!\\n\\n"
+                f"📦 พัสดุที่ลงทะเบียน ({len(selected_pins)} ชิ้น):\\n"
+                f"{parcel_list_str}\\n\\n"
+                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\\n\\n"
                 f"ทางนิติบุคคลจะเตรียมพัสดุไว้ให้ค่ะ ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
             )
             
-            # Fetch full parcel objects for Flex
-            confirmed_parcels = list(parcels_col.find({"pin": {"$in": selected_pins}}))
-            return {
-                "text": text_reply,
-                "flex": create_parcel_carousel(confirmed_parcels)
-            }
+            return text_reply
             
         except Exception as e:
             print(f"❌ After-Hours Selection Error: {e}")
+            import traceback
+            traceback.print_exc()
             # รีเซ็ตสถานะ
             users_col.update_one(
                 {"line_user_id": uid},
                 {"$set": {
                     "after_hours_state": None,
-                    "after_hours_pending_pins": None
+                    "after_hours_pending_pins": None,
+                    "after_hours_pending_parcels": None
                 }}
             )
             return "❌ เกิดข้อผิดพลาดค่ะ กรุณาลองใหม่อีกครั้ง"
@@ -1285,98 +1328,57 @@ def process_text_logic(user, text):
                 details=f"Smart registration for {len(reg_pins)} items"
             )
             
-            # parcel_list = "\\n".join([f"  • PIN {p['pin']} ({p.get('transport','-')})" for p in parcels_to_register])
+            parcel_list = "\n".join([f"  • PIN {p['pin']} - {p.get('transport','-')} ({p.get('tracking_number','-')})" for p in parcels_to_register])
             text_reply = (
                 f"✅ ลงทะเบียนรับนอกเวลาเรียบร้อย {len(parcels_to_register)} รายการค่ะ!\n\n"
+                f"{parcel_list}\n\n"
                 f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n"
                 f"ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
             )
-            return {
-                "text": text_reply,
-                "flex": create_parcel_carousel(parcels_to_register)
-            }
+            return text_reply
 
-        # Case 2: No specific PINs, fallback to manual selection
+        # Case 2: No specific PINs, ask user to select (always ask, even for single parcel)
         
-        # กรณีมีพัสดุเพียง 1 ชิ้น - ยืนยันทันที (Logic เดิม)
+        # สร้างรายการพัสดุและถามให้เลือก (แม้มีชิ้นเดียว)
+        parcel_list = []
+        pins = []
+        for idx, p in enumerate(pending_parcels, 1):
+            pin = p['pin']
+            transport = p.get('transport', '-')
+            tracking = p.get('tracking_number', '-')
+            parcel_list.append(f"{idx}. PIN {pin} - {transport} ({tracking})")
+            pins.append(pin)
+        
+        # บันทึกสถานะว่ากำลังรอการเลือก
+        users_col.update_one(
+            {"line_user_id": uid},
+            {"$set": {
+                "after_hours_state": "selecting",
+                "after_hours_pending_pins": pins,
+                "after_hours_pending_parcels": [{"pin": p['pin'], "transport": p.get('transport', '-'), "tracking_number": p.get('tracking_number', '-')} for p in pending_parcels]
+            }}
+        )
+        
+        parcel_list_str = "\n".join(parcel_list)
+        
         if len(pending_parcels) == 1:
-            pin = pending_parcels[0]['pin']
-            transport = pending_parcels[0].get('transport', '-')
-            tracking = pending_parcels[0].get('tracking_number', '-')
-            
-            # อัพเดตพัสดุเป็น after-hours
-            parcels_col.update_one(
-                {"pin": pin},
-                {"$set": {
-                    "is_after_hours": True,
-                    "after_hours_confirmed_at": datetime.datetime.now()
-                }}
-            )
-            
-            # อัพเดต user preference
-            users_col.update_one(
-                {"line_user_id": uid},
-                {"$set": {"after_hours_preference": True}}
-            )
-            
-            # บันทึก Audit Log
-            log_admin_action(
-                action="After-Hours Registration",
-                performed_by=f"User ({room_number})",
-                target=f"Parcel PIN: {pin}",
-                details=f"Single parcel after-hours registration via chatbot"
-            )
-            
             text_reply = (
-                f"✅ บันทึกการรับนอกเวลาเรียบร้อยแล้วค่ะ!\n\n"
-                f"📦 พัสดุของคุณ:\n"
-                f"  • PIN: {pin}\n"
-                f"  • ขนส่ง: {transport}\n"
-                f"  • Tracking: {tracking}\n\n"
-                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n\n"
-                f"ทางนิติบุคคลจะเตรียมพัสดุไว้ให้ค่ะ ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
+                f"คุณมีพัสดุคงค้าง 1 ชิ้น:\n\n"
+                f"{parcel_list_str}\n\n"
+                f"📝 ต้องการลงทะเบียนรับนอกเวลาใช่ไหมคะ?\n"
+                f"(ตอบ: 'ใช่', 'รับ', 'ตกลง' หรือระบุ PIN/เลขพัสดุ)\n\n"
+                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby"
             )
-            return {
-                 "text": text_reply,
-                 "flex": create_parcel_carousel([pending_parcels[0]])
-            }
-        
-        # กรณีมีพัสดุหลายชิ้น - แสดงรายการในบล็อกเดียวพร้อมข้อความแนะนำ
         else:
-            parcel_list = []
-            pins = []
-            for idx, p in enumerate(pending_parcels, 1):
-                pin = p['pin']
-                transport = p.get('transport', '-')
-                tracking = p.get('tracking_number', '-')
-                parcel_list.append(f"{idx}. PIN {pin} - {transport} ({tracking})")
-                pins.append(pin)
-            
-            # บันทึกสถานะว่ากำลังรอการเลือก
-            users_col.update_one(
-                {"line_user_id": uid},
-                {"$set": {
-                    "after_hours_state": "selecting",
-                    "after_hours_pending_pins": pins
-                }}
-            )
-            
-            parcel_list_str = "\\n".join(parcel_list)
             text_reply = (
-                f"คุณมีพัสดุคงค้าง {len(pending_parcels)} ชิ้น:\\n\\n"
-                f"{parcel_list_str}\\n\\n"
-                f"📝 กรุณาพิมพ์ตัวเลขของพัสดุที่ต้องการรับนอกเวลา\\n"
-                f"(เช่น: 1,3 หรือ 1 3 หรือ ทั้งหมด)"
+                f"คุณมีพัสดุคงค้าง {len(pending_parcels)} ชิ้น:\n\n"
+                f"{parcel_list_str}\n\n"
+                f"📝 กรุณาเลือกพัสดุที่ต้องการรับนอกเวลา\n"
+                f"(ตอบ: ตัวเลข เช่น '1,3' หรือ 'ทั้งหมด' หรือระบุ PIN/เลขพัสดุ)\n\n"
+                f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby"
             )
-            
-            # ใช้ FlexMessage แสดงรายการพัสดุทั้งหมดในบล็อกเดียว
-            room_number = user.get('room_number', '-')
-            flex_content = create_after_hours_selection_flex(pending_parcels, room_number)
-            
-            return {
-                "text": text_reply,
-                "flex": flex_content
-            }
+        
+        return text_reply
 
 
     # 3. ตรวจจับการยกเลิกรับนอกเวลา
@@ -2679,7 +2681,9 @@ def confirm_parcel_and_notify():
             "pin": pin,
             "transport": data.get('transport', data.get('courier', '-')),
             "tracking_number": data.get('tracking_number', '-'),
-            "room_number": data.get('room_number', '-')
+            "room_number": data.get('room_number', '-'),
+            "recipient_name": data.get('recipient_name', '-'),
+            "image_url": image_url
         }
         flex_content = create_parcel_carousel([parcel_data])
 
