@@ -34,7 +34,7 @@ from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
-from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex
+from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex
 from linebot.v3.webhooks import (
     MessageEvent, 
     TextMessageContent, 
@@ -1341,7 +1341,7 @@ def process_text_logic(user, text):
                  "flex": create_parcel_carousel([pending_parcels[0]])
             }
         
-        # กรณีมีพัสดุหลายชิ้น - ให้เลือก
+        # กรณีมีพัสดุหลายชิ้น - แสดงรายการในบล็อกเดียวพร้อมข้อความแนะนำ
         else:
             parcel_list = []
             pins = []
@@ -1361,19 +1361,23 @@ def process_text_logic(user, text):
                 }}
             )
             
-            parcel_list_str = "\n".join(parcel_list)
+            parcel_list_str = "\\n".join(parcel_list)
             text_reply = (
-                f"คุณมีพัสดุคงค้าง {len(pending_parcels)} ชิ้น:\n\n"
-                f"{parcel_list_str}\n\n"
-                f"📝 กรุณาพิมพ์ตัวเลขของพัสดุที่ต้องการรับนอกเวลา\n"
+                f"คุณมีพัสดุคงค้าง {len(pending_parcels)} ชิ้น:\\n\\n"
+                f"{parcel_list_str}\\n\\n"
+                f"📝 กรุณาพิมพ์ตัวเลขของพัสดุที่ต้องการรับนอกเวลา\\n"
                 f"(เช่น: 1,3 หรือ 1 3 หรือ ทั้งหมด)"
             )
             
-            # Return Carousel for Selection (User can see details clearly)
+            # ใช้ FlexMessage แสดงรายการพัสดุทั้งหมดในบล็อกเดียว
+            room_number = user.get('room_number', '-')
+            flex_content = create_after_hours_selection_flex(pending_parcels, room_number)
+            
             return {
                 "text": text_reply,
-                "flex": create_parcel_carousel(pending_parcels)
+                "flex": flex_content
             }
+
 
     # 3. ตรวจจับการยกเลิกรับนอกเวลา
     is_cancel, target_pins = detect_after_hours_cancel_intent(text)
@@ -2677,7 +2681,8 @@ def confirm_parcel_and_notify():
         if room and room != "-":
             parcel_count = parcels_col.count_documents({"room_number": room, "status": "pending"})
 
-        # 7. สร้างข้อความแจ้งเตือน (Updated with after-hours info)
+        # 7. สร้าง FlexMessage Carousel สำหรับพัสดุใหม่
+        # สร้างข้อความสำรอง (alt_text) สำหรับกรณีที่ Flex ไม่แสดงผล
         message = (
             f"📦 มีพัสดุมาใหม่ค่ะ!\n\n"
             f"🏠 ห้อง: {data.get('room_number', '-')}\n"
@@ -2691,10 +2696,19 @@ def confirm_parcel_and_notify():
         )
 
         image_url = data.get("image_url")
+        
+        # สร้าง FlexMessage Carousel สำหรับพัสดุที่เพิ่งสร้าง
+        parcel_data = {
+            "pin": pin,
+            "transport": data.get('transport', data.get('courier', '-')),
+            "tracking_number": data.get('tracking_number', '-'),
+            "room_number": data.get('room_number', '-')
+        }
+        flex_content = create_parcel_carousel([parcel_data])
 
         # 8. ส่งแจ้งเตือน (พหุแพลตฟอร์ม: LINE + Web) -- [SPEED OPTIMIZATION] Async
         if user:
-            executor.submit(notify_user_platform_agnostic, user, message, image_url, update_history=True)
+            executor.submit(notify_user_platform_agnostic, user, message, image_url, update_history=True, flex_contents=flex_content)
 
 
         notification_lines = []
@@ -2789,8 +2803,9 @@ def pickup_parcel():
 
             image_url = parcel.get("image_url")
             
-            # สร้าง Flex Message
-            flex_content = create_text_flex(message, title="ยืนยันการรับพัสดุ", color="#1DB446")
+            # สร้าง Flex Message สำหรับการรับพัสดุ
+            room = parcel.get('room_number', '-')
+            flex_content = create_parcel_pickup_flex(parcel, room)
             
             executor.submit(notify_user_platform_agnostic, user, message, image_url, update_history=True, flex_contents=flex_content)
             print(f"📤 [Pickup] Notification sent to {user.get('display_name')}")
