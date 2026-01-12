@@ -32,8 +32,9 @@ from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
-    ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage
+    ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
+from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex
 from linebot.v3.webhooks import (
     MessageEvent, 
     TextMessageContent, 
@@ -440,35 +441,47 @@ def admin_logout():
 
 # ================= LINE MESSAGE HELPER =================
 
-def send_line_message(user_id, message, image_url=None):
-    """ส่งข้อความ LINE ไปยังผู้ใช้ (แก้ไขให้รองรับการส่งรูปภาพ)"""
+def send_line_message(user_id, message=None, image_url=None, flex_contents=None):
+    """ส่งข้อความ LINE ไปยังผู้ใช้ (รองรับ Flex Message)"""
     try:
         with ApiClient(line_configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
             
             messages = []
             
-            # ส่งข้อความก่อน
-            messages.append(TextMessage(text=message))
+            # 1. กรณีส่งเป็น Flex Message
+            if flex_contents:
+                try:
+                    flex_message = FlexMessage(
+                        alt_text="ข้อความใหม่จาก Smart Condo",
+                        contents=FlexContainer.from_dict(flex_contents)
+                    )
+                    messages.append(flex_message)
+                except Exception as flex_err:
+                    print(f"❌ Flex Construction Error: {flex_err}")
+                    # Fallback to text
+                    messages.append(TextMessage(text=message or "มีข้อความใหม่ (แสดงผลไม่ได้)"))
             
-            # ส่งรูปภาพถ้ามีและ URL ถูกต้อง
+            # 2. กรณีส่งเป็น Text (หรือ Fallback)
+            elif message:
+                # ถ้าข้อความสั้นๆ อาจจะส่งเป็น Text ธรรมดา หรือจะห่อเป็น Flex ก็ได้
+                # ในที่นี้ถ้าไม่ได้ส่ง flex_contents มาโดยตรง เราจะส่งเป็น Text ธรรมดาไปก่อน
+                # หรือถ้าอยากให้สวยงามตลอดเวลา ก็เรียก create_text_flex(message) ได้
+                messages.append(TextMessage(text=message))
+            
+            # 3. กรณีมีรูปภาพแนบมาด้วย
             if image_url and image_url.strip() and image_url != "":
                 try:
-                    # ตรวจสอบว่า URL ใช้งานได้
-                    import requests
-                    response = requests.head(image_url, timeout=5)
-                    
-                    if response.status_code == 200:
-                        messages.append(ImageMessage(
-                            original_content_url=image_url, 
-                            preview_image_url=image_url
-                        ))
-                        print(f"📷 Added image to message: {image_url}")
-                    else:
-                        print(f"⚠️ Image URL not accessible: {image_url} (Status: {response.status_code})")
+                    messages.append(ImageMessage(
+                        original_content_url=image_url, 
+                        preview_image_url=image_url
+                    ))
                 except Exception as img_error:
-                    print(f"⚠️ Image URL check error: {img_error}")
+                    print(f"⚠️ Image Error: {img_error}")
             
+            if not messages:
+                return False
+
             try:
                 line_bot_api.push_message(
                     PushMessageRequest(
@@ -480,20 +493,7 @@ def send_line_message(user_id, message, image_url=None):
                 return True
             except Exception as api_error:
                 print(f"❌ LINE API Error: {api_error}")
-                
-                # ลองส่งเฉพาะข้อความอย่างเดียว
-                try:
-                    line_bot_api.push_message(
-                        PushMessageRequest(
-                            to=user_id,
-                            messages=[TextMessage(text=message)]
-                        )
-                    )
-                    print(f"✅ Text-only message sent to {user_id}")
-                    return True
-                except Exception as text_error:
-                    print(f"❌ Text-only also failed: {text_error}")
-                    return False
+                return False
                 
     except Exception as e:
         print(f"❌ LINE Send Error: {e}")
@@ -1200,13 +1200,20 @@ def process_text_logic(user, text):
                 details=f"User confirmed {len(selected_pins)} parcel(s) for after-hours pickup"
             )
             
-            parcel_list = "\n".join([f"  • PIN {pin}" for pin in selected_pins])
-            return (
+            # parcel_list = "\\n".join([f"  • PIN {pin}" for pin in selected_pins])
+            text_reply = (
                 f"✅ บันทึกเรียบร้อยแล้วค่ะ!\n\n"
-                f"📦 พัสดุที่ลงทะเบียนรับนอกเวลา ({len(selected_pins)} ชิ้น):\n{parcel_list}\n\n"
+                f"📦 พัสดุที่ลงทะเบียนรับนอกเวลา ({len(selected_pins)} ชิ้น)\n"
                 f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n\n"
                 f"ทางนิติบุคคลจะเตรียมพัสดุไว้ให้ค่ะ ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
             )
+            
+            # Fetch full parcel objects for Flex
+            confirmed_parcels = list(parcels_col.find({"pin": {"$in": selected_pins}}))
+            return {
+                "text": text_reply,
+                "flex": create_parcel_carousel(confirmed_parcels)
+            }
             
         except Exception as e:
             print(f"❌ After-Hours Selection Error: {e}")
@@ -1278,13 +1285,16 @@ def process_text_logic(user, text):
                 details=f"Smart registration for {len(reg_pins)} items"
             )
             
-            parcel_list = "\n".join([f"  • PIN {p['pin']} ({p.get('transport','-')})" for p in parcels_to_register])
-            return (
+            # parcel_list = "\\n".join([f"  • PIN {p['pin']} ({p.get('transport','-')})" for p in parcels_to_register])
+            text_reply = (
                 f"✅ ลงทะเบียนรับนอกเวลาเรียบร้อย {len(parcels_to_register)} รายการค่ะ!\n\n"
-                f"{parcel_list}\n\n"
                 f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n"
                 f"ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
             )
+            return {
+                "text": text_reply,
+                "flex": create_parcel_carousel(parcels_to_register)
+            }
 
         # Case 2: No specific PINs, fallback to manual selection
         
@@ -1317,7 +1327,7 @@ def process_text_logic(user, text):
                 details=f"Single parcel after-hours registration via chatbot"
             )
             
-            return (
+            text_reply = (
                 f"✅ บันทึกการรับนอกเวลาเรียบร้อยแล้วค่ะ!\n\n"
                 f"📦 พัสดุของคุณ:\n"
                 f"  • PIN: {pin}\n"
@@ -1326,6 +1336,10 @@ def process_text_logic(user, text):
                 f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n\n"
                 f"ทางนิติบุคคลจะเตรียมพัสดุไว้ให้ค่ะ ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
             )
+            return {
+                 "text": text_reply,
+                 "flex": create_parcel_carousel([pending_parcels[0]])
+            }
         
         # กรณีมีพัสดุหลายชิ้น - ให้เลือก
         else:
@@ -1348,12 +1362,18 @@ def process_text_logic(user, text):
             )
             
             parcel_list_str = "\n".join(parcel_list)
-            return (
+            text_reply = (
                 f"คุณมีพัสดุคงค้าง {len(pending_parcels)} ชิ้น:\n\n"
                 f"{parcel_list_str}\n\n"
                 f"📝 กรุณาพิมพ์ตัวเลขของพัสดุที่ต้องการรับนอกเวลา\n"
                 f"(เช่น: 1,3 หรือ 1 3 หรือ ทั้งหมด)"
             )
+            
+            # Return Carousel for Selection (User can see details clearly)
+            return {
+                "text": text_reply,
+                "flex": create_parcel_carousel(pending_parcels)
+            }
 
     # 3. ตรวจจับการยกเลิกรับนอกเวลา
     is_cancel, target_pins = detect_after_hours_cancel_intent(text)
@@ -1554,7 +1574,7 @@ def process_text_logic(user, text):
             history=history
         )
         res = chat.send_message(f"{text}\n{context_msg}")
-        return res.text.strip()
+        return res.text.strip() # Handler will auto-wrap this in Text Flex
     except Exception as e:
         print(f"Chat Error: {e}")
         return "ขออภัย ระบบขัดข้องชั่วคราวค่ะ"
@@ -1586,10 +1606,28 @@ def handle_text_message(event):
         user = get_or_create_user(uid, "line", display_name, picture_url)
         
         update_chat_history(uid, 'user', event.message.text, platform="line")
-        reply = process_text_logic(user, event.message.text)
-        update_chat_history(uid, 'model', reply, platform="line")
+        reply_data = process_text_logic(user, event.message.text)
         
-        line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=reply)]))
+        reply_text = ""
+        flex_contents = None
+        
+        if isinstance(reply_data, dict):
+            reply_text = reply_data.get('text', '')
+            flex_contents = reply_data.get('flex')
+        else:
+            reply_text = str(reply_data)
+            # Auto-wrap simple text in Flex Bubble for premium look?
+            # Yes, as requested "รูปแบบสวยๆ"
+            if len(reply_text) < 500: # Limit length for bubble
+                flex_contents = create_text_flex(reply_text)
+        
+        update_chat_history(uid, 'model', reply_text, platform="line")
+        
+        # Use helper to send (supports Flex) (pass flex_contents)
+        if flex_contents:
+             send_line_message(uid, message=reply_text, flex_contents=flex_contents)
+        else:
+             line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=reply_text)]))
 
 # ================= Handle Image Message =================
 
@@ -2386,6 +2424,39 @@ def search_complaints_optimized():
         print(f"Complaints search error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
+
+def notify_user_platform_agnostic(user, message, image_url=None, update_history=True, flex_contents=None):
+    """
+    ส่งแจ้งเตือนให้ผู้ใช้ตาม Platform (LINE/Web)
+    รองรับ Flex Message
+    """
+    try:
+        if not user: return False
+        
+        uid = user.get("line_user_id")
+        platform = user.get("platform", "line")
+        
+        # 1. Update Chat History
+        if update_history:
+            # บันทึกประวัติการสนทนา
+            update_chat_history(uid, 'model', message, platform=platform, image_url=image_url)
+            
+        # 2. Send Message
+        if platform == "line" and uid:
+            # Use send_line_message which now supports flex
+            send_line_message(uid, message=message, image_url=image_url, flex_contents=flex_contents)
+            return True
+            
+        elif platform == "web":
+            # สำหรับ Web: Chat History ถูกอัพเดตแล้ว Client จะดึงไปแสดงเอง
+            # (อนาคตอาจเพิ่ม WebSocket push)
+            return True
+            
+        return False
+    except Exception as e:
+        print(f"❌ Notify User Error: {e}")
+        return False
+
 # ================= SCAN PARCEL API (ENHANCED) =================
 
 @app.route('/api/scan', methods=['POST'])
@@ -2717,7 +2788,11 @@ def pickup_parcel():
             message += f"\nขอบคุณที่ใช้บริการค่ะ"
 
             image_url = parcel.get("image_url")
-            executor.submit(notify_user_platform_agnostic, user, message, image_url, update_history=True)
+            
+            # สร้าง Flex Message
+            flex_content = create_text_flex(message, title="ยืนยันการรับพัสดุ", color="#1DB446")
+            
+            executor.submit(notify_user_platform_agnostic, user, message, image_url, update_history=True, flex_contents=flex_content)
             print(f"📤 [Pickup] Notification sent to {user.get('display_name')}")
         else:
             print(f"ℹ️ [Pickup] User not found for room {parcel.get('room_number')}, skip notification")
@@ -2816,8 +2891,16 @@ def resolve_complaint(complaint_id):
                     message += f"\n📝 หมายเหตุ: {admin_note}"
                 message += "\n\nขอบคุณที่แจ้งปัญหาค่ะ 🙏"
                 
+                # สร้าง Flex Message
+                flex_content = create_complaint_update_flex(
+                    status="resolved",
+                    description=complaint_obj.get('description', ''),
+                    room=complaint_obj.get('room_number', '-'),
+                    message=message
+                )
+                
                 # ส่งแจ้งเตือน (พหุแพลตฟอร์ม)
-                notify_user_platform_agnostic(user_obj, message, img_url, update_history=True)
+                notify_user_platform_agnostic(user_obj, message, img_url, update_history=True, flex_contents=flex_content)
                 print(f"✅ Background Notification Sent to: {user_obj.get('line_user_id') if user_obj else 'Unknown'}")
                 
             except Exception as e:
@@ -3423,13 +3506,21 @@ def web_chat_api():
         
         # ประมวลผลข้อความผ่าน Logic กลาง (เหมือน LINE)
         update_chat_history(uid, 'user', msg, platform="web")
-        reply = process_text_logic(user, msg)
-        ts = update_chat_history(uid, 'model', reply, platform="web")
+        reply_data = process_text_logic(user, msg)
+        
+        # Handle dict response (Flex)
+        if isinstance(reply_data, dict):
+            reply_text = reply_data.get('text', '')
+            # Web might not support flex, just use text
+        else:
+            reply_text = str(reply_data)
+            
+        ts = update_chat_history(uid, 'model', reply_text, platform="web")
         
         # [REDUNDANCY REMOVED] update_chat_history now handles save_full_chat_history automatically
 
         return jsonify({
-            "reply": reply, 
+            "reply": reply_text, 
             "status": "success",
             "timestamp": ts.isoformat() if ts else datetime.datetime.utcnow().isoformat(),
             "is_registered": is_registered(user)
