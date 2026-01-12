@@ -1382,11 +1382,17 @@ def process_text_logic(user, text):
         parcel_list_str = "\n".join(parcel_list)
         
         
+        
+        # Calculate stats for the Flex Message
+        total_pending = len(pending_parcels)
+        total_ah = sum(1 for p in pending_parcels if p.get('is_after_hours', False))
+        total_normal = total_pending - total_ah
+
         if len(pending_parcels) == 1:
-            flex_content = create_after_hours_selection_flex(pending_parcels, room_number)
+            flex_content = create_after_hours_selection_flex(pending_parcels, total_pending, total_ah, total_normal, room_number)
             text_reply = "คุณมีพัสดุคงค้าง 1 ชิ้น ต้องการลงทะเบียนรับนอกเวลาใช่ไหมคะ?"
         else:
-            flex_content = create_after_hours_selection_flex(pending_parcels, room_number)
+            flex_content = create_after_hours_selection_flex(pending_parcels, total_pending, total_ah, total_normal, room_number)
             text_reply = f"คุณมีพัสดุคงค้าง {len(pending_parcels)} ชิ้น กรุณาเลือกรายการที่ต้องการรับนอกเวลาค่ะ"
             
         return {
