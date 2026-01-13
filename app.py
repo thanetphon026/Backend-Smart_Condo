@@ -34,7 +34,7 @@ from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
-from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex, create_after_hours_confirmation_flex, create_after_hours_cancellation_flex
+from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex, create_after_hours_confirmation_flex, create_after_hours_cancellation_flex, create_after_hours_error_flex
 from linebot.v3.webhooks import (
     MessageEvent, 
     TextMessageContent, 
@@ -1210,13 +1210,12 @@ def process_text_logic(user, text):
             
             # ตรวจสอบว่าเลือกได้หรือไม่
             if not selected_pins:
-                return (
-                    f"❌ ไม่เข้าใจคำสั่งค่ะ\\n\\n"
-                    f"กรุณาตอบกลับด้วย:\\n"
-                    f"• ตัวเลข เช่น '1' หรือ '1,3'\\n"
-                    f"• PIN เช่น '{pending_parcel_pins[0] if pending_parcel_pins else '12345'}'\\n"
-                    f"• 'ทั้งหมด' สำหรับทุกชิ้น"
-                )
+                example_pin = pending_parcel_pins[0] if pending_parcel_pins else '12345'
+                flex_content = create_after_hours_error_flex(example_pin)
+                return {
+                    "text": "❌ ไม่เข้าใจคำสั่งค่ะ กรุณาเลือกใหม่",
+                    "flex": flex_content
+                }
             
             # คำนวณสถิติพัสดุ
             room_number = user.get('room_number', '-')

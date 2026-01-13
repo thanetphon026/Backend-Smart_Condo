@@ -1099,3 +1099,87 @@ def create_after_hours_cancellation_flex(cancelled_parcels, remaining_count, roo
     }
     
     return bubble
+
+def create_after_hours_error_flex(example_pin):
+    """
+    สร้าง Flex Message สำหรับแจ้งเตือนเมื่อ User พิมพ์ผิดในขั้นตอนเลือกพัสดุ
+    """
+    bubble = {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "❌ ไม่เข้าใจคำสั่ง",
+                    "weight": "bold",
+                    "color": "#FFFFFF",
+                    "size": "md"
+                }
+            ],
+            "backgroundColor": "#DC3545",
+            "paddingAll": "20px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "กรุณาเลือกด้วยวิธีใดวิธีหนึ่ง:",
+                    "weight": "bold",
+                    "size": "sm",
+                    "color": "#333333",
+                    "margin": "md"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "md",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": "1️⃣", "flex": 0, "size": "sm"},
+                                {"type": "text", "text": "พิมพ์เลขลำดับ เช่น '1' หรือ '1,3'", "size": "sm", "color": "#666666", "margin": "sm", "wrap": True}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": "2️⃣", "flex": 0, "size": "sm"},
+                                {"type": "text", "text": f"พิมพ์ PIN เช่น '{example_pin}'", "size": "sm", "color": "#666666", "margin": "sm", "wrap": True}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": "3️⃣", "flex": 0, "size": "sm"},
+                                {"type": "text", "text": "พิมพ์ 'ทั้งหมด' เลือกทุกชิ้น", "size": "sm", "color": "#666666", "margin": "sm", "wrap": True}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "หรือพิมพ์ 'ยกเลิก' เพื่อจบรายการ",
+                    "color": "#aaaaaa",
+                    "size": "xs",
+                    "align": "center",
+                    "wrap": True
+                }
+            ]
+        }
+    }
+    return bubble
