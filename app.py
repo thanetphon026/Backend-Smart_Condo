@@ -977,8 +977,10 @@ Rules:
    - ถ้าถามเฉยๆ ไม่ได้บอกว่าจะรับ ให้เป็น CHECK_STATUS
 3. "NO": คำถามทั่วไป, ทักทาย, หรือเรื่องอื่นที่ไม่เกี่ยวกับพัสดุ
 4. target_pins:
-   - ถ้าระบุเลขพัสดุ/PIN/ลำดับ ให้ใส่ใน list (เช่น "อันที่ 1", "เลข 88888")
-   - ถ้าบอก "ทั้งหมด", "ทุกอัน" ให้ใส่ "ALL"
+   - ถ้าระบุเลขพัสดุ/PIN/ลำดับ ให้ใส่ใน list (เช่น "อันที่ 1", "เลข 88888", "ชิ้นที่ 2")
+   - รองรับเลขไทย: "หนึ่ง"->1, "สอง"->2, "สาม"->3 (ให้แปลงเป็นเลขอารบิกใส่ list เช่น "2")
+   - ระวัง! "ชิ้น 2 3" => ["2", "3"] (ไม่ใช่ ALL)
+   - ถ้าบอก "ทั้งหมด", "ทุกอัน", "เหมาหมด" ถึงจะใส่ "ALL"
 """
 
         response = client.models.generate_content(
@@ -1027,13 +1029,18 @@ Text: "{text}"
 
 Output JSON only: specific 1-based indices.
 Rules:
-- "ทั้งหมด", "all", "ทุกอัน" -> all indices [1, 2, ..., {total_items}]
-- "1-3", "1 to 3", "1 ถึง 3" -> [1, 2, 3]
-- "1, 3" -> [1, 3]
-- "อันแรก" -> [1]
-- If invalid/unsure -> []
+1. "ทั้งหมด", "all", "ทุกอัน", "เหมาหมด", "เอาหมด" -> all indices [1, 2, ..., {total_items}]
+2. "1-3", "1 ถึง 3" -> [1, 2, 3]
+3. "1, 3", "อันที่ 1 กับ 3", "ชิ้น 1 3", "1 และ 2" -> [1, 3] or [1, 2]
+4. Support Thai numbers: "หนึ่ง"->1, "สอง"->2, "สาม"->3, "สี่"->4
+5. "อันแรก" -> [1], "อันสุดท้าย" -> [{total_items}]
+6. IMPORTANT: If user lists numbers like "3 4" or "2 3", output ONLY those indices. DO NOT output 'all'.
+7. If unsure/invalid -> []
 
-Example JSON: {{"indices": [1, 2, 3]}}"""
+Example:
+Text: "ชิ้น 2 กับ 3" -> {{"indices": [2, 3]}}
+Text: "3 4" -> {{"indices": [3, 4]}}
+"""
 
         response = client.models.generate_content(
             model='gemini-3-flash-preview',
