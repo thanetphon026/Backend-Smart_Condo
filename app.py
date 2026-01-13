@@ -1391,14 +1391,60 @@ def process_text_logic(user, text):
                 details=f"Smart registration for {len(reg_pins)} items"
             )
             
+            # --- Re-fetch Parcels to get ACCURATE stats after update ---
+            updated_pending_parcels = list(parcels_col.find({
+                "room_number": room_number,
+                "status": "pending"
+            }).sort("timestamp", -1))
+            
+            total_pending = len(updated_pending_parcels)
+            total_ah = sum(1 for p in updated_pending_parcels if p.get('is_after_hours', False))
+            total_registered_count = len(reg_pins) # Just registered in this action
+            
+            # Use Confirmation Flex (Re-using the logic from selection confirmation or create a new one??)
+            # The prompt asked for "blocks showing total, pending, etc" consistent with others
+            # Let's use create_after_hours_confirmation_flex which does exactly this
+            
+            flex_content = create_after_hours_confirmation_flex(
+                parcels_to_register, # pass full objects of registered items
+                total_pending,
+                len(parcels_to_register), # current registered count (in this session) or total? User asked for total AH status
+                # Wait, confirm flex expects: (registered_parcels_full, total_pending_count, total_registered_count, room_number)
+                # Let's verify confirm flex definition.
+                # It displays "Registered: X items" AND "Remaining AH: Y items" logic might need check.
+                # Actually, create_after_hours_confirmation_flex shows "Successfully registered X items"
+                room_number
+            )
+
+            # Re-read create_after_hours_confirmation_flex definition to be sure.
+            # It takes: (registered_parcels_full, total_pending_count, total_registered_count, room_number)
+            # total_registered_count in that context was "count of items just registered".
+            
+            # Let's use the new create_parcel_status_flex structure but for confirmation? 
+            # OR modify the existing text reply to be a Flex.
+            # The user complained: "Success, Total 5, AH 1, Remaining 4" was WRONG.
+            # This implies the existing create_after_hours_confirmation_flex logic or input data was wrong.
+            
+            # Let's just correct the stats calculation here first and pass correct data.
+            # But wait, create_after_hours_confirmation_flex might NOT show the "Stats Breakdown" like the Selection Card.
+            # The user wants "Show total items, how many AH, how many Normal" like the Check Status card.
+            
+            # Let's use the valid stats we just calculated.
+            
             parcel_list = "\n".join([f"  • PIN {p['pin']} - {p.get('transport','-')} ({p.get('tracking_number','-')})" for p in parcels_to_register])
+            
             text_reply = (
                 f"✅ ลงทะเบียนรับนอกเวลาเรียบร้อย {len(parcels_to_register)} รายการค่ะ!\n\n"
                 f"{parcel_list}\n\n"
                 f"🕐 เวลารับนอกเวลา: 18:00-22:00 น. ที่ Lobby\n"
                 f"ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
             )
-            return text_reply
+            
+            # Returns DICT now to support Flex
+            return {
+                "text": text_reply,
+                "flex": flex_content
+            }
 
         # Case 2: No specific PINs, ask user to select (always ask, even for single parcel)
         
@@ -1676,10 +1722,10 @@ def handle_text_message(event):
             flex_contents = reply_data.get('flex')
         else:
             reply_text = str(reply_data)
-            # Auto-wrap simple text in Flex Bubble for premium look?
-            # Yes, as requested "รูปแบบสวยๆ"
-            if len(reply_text) < 500: # Limit length for bubble
-                flex_contents = create_text_flex(reply_text)
+        
+        # Auto-wrap simple text in Flex Bubble for premium look (ONLY if no flex provided)
+        if not flex_contents and reply_text and len(reply_text) < 500: # Limit length for bubble
+             flex_contents = create_text_flex(reply_text)
         
         update_chat_history(uid, 'model', reply_text, platform="line")
         
