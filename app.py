@@ -1359,19 +1359,27 @@ def process_text_logic(user, text):
             if target_pins == "ALL":
                 parcels_to_register = pending_parcels
             else:
-                for p in pending_parcels:
-                    p_pin = str(p.get("pin", ""))
-                    p_track = str(p.get("tracking_number", ""))
-                    # Check match (PIN, Tracking, or simple index if small number)
-                    for t in target_pins:
+                # Use a dictionary to map PINs to parcels for unique selection
+                selected_parcels_map = {} 
+                
+                for t in target_pins:
+                    # 1. Check for Index (e.g. "1", "2")
+                    if t.isdigit() and len(t) < 3:
+                        idx = int(t)
+                        if 1 <= idx <= len(pending_parcels):
+                            p = pending_parcels[idx-1]
+                            selected_parcels_map[p['pin']] = p
+                            continue
+
+                    # 2. Check for PIN or Tracking Number match
+                    for p in pending_parcels:
+                        p_pin = str(p.get("pin", ""))
+                        p_track = str(p.get("tracking_number", ""))
                         if t in p_pin or t in p_track:
-                            parcels_to_register.append(p)
-                            break
-                        # Support simple index like "1", "2" if user typed "รับชิ้นที่ 1"
-                        if t.isdigit() and len(t) < 3:
-                            idx = int(t)
-                            if 1 <= idx <= len(pending_parcels):
-                                parcels_to_register.append(pending_parcels[idx-1])
+                             selected_parcels_map[p['pin']] = p
+                             break # Found match for this target, move to next target
+                
+                parcels_to_register = list(selected_parcels_map.values())
 
         
         # Case 1: Automatic Registration found
