@@ -34,7 +34,7 @@ from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
-from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex, create_after_hours_confirmation_flex, create_after_hours_cancellation_flex, create_after_hours_error_flex
+from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex, create_after_hours_confirmation_flex, create_after_hours_cancellation_flex, create_after_hours_error_flex, create_parcel_status_flex
 from linebot.v3.webhooks import (
     MessageEvent, 
     TextMessageContent, 
@@ -952,29 +952,33 @@ def handle_registration(user, text):
 
 
 
-def detect_after_hours_intent(text):
+def analyze_parcel_intent(text):
     """
-    ตรวจจับความต้องการรับพัสดุนอกเวลา และระบุพัสดุ (ถ้ามี)
-    Returns: (is_intent, target_pins)
+    วิเคราะห์เจตนาเกี่ยวกับพัสดุ:
+    1. REGISTER_AH: ต้องการลงทะเบียนรับนอกเวลา
+    2. CHECK_STATUS: ต้องการตรวจสอบสถานะ/ดูรายการพัสดุเฉยๆ (ไม่ลงทะเบียน)
+    3. NO: อื่นๆ
     """
     try:
-        prompt = f"""วิเคราะห์ข้อความว่าผู้ใช้ต้องการ **ลงทะเบียน/ยืนยันรับพัสดุนอกเวลา** หรือไม่
-
+        prompt = f"""วิเคราะห์ข้อความของผู้ใช้เกี่ยวกับพัสดุว่าเป็นเจตนาแบบใด
+        
 ข้อความ: "{text}"
 
 Output Format (JSON):
 {{
-  "intent": "YES" or "NO",
-  "target_pins": ["12345"] or "ALL" or []
+  "intent": "REGISTER_AH" | "CHECK_STATUS" | "NO",
+  "target_pins": ["12345"] | "ALL" | []
 }}
 
 Rules:
-1. YES ถ้าต้องการรับพัสดุนอกเวลา (เช่น "ขอรับนอกเวลา", "รับนอกเวลาเลข 12345", "รับตอนดึก")
-2. NO ถ้าเป็นคำถาม หรือเรื่องอื่น
-3. target_pins:
-   - ถ้ามีเลขพัสดุ/PIN ในข้อความ ให้ใส่ใน list
-   - ถ้าบอกว่า "ทั้งหมด" หรือ "ทุกชิ้น" ให้ใส่ "ALL"
-   - ถ้าไม่ระบุเลข ให้ใส่ []
+1. "REGISTER_AH": ถ้าต้องการ **รับของ/ลงทะเบียน/เอาไว้** นอกเวลา (เช่น "ขอรับนอกเวลา", "รับนอกเวลาเลข 1", "เอาไว้นอกเวลา", "ฝากไว้ก่อน", "รับตู้", "ลงทะเบียนรับของ")
+   - รวมกรณีพิมพ์ผิดเช่น "รับนแอกเวลา", "รับนอกเวา"
+2. "CHECK_STATUS": ถ้าต้องการ **ตรวจสอบ/ดู/เช็ค** ว่ามีของไหม หรือขอดูรายการเฉยๆ (เช่น "เช็คพัสดุ", "มีของค้างไหม", "ดูรายการหน่อย", "ตรวจสอบพัสดุ")
+   - ถ้าถามเฉยๆ ไม่ได้บอกว่าจะรับ ให้เป็น CHECK_STATUS
+3. "NO": คำถามทั่วไป, ทักทาย, หรือเรื่องอื่นที่ไม่เกี่ยวกับพัสดุ
+4. target_pins:
+   - ถ้าระบุเลขพัสดุ/PIN/ลำดับ ให้ใส่ใน list (เช่น "อันที่ 1", "เลข 88888")
+   - ถ้าบอก "ทั้งหมด", "ทุกอัน" ให้ใส่ "ALL"
 """
 
         response = client.models.generate_content(
@@ -987,7 +991,7 @@ Rules:
         
         import json
         result = json.loads(response.text.strip())
-        is_intent = result.get("intent") == "YES"
+        intent = result.get("intent", "NO")
         target_pins = result.get("target_pins")
         
         # Normalize
@@ -998,17 +1002,18 @@ Rules:
         else:
             target_pins = []
 
-        return is_intent, target_pins
+        return intent, target_pins
         
     except Exception as e:
-        print(f"❌ After-Hours Intent Error: {e}")
+        print(f"❌ Intent Analysis Error: {e}")
         # Fallback keyword matching
         text_lower = text.lower()
-        question_keywords = ["ทำไง", "ได้ไหม", "ได้มั้ย", "ยังไง", "อย่างไร", "คือ", "เวลาไหน", "?"]
-        if any(kw in text_lower for kw in question_keywords):
-            return False, []
+        if any(kw in text_lower for kw in ["นอกเวลา", "after"]):
+            return "REGISTER_AH", []
+        if any(kw in text_lower for kw in ["เช็ค", "ตรวจสอบ", "มีของ", "ดูรายการ"]):
+            return "CHECK_STATUS", []
         
-        return is_intent, []
+        return "NO", []
 
 def interpret_parcel_selection(text, total_items):
     """
@@ -1289,10 +1294,43 @@ def process_text_logic(user, text):
             )
             return "❌ เกิดข้อผิดพลาดค่ะ กรุณาลองใหม่อีกครั้ง"
     
-    # 2. ตรวจจับความต้องการรับนอกเวลาด้วย AI
-    is_ah_intent, target_pins = detect_after_hours_intent(text)
+    # 2. Parcel Intent Analysis (Register AH / Check Status)
+    parcel_intent, target_pins = analyze_parcel_intent(text)
     
-    if is_ah_intent:
+    # 2.1 Case: CHECK_STATUS -> Show Green Flex Card (No database update)
+    if parcel_intent == "CHECK_STATUS":
+        room_number = user.get('room_number')
+        # ดึงพัสดุทั้งหมดของห้อง
+        # Note: เราดึงเฉพาะ 'pending' เพื่อแสดงสถานะปัจจุบัน
+        all_pending_parcels = list(parcels_col.find({
+            "room_number": room_number,
+            "status": "pending"
+        }).sort("timestamp", -1))
+        
+        # Calculate stats
+        total_pending = len(all_pending_parcels)
+        total_ah = sum(1 for p in all_pending_parcels if p.get('is_after_hours', False))
+        total_normal = total_pending - total_ah
+        
+        flex_content = create_parcel_status_flex(
+            all_pending_parcels, 
+            total_pending, 
+            total_ah, 
+            total_normal, 
+            room_number
+        )
+        
+        msg = f"นี่คือสถานะพัสดุของคุณค่ะ (ทั้งหมด {total_pending} ชิ้น)"
+        if total_pending == 0:
+             msg = "ไม่พบพัสดุค้างจ่ายค่ะ ✅"
+
+        return {
+            "text": msg,
+            "flex": flex_content
+        }
+
+    # 2.2 Case: REGISTER_AH -> Start Selection Process
+    if parcel_intent == "REGISTER_AH":
         room_number = user.get('room_number')
         
         # ดึงพัสดุคงค้างของผู้ใช้
@@ -1317,11 +1355,17 @@ def process_text_logic(user, text):
                 for p in pending_parcels:
                     p_pin = str(p.get("pin", ""))
                     p_track = str(p.get("tracking_number", ""))
-                    # Check match
+                    # Check match (PIN, Tracking, or simple index if small number)
                     for t in target_pins:
                         if t in p_pin or t in p_track:
                             parcels_to_register.append(p)
                             break
+                        # Support simple index like "1", "2" if user typed "รับชิ้นที่ 1"
+                        if t.isdigit() and len(t) < 3:
+                            idx = int(t)
+                            if 1 <= idx <= len(pending_parcels):
+                                parcels_to_register.append(pending_parcels[idx-1])
+
         
         # Case 1: Automatic Registration found
         if parcels_to_register:
@@ -1374,7 +1418,7 @@ def process_text_logic(user, text):
             {"$set": {
                 "after_hours_state": "selecting",
                 "after_hours_pending_pins": pins,
-                "after_hours_pending_parcels": [{"pin": p['pin'], "transport": p.get('transport', '-'), "tracking_number": p.get('tracking_number', '-')} for p in pending_parcels]
+                "after_hours_pending_parcels": [{"pin": p['pin'], "transport": p.get('transport', '-'), "tracking_number": p.get('tracking_number', '-'), "is_after_hours": p.get('is_after_hours', False)} for p in pending_parcels]
             }}
         )
         

@@ -1183,3 +1183,182 @@ def create_after_hours_error_flex(example_pin):
         }
     }
     return bubble
+
+def create_parcel_status_flex(parcels, total_pending, total_ah, total_normal, room_number):
+    """
+    สร้าง Flex Message สำหรับ 'ตรวจสอบสถานะพัสดุ' (Green Theme)
+    แสดงรายการพัสดุทั้งหมด แต่ไม่มีปุ่มกดเลือก (Info Only)
+    """
+    parcel_items = []
+    
+    # Section: Header Stats
+    parcel_items.append({
+        "type": "box",
+        "layout": "vertical",
+        "contents": [
+            {
+                "type": "text",
+                "text": "📊 สถานะพัสดุของคุณ",
+                "weight": "bold",
+                "size": "sm",
+                "color": "#333333",
+                "margin": "md"
+            },
+            {
+                "type": "box",
+                "layout": "horizontal",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "contents": [
+                            {"type": "text", "text": "ทั้งหมด", "size": "xs", "color": "#aaaaaa", "align": "center"},
+                            {"type": "text", "text": str(total_pending), "size": "xl", "color": "#333333", "weight": "bold", "align": "center"}
+                        ]
+                    },
+                    {
+                        "type": "separator",
+                        "color": "#f0f0f0"
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "contents": [
+                            {"type": "text", "text": "ในเวลา", "size": "xs", "color": "#aaaaaa", "align": "center"},
+                            {"type": "text", "text": str(total_normal), "size": "xl", "color": "#007BFF", "weight": "bold", "align": "center"}
+                        ]
+                    },
+                    {
+                        "type": "separator",
+                        "color": "#f0f0f0"
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "contents": [
+                            {"type": "text", "text": "นอกเวลา", "size": "xs", "color": "#aaaaaa", "align": "center"},
+                            {"type": "text", "text": str(total_ah), "size": "xl", "color": "#1DB446", "weight": "bold", "align": "center"}
+                        ]
+                    }
+                ],
+                "margin": "md"
+            }
+        ]
+    })
+    
+    parcel_items.append({"type": "separator", "margin": "lg"})
+    
+    # List of parcels
+    if parcels:
+        for idx, p in enumerate(parcels, 1):
+            pin = p.get('pin', '-')
+            transport = p.get('transport', '-')
+            tracking = p.get('tracking_number', '-')
+            is_ah = p.get('is_after_hours', False)
+            
+            # Determine status display
+            status_color = "#1DB446" if is_ah else "#007BFF" 
+            status_text = "นอกเวลา" if is_ah else "ในเวลา"
+            bg_color = "#E8F5E9" if is_ah else "#F6F6F6"
+
+            parcel_items.append({
+                "type": "box",
+                "layout": "horizontal",
+                "margin": "md",
+                "spacing": "sm",
+                "paddingAll": "10px",
+                "backgroundColor": bg_color,
+                "cornerRadius": "8px",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "width": "4px",
+                        "height": "inherit",
+                        "backgroundColor": status_color,
+                        "flex": 0
+                    },
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "contents": [
+                            {
+                                "type": "box",
+                                "layout": "horizontal",
+                                "contents": [
+                                    {
+                                        "type": "text",
+                                        "text": f"PIN: {pin}",
+                                        "weight": "bold",
+                                        "size": "sm",
+                                        "color": "#333333",
+                                        "flex": 1
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": status_text,
+                                        "size": "xxs",
+                                        "color": status_color,
+                                        "align": "end",
+                                        "weight": "bold",
+                                        "flex": 0
+                                    }
+                                ]
+                            },
+                            {
+                                "type": "text",
+                                "text": f"{transport} ({tracking})",
+                                "size": "xs",
+                                "color": "#666666",
+                                "margin": "xs",
+                                "wrap": True
+                            }
+                        ],
+                        "flex": 1,
+                        "paddingStart": "10px"
+                    }
+                ]
+            })
+    else:
+         parcel_items.append({
+            "type": "text",
+            "text": "ไม่มีพัสดุคงค้างค่ะ",
+            "size": "sm",
+            "color": "#999999",
+            "align": "center",
+            "margin": "xl"
+        })
+
+    bubble = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "📦 ตรวจสอบพัสดุ",
+                    "weight": "bold",
+                    "color": "#FFFFFF",
+                    "size": "md"
+                },
+                {
+                    "type": "text",
+                    "text": f"ห้อง {room_number}",
+                    "color": "#FFFFFF",
+                    "size": "xs",
+                    "margin": "sm"
+                }
+            ],
+            "backgroundColor": "#00A693",
+            "paddingAll": "20px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": parcel_items
+        }
+    }
+    
+    return bubble
