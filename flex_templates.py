@@ -1276,6 +1276,7 @@ def create_parcel_status_flex(parcels, total_pending, total_ah, total_normal, ro
                         "width": "4px",
                         "height": "inherit",
                         "backgroundColor": status_color,
+                        "contents": [],
                         "flex": 0
                     },
                     {

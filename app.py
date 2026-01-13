@@ -1408,11 +1408,7 @@ def process_text_logic(user, text):
             flex_content = create_after_hours_confirmation_flex(
                 parcels_to_register, # pass full objects of registered items
                 total_pending,
-                len(parcels_to_register), # current registered count (in this session) or total? User asked for total AH status
-                # Wait, confirm flex expects: (registered_parcels_full, total_pending_count, total_registered_count, room_number)
-                # Let's verify confirm flex definition.
-                # It displays "Registered: X items" AND "Remaining AH: Y items" logic might need check.
-                # Actually, create_after_hours_confirmation_flex shows "Successfully registered X items"
+                total_ah, # Pass TOTAL AH count (not just current batch)
                 room_number
             )
 
