@@ -1066,6 +1066,47 @@ Text: "3 4" -> {{"indices": [3, 4]}}
         print(f"❌ Selection Interpretation Error: {e}")
         return []
 
+def detect_after_hours_intent_ai(text):
+    """
+    ใช้ AI ตรวจจับว่าผู้ใช้ต้องการรับพัสดุนอกเวลาหรือไม่ (รวมถึงคำพิมพ์ผิด)
+    Returns: (bool, confidence_score)
+    """
+    try:
+        prompt = (
+            f"Text: \"{text}\"\n\n"
+            "Detect if user wants AFTER-HOURS parcel pickup.\n"
+            "Keywords: \"รับนอกเวลา\", \"ขอรับนอกเวลา\", \"ลงนอกเวลา\", \"ลงทะเบียนนอกเวลา\", \"รับพัสดุนอกเวลา\", \"after hours\"\n"
+            "Also detect TYPOS: \"รบนอกเวลา\", \"รับนองเวลา\", \"รับนอกเวลาาา\", etc.\n\n"
+            "Return JSON: {\"is_after_hours\": true/false, \"confidence\": 0.0-1.0}\n"
+            "Examples:\n"
+            "- \"รับนอกเวลา 1-2\" -> {\"is_after_hours\": true, \"confidence\": 1.0}\n"
+            "- \"รบนอกเวลา\" -> {\"is_after_hours\": true, \"confidence\": 0.9}\n"
+            "- \"1-2\" -> {\"is_after_hours\": false, \"confidence\": 1.0}\n"
+            "- \"เช็คพัสดุ\" -> {\"is_after_hours\": false, \"confidence\": 1.0}"
+        )
+        
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+        
+        import json
+        result = json.loads(response.text.strip())
+        is_after_hours = result.get("is_after_hours", False)
+        confidence = result.get("confidence", 0.0)
+        
+        return is_after_hours, confidence
+        
+    except Exception as e:
+        print(f"❌ AI After-Hours Intent Error: {e}")
+        # Fallback to keyword matching
+        keywords = ["รับนอกเวลา", "ขอรับนอกเวลา", "ลงนอกเวลา", "after hours"]
+        is_match = any(kw in text.lower() for kw in keywords)
+        return is_match, 1.0 if is_match else 0.0
+
 def detect_after_hours_cancel_intent(text):
     """
     ตรวจจับความต้องการ **ยกเลิก** รับพัสดุนอกเวลา และระบุพัสดุ (ถ้ามี)
@@ -1157,6 +1198,35 @@ def process_text_logic(user, text):
     
     # ================= AFTER-HOURS PARCEL LOGIC =================
     
+    # ก่อนอื่นตรวจสอบการยกเลิกนอกเวลา (ต้องมีคำว่า "นอกเวลา" ด้วย)
+    cancel_ah_keywords = ["ยกเลิกนอกเวลา", "ยกเลิกรับนอกเวลา", "ไม่รับนอกเวลา", "cancel after hours"]
+    text_lower = text.strip().lower()
+    
+    # Check if it's a cancellation of after-hours specifically
+    if any(kw in text_lower for kw in cancel_ah_keywords):
+        # This is after-hours cancellation - redirect to after-hours cancel logic
+        is_cancel, target_pins = detect_after_hours_cancel_intent(text)
+        if is_cancel:
+            # Handle after-hours cancellation
+            room_number = user.get('room_number')
+            current_ah_parcels = list(parcels_col.find({
+                "room_number": room_number,
+                "status": "pending",
+                "is_after_hours": True
+            }))
+            
+            if not current_ah_parcels:
+                return "ไม่พบรายการพัสดุที่ลงทะเบียนรับนอกเวลาไว้ค่ะ 📦"
+            
+            # Cancel the after-hours parcels
+            cancel_pins = [p.get('pin') for p in current_ah_parcels]
+            parcels_col.update_many(
+                {"pin": {"$in": cancel_pins}},
+                {"$set": {"is_after_hours": False}}
+            )
+            
+            return f"✅ ยกเลิกการลงทะเบียนรับนอกเวลา {len(cancel_pins)} รายการเรียบร้อยค่ะ"
+    
     # 1. ตรวจสอบว่าผู้ใช้อยู่ในสถานะการเลือกพัสดุนอกเวลาหรือไม่
     after_hours_state = user.get('after_hours_state')
     
@@ -1215,18 +1285,36 @@ def process_text_logic(user, text):
                 if not selected_pins and pending_parcels_data:
                     for parcel in pending_parcels_data:
                         pin = str(parcel.get('pin', ''))
-                        tracking = str(parcel.get('tracking_number', ''))
-                        
-                        if pin in text or tracking in text:
-                            selected_pins.append(pin)
             
-            # ตรวจสอบว่าเลือกได้หรือไม่
+            # 2. ใช้ AI ตรวจจับ intent นอกเวลา (รวมคำพิมพ์ผิด)
+            is_after_hours_ai, confidence = detect_after_hours_intent_ai(text)
+            
+            # 3. ตรวจสอบว่ามีพัสดุคงค้างและมี intent นอกเวลาหรือไม่
+            room_number = user.get('room_number')
+            if room_number and is_after_hours_ai and confidence > 0.7 and not selected_pins:
+                # ถ้า AI บอกว่าต้องการรับนอกเวลา แต่ยังไม่มีการเลือกพัสดุ
+                # และผู้ใช้พิมพ์แค่ตัวเลข (เช่น "1", "2") ให้ถือว่าเป็นการเลือกพัสดุ
+                try:
+                    import re
+                    numbers = re.findall(r'\d+', text)
+                    indices = []
+                    for num_str in numbers:
+                        idx = int(num_str)
+                        if 1 <= idx <= len(pending_parcel_pins):
+                            indices.append(idx - 1)  # Convert to 0-based
+                    
+                    if indices:
+                        selected_pins = [pending_parcel_pins[i] for i in indices]
+                except:
+                    pass
+
+            # 4. ตรวจสอบว่ามีพัสดุนอกเวลาคงค้างหรือไม่ และต้องมี intent รับนอกเวลาชัดเจน
+            # (ป้องกันไม่ให้เลขอย่าง "1-2" เข้าสู่โหมดนอกเวลาโดยไม่ตั้งใจ)
             if not selected_pins:
                 example_pin = pending_parcel_pins[0] if pending_parcel_pins else '12345'
                 flex_content = create_after_hours_error_flex(example_pin)
                 return {
                     "text": "❌ ไม่เข้าใจคำสั่งค่ะ กรุณาเลือกใหม่",
-                    "flex": flex_content
                 }
             
             # คำนวณสถิติพัสดุ
@@ -1519,7 +1607,9 @@ def process_text_logic(user, text):
         # Determine which parcels to cancel
         parcels_to_cancel = []
         
-        if target_pins == "ALL" or not target_pins:
+        if target_pins == "ALL": # If "ALL" is explicitly requested
+            parcels_to_cancel = current_ah_parcels
+        elif not target_pins: # If no specific pins are mentioned, but intent is cancel, assume ALL
             parcels_to_cancel = current_ah_parcels
         else:
             for p in current_ah_parcels:
@@ -1660,7 +1750,11 @@ def process_text_logic(user, text):
         if state == 'normal':
             if intent == "COMPLAINT_START":
                 users_col.update_one({"line_user_id": uid}, {"$set": {"complaint_state": "filing_desc"}})
-                return "รับทราบค่ะคุณลูกค้า บอตพร้อมช่วยดูแลนะคะ 📝 รบกวนคุณลูกค้าพิมพ์รายละเอียดปัญหาที่พบมาได้เลยค่ะ"
+                flex_card = create_complaint_ask_details_flex()
+                return {
+                    "text": "รับทราบค่ะคุณลูกค้า บอตพร้อมช่วยดูแลนะคะ 📝",
+                    "flex": flex_card
+                }
             else:
                 # COMPLAINT_DETAIL: มีข้อมูลแล้ว บันทึกและขอรูปทันที
                 users_col.update_one(
@@ -1942,16 +2036,29 @@ def handle_image_message(event):
                     {"$set": {"complaint_state": "normal", "draft_desc": None}}
                 )
                 
-                # 7. ตอบกลับผู้ใช้
-                success_msg = (
-                    f"✅ รับแจ้งร้องเรียนเรียบร้อยแล้วค่ะ!\n\n"
-                    f"📌 เรื่อง: {user_desc}\n"
-                    f"📷 ได้รับรูปภาพแล้ว\n"
-                    f"เจ้าหน้าที่จะรีบดำเนินการตรวจสอบให้นะคะ ขอบคุณค่ะ 🙏"
+                # 7. ตอบกลับผู้ใช้ด้วย Flex Message
+                flex_card = create_complaint_received_flex(
+                    description=user_desc,
+                    image_url=img_url,
+                    priority=final_urgency,
+                    room=user.get('room_number', '-')
                 )
                 
-                update_chat_history(uid, 'model', success_msg, platform="line")
-                line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=success_msg)]))
+                success_msg = (
+                    f"✅ บอทรับแจ้งเรื่องเรียบร้อยแล้วค่ะ! 🙏\n"
+                    f"⚠️ ระดับความสำคัญ: {final_urgency}"
+                )
+                
+                # Send Flex Message with image
+                send_line_message(uid, message=success_msg, flex_contents=flex_card)
+                
+                # Audit Log
+                log_admin_action(
+                    action="User Filed Complaint",
+                    performed_by=f"User {user.get('first_name', 'Unknown')} (Room {user.get('room_number', '-')})",
+                    target=f"New Complaint",
+                    details=f"Filed complaint via LINE - Urgency: {final_urgency}"
+                )
                 
             except Exception as e:
                 print(f"❌ Error: {e}")
