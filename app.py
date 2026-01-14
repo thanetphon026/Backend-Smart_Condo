@@ -34,7 +34,7 @@ from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
-from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex, create_after_hours_confirmation_flex, create_after_hours_cancellation_flex, create_after_hours_error_flex, create_parcel_status_flex
+from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex, create_after_hours_confirmation_flex, create_after_hours_cancellation_flex, create_after_hours_error_flex, create_parcel_status_flex, create_complaint_ask_details_flex, create_complaint_ask_image_flex, create_complaint_received_flex
 from linebot.v3.webhooks import (
     MessageEvent, 
     TextMessageContent, 
@@ -1582,45 +1582,28 @@ def process_text_logic(user, text):
 
     # ================= Intent Analysis =================
     
-    # 1. ตรวจสอบว่าผู้ใช้ต้องการเริ่มต้นกระบวนการแจ้งร้องเรียน (รวมถึงการพิมพ์ผิด)
-    # ขยายรายการคำที่ต้องการเริ่มต้นกระบวนการ (รวมคำพิมพ์ผิดที่พบบ่อย)
+    # ตรวจสอบคำเริ่มต้นกระบวนการร้องเรียน (รวมคำพิมพ์ผิด)
     complaint_start_keywords = [
         "แจ้งร้องเรียน", "ร้องเรียน", "แจ้งเรื่อง", "แจ้งปัญหา", "เเจ้งร้องเรียน",
         "แจ้งเรื่อง", "เเจ้งปัญหา", "เเจ้งปัญหา", "เเจ้ง", "แจ้ง", "มีปัญหา",
         "มีเรื่อง", "ขอเเจ้ง", "ขอแจ้ง", "ต้องการร้องเรียน", "อยากร้องเรียน",
         "อยากเเจ้ง", "อยากเเจ้ง", "ขอร้องเรียน", "ต้องการเเจ้ง", "ต้องการแจ้ง",
-        # เพิ่มคำที่อาจพิมพ์ผิด
-        "เเจ่งร้องเรียน", "แจ้งร้องเรีน", "แจ้งร้องเรย", "แจ้งร้องเรี่ยน",
-        "แจ้งร้องเรัยน", "แจ้งร้องเรีนน", "แจ้งร้องเรียนน"
+        "เเจ่งร้องเรียน", "แจ้งร้องเรีน", "แจ้งร้องเรย", "แจ้งร้องเรี่ยน"
     ]
     
-    # 2. ตรวจสอบว่าข้อความคล้ายกับคำเริ่มต้นกระบวนการ (ใช้การเปรียบเทียบแบบไม่ซีเรียสเกินไป)
     text_lower = text.strip().lower()
-    is_complaint_start = False
-    complaint_start_word = None
+    is_complaint_start = text_lower in [kw.lower() for kw in complaint_start_keywords]
     
-    # ตรวจสอบแบบ exact match ก่อน
-    if text_lower in [kw.lower() for kw in complaint_start_keywords]:
-        is_complaint_start = True
-        complaint_start_word = text_lower
-    else:
-        # ตรวจสอบแบบ partial match (ถ้าข้อความสั้นและคล้ายกับคำเริ่มต้น)
-        if len(text_lower) <= 20:  # ข้อความไม่ยาวเกินไป
-            for keyword in complaint_start_keywords:
-                keyword_lower = keyword.lower()
-                # ตรวจสอบความคล้ายคลึงแบบง่าย
-                if (keyword_lower in text_lower or 
-                    text_lower in keyword_lower or
-                    sum(1 for a, b in zip(text_lower, keyword_lower) if a == b) / max(len(text_lower), len(keyword_lower)) > 0.7):
-                    is_complaint_start = True
-                    complaint_start_word = keyword
-                    break
-    
-    # ถ้าผู้ใช้พิมพ์คำว่าเริ่มต้นกระบวนการร้องเรียน (หรือคำที่คล้ายกัน)
+    # ถ้าผู้ใช้พิมพ์คำว่าเริ่มต้นกระบวนการร้องเรียน
     if is_complaint_start:
         if state == 'normal':
             users_col.update_one({"line_user_id": uid}, {"$set": {"complaint_state": "filing_desc"}})
-            return "ได้เลยค่ะ บอตยินดีช่วยประสานงานให้นะคะ 📝 รบกวนคุณลูกค้าพิมพ์รายละเอียดปัญหาที่พบมาได้เลยค่ะ"
+            # Return Flex Message card instead of plain text
+            flex_card = create_complaint_ask_details_flex()
+            return {
+                "text": "ได้เลยค่ะ บอตยินดีช่วยประสานงานให้นะคะ 📝",
+                "flex": flex_card
+            }
     
     # ================= AI Processing =================
     
@@ -1642,14 +1625,35 @@ def process_text_logic(user, text):
 
         intent = intent_future.result()
 
-    # ตรวจสอบสถานะและดำเนินการตาม intent
-    # Robust cancellation handling via AI
-    if intent == "CANCEL" or text.lower() in ["ยกเลิก", "cancel", "ไม่แจ้งแล้ว", "พอแล้ว"]:
-        users_col.update_one(
-            {"line_user_id": uid}, 
-            {"$set": {"complaint_state": "normal", "draft_desc": None}}
-        )
-        return "❌ ยกเลิกรายการให้แล้วค่ะ หากต้องการแจ้งเรื่องใหม่ทักน้องบอตได้เสมอนะคะ"
+    # ================= ENHANCED CANCELLATION LOGIC =================
+    # AI-powered cancellation with context awareness
+    if intent == "CANCEL":
+        # Check context: are we in a process?
+        if state in ['filing_desc', 'waiting_image']:
+            # Cancel complaint process
+            users_col.update_one(
+                {"line_user_id": uid}, 
+                {"$set": {"complaint_state": "normal", "draft_desc": None}}
+            )
+            return "❌ ยกเลิกการแจ้งร้องเรียนเรียบร้อยค่ะ หากต้องการแจ้งเรื่องใหม่ ทักน้องบอตได้เสมอนะคะ"
+        elif after_hours_state == 'selecting':
+            # Cancel parcel selection
+            users_col.update_one(
+                {"line_user_id": uid},
+                {"$set": {
+                    "after_hours_state": None,
+                    "after_hours_pending_pins": None,
+                    "after_hours_pending_parcels": None
+                }}
+            )
+            return "❌ ยกเลิกการลงทะเบียนรับพัสดุนอกเวลาเรียบร้อยค่ะ"
+        else:
+            # Not in any process
+            return (
+                "ขณะนี้คุณไม่ได้อยู่ในกระบวนการใดๆ ค่ะ \n"
+                "(ไม่ว่าจะเป็นการแจ้งร้องเรียนหรือลงทะเบียนรับพัสดุนอกเวลา)\n\n"
+                "หากต้องการความช่วยเหลือ สามารถพิมพ์คำถามได้เลยค่ะ 😊"
+            )
 
     # COMPLAINT Logic: จัดการตามความละเอียดของข้อความ
     if intent in ["COMPLAINT_START", "COMPLAINT_DETAIL"]:
@@ -1663,17 +1667,32 @@ def process_text_logic(user, text):
                     {"line_user_id": uid}, 
                     {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
                 )
-                return f"รับทราบปัญหา '{text}...' ค่ะ น้องบอตบันทึกข้อมูลไว้แล้ว 📝\n\n📸 เพื่อให้ช่างตรวจสอบได้ตรงจุด รบกวนคุณลูกค้าถ่ายรูปหน้างานส่งมาให้น้องบอตหน่อยนะคะ"
+                # Return Flex Message showing saved description and asking for image
+                flex_card = create_complaint_ask_image_flex(text)
+                return {
+                    "text": f"รับทราบปัญหา '{text[:30]}...' ค่ะ",
+                    "flex": flex_card
+                }
 
     if state == 'filing_desc':
         users_col.update_one(
             {"line_user_id": uid}, 
             {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
         )
-        return f"ขอบคุณสำหรับรายละเอียดค่ะ น้องบอตบันทึกเรื่อง '{text[:50]}' ไว้แล้วนะคะ 📝\n\n📸 อีกนิดเดียวนะคะ รบกวนส่งรูปภาพประกอบมาให้หน่อยค่ะ พี่ๆ นิติฯ จะได้เข้าตรวจสอบได้ถูกจุดค่ะ"
+        # Return Flex Message card
+        flex_card = create_complaint_ask_image_flex(text)
+        return {
+            "text": f"บันทึกเรื่อง '{text[:30]}' แล้วค่ะ",
+            "flex": flex_card
+        }
 
     if state == 'waiting_image':
-        return "📸 น้องบอทยังรอรูปภาพประกอบอยู่นะคะ หรือถ้าต้องการยกเลิก สามารถพิมพ์ว่า 'ยกเลิก' ได้เลยค่ะ"
+        # Return Flex Message reminder
+        flex_card = create_complaint_ask_image_flex(user.get('draft_desc', 'รายละเอียดที่บันทึกไว้'))
+        return {
+            "text": "📸 ยังรอรูปภาพประกอบอยู่นะคะ",
+            "flex": flex_card
+        }
 
     # ตรวจสอบ RAG Context ที่ดึงมาแบบ Parallel
     if context_future:
