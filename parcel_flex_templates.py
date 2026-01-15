@@ -601,50 +601,6 @@ def create_number_confirmation_flex(input_text):
                     "size": "md",
                     "color": "#333333",
                     "margin": "lg"
-                },
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "ตอบได้ 2 แบบ:",
-                            "size": "xs",
-                            "color": "#999999",
-                            "weight": "bold"
-                        },
-                        {
-                            "type": "text",
-                            "text": "✅ ใช่ / ตกลง / ได้ / รับ",
-                            "size": "sm",
-                            "color": "#1DB446",
-                            "margin": "sm"
-                        },
-                        {
-                            "type": "text",
-                            "text": "❌ ไม่ / ยกเลิก / ไม่รับ",
-                            "size": "sm",
-                            "color": "#DC3545",
-                            "margin": "sm"
-                        }
-                    ],
-                    "margin": "lg",
-                    "paddingAll": "12px",
-                    "backgroundColor": "#F8F8F8",
-                    "cornerRadius": "8px"
-                }
-            ]
-        },
-        "footer": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {
-                    "type": "text",
-                    "text": "💡 เพื่อความแม่นยำในการบริการ",
-                    "color": "#aaaaaa",
-                    "size": "xxs",
-                    "align": "center"
                 }
             ]
         }

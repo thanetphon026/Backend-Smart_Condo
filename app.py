@@ -1435,37 +1435,88 @@ def process_text_logic(user, text):
                 }}
             )
         
+        # Handle awaiting_confirmation cancellation
         if awaiting_confirmation:
             users_col.update_one(
                 {"line_user_id": uid},
                 {"$set": {"awaiting_number_confirmation": False}}
             )
+            # Override message for confirmation cancellation
+            return "เข้าใจค่ะ ยกเลิกการยืนยันแล้วค่ะ หากต้องการความช่วยเหลือ สามารถพิมพ์คำถามได้เลยค่ะ 😊"
         
         return cancel_msg  # Already formatted (text or dict with flex)
     
     # ================= PRIORITY 3: NUMBER INPUT CONFIRMATION =================
     # Handle awaiting confirmation state
     if awaiting_confirmation:
-        yes_keywords = ["ใช่", "ใช้", "ตกลง", "ok", "yes", "รับ", "ได้", "เอา", "ค่ะ", "ครับ"]
-        no_keywords = ["ไม่", "no", "ยกเลิก", "cancel"]
-        
-        text_lower = text.strip().lower()
-        
-        if any(kw in text_lower for kw in yes_keywords):
-            # User confirmed - redirect to parcel registration
-            users_col.update_one(
-                {"line_user_id": uid},
-                {"$set": {"awaiting_number_confirmation": False}}
+        # AI-powered intent analysis instead of keyword matching
+        try:
+            confirmation_prompt = f"""วิเคราะห์ว่าผู้ใช้ตอบว่ายืนยันหรือปฏิเสธ
+
+คำถาม: "ต้องการลงทะเบียนรับพัสดุนอกเวลาใช่ไหมคะ?"
+คำตอบ: "{text}"
+
+Output Format (JSON):
+{{
+  "response": "YES" | "NO" | "UNCLEAR"
+}}
+
+Rules:
+1. YES: ใช่, ตกลง, ok, yes, รับ, ได้, เอา, ค่ะ, ครับ, ต้องการ, ถูกต้อง
+2. NO: ไม่, no, ยกเลิก, cancel, ไม่รับ, ไม่ต้องการ, ไม่ใช่
+3. UNCLEAR: อื่นๆ ที่ไม่ชัดเจน
+"""
+            
+            response = client.models.generate_content(
+                model='gemini-2.0-flash-exp',
+                contents=confirmation_prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
             )
-            # Proceed with the original number through parcel intent analysis below
-            # (will be handled by analyze_parcel_intent)
-        elif any(kw in text_lower for kw in no_keywords):
-            # User declined
-            users_col.update_one(
-                {"line_user_id": uid},
-                {"$set": {"awaiting_number_confirmation": False}}
-            )
-            return "เข้าใจค่ะ ยกเลิกการทำรายการแล้วค่ะ หากต้องการความช่วยเหลือ สามารถพิมพ์คำถามได้เลยค่ะ 😊"
+            
+            import json
+            result = json.loads(response.text.strip())
+            user_response = result.get("response", "UNCLEAR")
+            
+            if user_response == "YES":
+                # User confirmed - proceed with parcel registration
+                users_col.update_one(
+                    {"line_user_id": uid},
+                    {"$set": {"awaiting_number_confirmation": False}}
+                )
+                # Continue to parcel intent analysis below
+            elif user_response == "NO":
+                # User declined
+                users_col.update_one(
+                    {"line_user_id": uid},
+                    {"$set": {"awaiting_number_confirmation": False}}
+                )
+                return "เข้าใจค่ะ ยกเลิกการทำรายการแล้วค่ะ หากต้องการความช่วยเหลือ สามารถพิมพ์คำถามได้เลยค่ะ 😊"
+            else:
+                # Unclear response, ask again
+                return "ขออภัยค่ะ ไม่เข้าใจคำตอบ กรุณาตอบว่า 'ใช่' หรือ 'ไม่' ค่ะ"
+                
+        except Exception as e:
+            print(f"❌ Confirmation Analysis Error: {e}")
+            # Fallback to keyword matching
+            yes_keywords = ["ใช่", "ใช้", "ตกลง", "ok", "yes", "รับ", "ได้", "เอา", "ค่ะ", "ครับ"]
+            no_keywords = ["ไม่", "no", "ยกเลิก", "cancel"]
+            
+            text_lower = text.strip().lower()
+            
+            if any(kw in text_lower for kw in yes_keywords):
+                users_col.update_one(
+                    {"line_user_id": uid},
+                    {"$set": {"awaiting_number_confirmation": False}}
+                )
+                # Continue
+            elif any(kw in text_lower for kw in no_keywords):
+                users_col.update_one(
+                    {"line_user_id": uid},
+                    {"$set": {"awaiting_number_confirmation": False}}
+                )
+                return "เข้าใจค่ะ ยกเลิกการทำรายการแล้วค่ะ หากต้องการความช่วยเหลือ สามารถพิมพ์คำถามได้เลยค่ะ 😊"
     
     # Check if this is pure number input WITHOUT context (when NOT in any process)
     if state == 'normal' and not after_hours_state and not awaiting_confirmation:
@@ -2441,10 +2492,11 @@ def health_check():
 # Helper for consistent datetime formatting (ISO 8601 UTC)
 def format_datetime(dt):
     """
-    Format datetime to Thai-friendly readable format: DD/MM/YYYY HH:MM
+    Format datetime to ISO 8601 format for frontend consumption
+    Frontend will handle Thai formatting (DD/MM/YYYY HH:MM)
     """
     if not dt:
-        return "-"
+        return None  # Return None instead of "-" so frontend can detect and show "-"
     try:
         # Convert to Bangkok timezone
         bkk_tz = pytz.timezone('Asia/Bangkok')
@@ -2452,10 +2504,11 @@ def format_datetime(dt):
             # Assume UTC if no timezone info
             dt = pytz.utc.localize(dt)
         bkk_time = dt.astimezone(bkk_tz)
-        return bkk_time.strftime("%d/%m/%Y %H:%M")
+        # Return ISO 8601 format
+        return bkk_time.isoformat()
     except Exception as e:
         print(f"⚠️ Datetime format error: {e}")
-        return "-"
+        return None
 
 @app.route('/api/dashboard', methods=['GET'])
 @require_api_token
