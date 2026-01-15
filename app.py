@@ -35,6 +35,7 @@ from linebot.v3.messaging import (
     ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
 from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex, create_after_hours_confirmation_flex, create_after_hours_cancellation_flex, create_after_hours_error_flex, create_parcel_status_flex, create_complaint_ask_details_flex, create_complaint_ask_image_flex, create_complaint_received_flex
+from parcel_flex_templates import create_parcel_ask_selection_flex, create_parcel_registered_flex, create_parcel_cancelled_flex, create_number_confirmation_flex, create_parcel_status_flex as create_parcel_status_flex_v2
 from linebot.v3.webhooks import (
     MessageEvent, 
     TextMessageContent, 
@@ -948,6 +949,231 @@ def handle_registration(user, text):
         f"ตอนนี้คุณสามารถใช้งานแชตบอตได้เต็มรูปแบบแล้วค่ะ 🎉"
     )
 
+# ================= AI INTENT DETECTION HELPERS =================
+
+def detect_cancel_intent_ai(text, current_state):
+    """
+    ใช้ AI ตรวจจับความต้องการยกเลิก รวมถึงคำพิมพ์ผิดและบริบท
+    Args:
+        text: ข้อความของผู้ใช้
+        current_state: สถานะปัจจุบัน เช่น 'filing_desc', 'waiting_image', 'selecting', 'normal'
+    Returns:
+        (is_cancel: bool, message: str, should_use_flex: bool)
+    """
+    try:
+        prompt = f"""วิเคราะห์ว่าผู้ใช้ต้องการ "ยกเลิก" หรือไม่
+
+ข้อความ: "{text}"
+สถานะปัจจุบัน: "{current_state}"
+
+Output Format (JSON):
+{{
+  "intent": "CANCEL" | "NO",
+  "context": "complaint" | "parcel" | "none",
+  "confidence": 0.0-1.0
+}}
+
+Rules:
+1. INTENT = "CANCEL" ถ้าพบคำยกเลิก เช่น:
+   - "ยกเลิก", "cancel", "ออก", "exit", "พอ", "ไม่เอาแล้ว", "ไม่แจ้งแล้ว"
+   - รวมคำพิมพ์ผิด: "ยกเลค", "ยกเลกิ", "แคนเซล", "คันเซล"
+2. ตรวจสอบบริบทจาก current_state:
+   - filing_desc, waiting_image -> complaint
+   - selecting -> parcel
+   - normal -> none
+3. confidence: ความมั่นใจ 0.0-1.0
+"""
+
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+        
+        import json
+        result = json.loads(response.text.strip())
+        is_cancel = result.get("intent") == "CANCEL"
+        context = result.get("context", "none")
+        confidence = result.get("confidence", 0.0)
+        
+        if not is_cancel:
+            return False, "", False
+        
+        # Generate appropriate cancellation message based on context
+        if current_state == 'normal' and confidence > 0.7:
+            # User trying to cancel when not in any process
+            flex_content = {
+                "type": "bubble",
+                "body": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "ℹ️ ไม่มีกระบวนการที่ต้องยกเลิก",
+                            "weight": "bold",
+                            "size": "lg",
+                            "color": "#0084FF"
+                        },
+                        {
+                            "type": "text",
+                            "text": "คุณไม่ได้อยู่ในกระบวนการใดตอนนี้ค่ะ",
+                            "wrap": True,
+                            "color": "#666666",
+                            "size": "sm",
+                            "margin": "md"
+                        }
+                    ]
+                }
+            }
+            return True, {"text": "คุณไม่ได้อยู่ในกระบวนการใดตอนนี้ค่ะ", "flex": flex_content}, True
+        
+        elif context == "complaint":
+            # Cancelling complaint - use Gray theme
+            flex_content = {
+                "type": "bubble",
+                "header": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [{
+                        "type": "text",
+                        "text": "❌ ยกเลิกเรียบร้อย",
+                        "weight": "bold",
+                        "color": "#FFFFFF",
+                        "size": "md"
+                    }],
+                    "backgroundColor": "#6C757D",
+                    "paddingAll": "20px"
+                },
+                "body": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "ยกเลิกการแจ้งร้องเรียนแล้วค่ะ",
+                            "weight": "bold",
+                            "size": "md",
+                            "color": "#6C757D"
+                        },
+                        {
+                            "type": "text",
+                            "text": "หากมีเรื่องให้ช่วยเรียกน้องบอทใหม่ได้เสมอนะคะ",
+                            "wrap": True,
+                            "color": "#666666",
+                            "size": "sm",
+                            "margin": "md"
+                        }
+                    ]
+                }
+            }
+            return True, {"text": "❌ ยกเลิกการแจ้งร้องเรียนเรียบร้อยค่ะ", "flex": flex_content}, True
+        
+        elif context == "parcel":
+            # Cancelling parcel selection
+            return True, "❌ ยกเลิกการทำรายการเรียบร้อยค่ะ", False
+        
+        return False, "", False
+        
+    except Exception as e:
+        print(f"❌ Cancel Intent AI Error: {e}")
+        # Fallback to keyword matching
+        cancel_keywords = ["ยกเลิก", "cancel", "ไม่แจ้งแล้ว", "พอแล้ว", "ออก", "exit"]
+        is_cancel = any(kw in text.lower() for kw in cancel_keywords)
+        
+        if is_cancel and current_state == 'normal':
+            return True, "คุณไม่ได้อยู่ในกระบวนการใดตอนนี้ค่ะ", False
+        
+        return is_cancel, "❌ ยกเลิกเรียบร้อยค่ะ", False
+
+
+def analyze_number_input(text, user_state):
+    """
+    วิเคราะห์ว่าผู้ใช้พิมพ์แค่ตัวเลข/PIN โดยไม่มีบริบท
+    ถ้าใช่ ให้ถามยืนยันว่าต้องการลงทะเบียนรับนอกเวลาหรือไม่
+    
+    Args:
+        text: ข้อความที่พิมพ์
+        user_state: State ของผู้ใช้
+    Returns:
+        (needs_confirmation: bool, flex_content: dict or None)
+    """
+    # ถ้าอยู่ในกระบวนการอยู่แล้ว ไม่ต้องถามยืนยัน
+    if user_state.get('after_hours_state') == 'selecting':
+        return False, None
+    if user_state.get('complaint_state') in ['filing_desc', 'waiting_image']:
+        return False, None
+    if user_state.get('awaiting_number_confirmation'):
+        return False, None
+    
+    try:
+        prompt = f"""วิเคราะห์ว่าข้อความเป็นการพิมพ์ตัวเลข/PIN เฉยๆ โดยไม่มีบริบทหรือไม่
+
+ข้อความ: "{text}"
+
+Output Format (JSON):
+{{
+  "is_pure_number": true/false,
+  "has_context": true/false,
+  "intent_clarity": "clear" | "ambiguous" | "unclear"
+}}
+
+Rules:
+1. is_pure_number = true ถ้าพิมพ์แค่:
+   - ตัวเลข: "1", "1-2", "123", "12345"
+   - ตัวเลขพร้อม separator: "1, 2", "1 2 3"
+   
+2. has_context = true ถ้ามีคำบอกเจตนา:
+   - "พัสดุ 1-2", "ขอรับนอกเวลา 1", "รับนอกเวลา 12345"
+   - "เช็คพัสดุ", "ดูพัสดุ", "แจ้งร้องเรียน"
+   
+3. intent_clarity:
+   - "clear": มีบริบทชัดเจน
+   - "ambiguous": แค่ตัวเลข ไม่แน่ใจว่าหมายถึงอะไร
+   - "unclear": ไม่เกี่ยวกับตัวเลข
+
+ตัวอย่าง:
+"1-2" -> {{"is_pure_number": true, "has_context": false, "intent_clarity": "ambiguous"}}
+"พัสดุ 1-2 ขอรับนอกเวลา" -> {{"is_pure_number": false, "has_context": true, "intent_clarity": "clear"}}
+"สวัสดี" -> {{"is_pure_number": false, "has_context": false, "intent_clarity": "unclear"}}
+"""
+
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-exp',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+        
+        import json
+        result = json.loads(response.text.strip())
+        is_pure_number = result.get("is_pure_number", False)
+        has_context = result.get("has_context", False)
+        intent_clarity = result.get("intent_clarity", "unclear")
+        
+        # ถ้าพิมพ์แค่ตัวเลขโดยไม่มีบริบท -> ถามยืนยัน
+        if is_pure_number and not has_context and intent_clarity == "ambiguous":
+            flex_content = create_number_confirmation_flex(text)
+            return True, flex_content
+        
+        return False, None
+        
+    except Exception as e:
+        print(f"❌ Number Input Analysis Error: {e}")
+        # Fallback: Check if input is purely numeric
+        import re
+        # If text is ONLY numbers, dashes, commas, spaces
+        if re.match(r'^[\d\s,\-]+$', text.strip()):
+            # And doesn't contain parcel/complaint keywords
+            if not any(kw in text.lower() for kw in ["พัสดุ", "parcel", "รับ", "นอกเวลา", "ร้องเรียน", "แจ้ง"]):
+                flex_content = create_number_confirmation_flex(text)
+                return True, flex_content
+        
+        return False, None
+
 # ================= AFTER-HOURS PARCEL HELPERS =================
 
 
@@ -1170,8 +1396,11 @@ Rules:
 def process_text_logic(user, text):
     uid = user['line_user_id']
     state = user.get('complaint_state', 'normal')
+    after_hours_state = user.get('after_hours_state')
+    awaiting_confirmation = user.get('awaiting_number_confirmation', False)
     platform = user.get('platform', 'line')  # ดึงข้อมูล platform
 
+    # ================= PRIORITY 1: REGISTRATION =================
     if text.startswith("ลงทะเบียน"): 
         return handle_registration(user, text)
     
@@ -1185,18 +1414,104 @@ def process_text_logic(user, text):
             f"ลงทะเบียน 814 สมชาย ใจดี 0812345678"
         )
     
-    # ================= PRIORITY CANCELLATION (COMPLAINT STATUS) =================
-    # ตรวจสอบว่ากำลังแจ้งร้องเรียนอยู่หรือไม่ ถ้าใช่ และพิมพ์ "ยกเลิก" ให้จบการร้องเรียนทันที (ไม่ไปทำรายการพัสดุ)
-    if state in ['filing_desc', 'waiting_image']:
-        cancel_keywords = ["ยกเลิก", "cancel", "ไม่แจ้งแล้ว", "พอแล้ว", "ออก", "exit"]
-        if any(kw in text.strip().lower() for kw in cancel_keywords):
+    # ================= PRIORITY 2: AI-POWERED CANCELLATION =================
+    # Detect cancellation intent with typo tolerance and context awareness
+    is_cancel, cancel_msg, should_use_flex = detect_cancel_intent_ai(text, state)
+    
+    if is_cancel:
+        # Clear states based on context
+        if state in ['filing_desc', 'waiting_image']:
             users_col.update_one(
                 {"line_user_id": uid}, 
                 {"$set": {"complaint_state": "normal", "draft_desc": None}}
             )
-            return "❌ ยกเลิกการแจ้งร้องเรียนเรียบร้อยค่ะ หากมีเรื่องให้ช่วยเรียกน้องบอตใหม่ได้เสมอนะคะ"
+        elif after_hours_state == 'selecting':
+            users_col.update_one(
+                {"line_user_id": uid},
+                {"$set": {
+                    "after_hours_state": None,
+                    "after_hours_pending_pins": None,
+                    "after_hours_pending_parcels": None
+                }}
+            )
+        
+        if awaiting_confirmation:
+            users_col.update_one(
+                {"line_user_id": uid},
+                {"$set": {"awaiting_number_confirmation": False}}
+            )
+        
+        return cancel_msg  # Already formatted (text or dict with flex)
     
-    # ================= AFTER-HOURS PARCEL LOGIC =================
+    # ================= PRIORITY 3: NUMBER INPUT CONFIRMATION =================
+    # Handle awaiting confirmation state
+    if awaiting_confirmation:
+        yes_keywords = ["ใช่", "ใช้", "ตกลง", "ok", "yes", "รับ", "ได้", "เอา", "ค่ะ", "ครับ"]
+        no_keywords = ["ไม่", "no", "ยกเลิก", "cancel"]
+        
+        text_lower = text.strip().lower()
+        
+        if any(kw in text_lower for kw in yes_keywords):
+            # User confirmed - redirect to parcel registration
+            users_col.update_one(
+                {"line_user_id": uid},
+                {"$set": {"awaiting_number_confirmation": False}}
+            )
+            # Proceed with the original number through parcel intent analysis below
+            # (will be handled by analyze_parcel_intent)
+        elif any(kw in text_lower for kw in no_keywords):
+            # User declined
+            users_col.update_one(
+                {"line_user_id": uid},
+                {"$set": {"awaiting_number_confirmation": False}}
+            )
+            return "เข้าใจค่ะ ยกเลิกการทำรายการแล้วค่ะ หากต้องการความช่วยเหลือ สามารถพิมพ์คำถามได้เลยค่ะ 😊"
+    
+    # Check if this is pure number input WITHOUT context (when NOT in any process)
+    if state == 'normal' and not after_hours_state and not awaiting_confirmation:
+        needs_confirmation, flex_content = analyze_number_input(text, user)
+        
+        if needs_confirmation and flex_content:
+            # Set awaiting confirmation state
+            users_col.update_one(
+                {"line_user_id": uid},
+                {"$set": {"awaiting_number_confirmation": True}}
+            )
+            return {
+                "text": f"คุณพิมพ์ '{text}' ต้องการลงทะเบียนรับพัสดุนอกเวลาใช่ไหมคะ?",
+                "flex": flex_content
+            }
+    
+    # ================= PRIORITY 4: ACTIVE PROCESS STATES =================
+    # Strict process isolation - if in a state, ONLY handle that state
+    
+    # 4A. COMPLAINT PROCESS (filing_desc, waiting_image)
+    if state in ['filing_desc', 'waiting_image']:
+        # Already in complaint process - BLOCK all other intents
+        # Cancellation already handled above
+        
+        if state == 'filing_desc':
+            # Save description and ask for image
+            users_col.update_one(
+                {"line_user_id": uid}, 
+                {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
+            )
+            flex_card = create_complaint_ask_image_flex(text)
+            return {
+                "text": f"บันทึกเรื่อง '{text[:30]}...' แล้วค่ะ",
+                "flex": flex_card
+            }
+        
+        elif state == 'waiting_image':
+            # Waiting for image, remind user
+            flex_card = create_complaint_ask_image_flex(user.get('draft_desc', 'รายละเอียดที่บันทึกไว้'))
+            return {
+                "text": "📸 ยังรอรูปภาพประกอบอยู่นะคะ",
+                "flex": flex_card
+            }
+    
+    # 4B. PARCEL AFTER-HOURS SELECTION PROCESS
+
     
     # ก่อนอื่นตรวจสอบการยกเลิกนอกเวลา (ต้องมีคำว่า "นอกเวลา" ด้วย)
     cancel_ah_keywords = ["ยกเลิกนอกเวลา", "ยกเลิกรับนอกเวลา", "ไม่รับนอกเวลา", "cancel after hours"]
