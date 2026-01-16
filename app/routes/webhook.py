@@ -2,7 +2,7 @@ from flask import Blueprint, request, abort, current_app
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, PostbackEvent
 from ..utils.line import line_handler, send_message, create_block_card
-from ..utils.db import users_col, parcels_col, log_audit, save_chat_history, get_bkk_time
+from ..utils.db import users_col, parcels_col, log_audit, save_chat_history
 from ..utils.ai import generate_chat_response, analyze_parcel_label, check_match, analyze_intent
 from ..config import Config
 import datetime
@@ -10,6 +10,12 @@ import requests
 import io
 
 webhook_bp = Blueprint('webhook', __name__)
+
+
+def get_bkk_time():
+    import pytz
+    tz = pytz.timezone('Asia/Bangkok')
+    return datetime.datetime.now(tz)
 
 @webhook_bp.route("/callback", methods=['POST'])
 def callback():

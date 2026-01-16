@@ -1,7 +1,13 @@
 from flask import Blueprint, jsonify
-from ..utils.db import parcels_col, users_col, get_bkk_time
+from ..utils.db import parcels_col, users_col
 
 dashboard_bp = Blueprint('dashboard', __name__)
+
+def get_bkk_time():
+    import datetime
+    import pytz
+    tz = pytz.timezone('Asia/Bangkok')
+    return datetime.datetime.now(tz)
 
 @dashboard_bp.route('/api/admin/dashboard/stats', methods=['GET'])
 def get_stats():
