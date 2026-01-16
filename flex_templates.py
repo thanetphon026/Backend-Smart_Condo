@@ -1831,24 +1831,84 @@ def create_self_pickup_verification_flex(name, room, parcels, ai_data):
     }
     return bubble
 
+def create_self_pickup_success_flex(count):
+    """
+    สร้าง Flex Message เมื่อยืนยันการรับพัสดุสำเร็จ
+    """
+    bubble = {
+        "type": "bubble",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "🎉 ยืนยันสำเร็จ!",
+                            "weight": "bold",
+                            "color": "#FFFFFF",
+                            "size": "lg",
+                            "align": "center"
+                        }
+                    ],
+                    "backgroundColor": "#06c755",
+                    "paddingAll": "15px",
+                    "cornerRadius": "md"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"บันทึกการรับพัสดุจำนวน {count} ชิ้นเรียบร้อยแล้วค่ะ",
+                            "weight": "bold",
+                            "size": "sm",
+                            "color": "#333333",
+                            "wrap": True,
+                            "align": "center",
+                            "margin": "lg"
+                        },
+                        {
+                            "type": "text",
+                            "text": "ขอบคุณที่ใช้บริการค่ะ 🙏",
+                            "size": "xs",
+                            "color": "#666666",
+                            "align": "center",
+                            "margin": "md"
+                        }
+                    ],
+                    "margin": "md"
+                }
+            ]
+        }
+    }
+    return bubble
+
 def create_self_pickup_mismatch_flex(reason):
     """
-    Create a Flex Message for a mismatch in self-pickup verification.
+    Create a rich warning Flex Message for a mismatch in self-pickup verification.
     """
     bubble = {
         "type": "bubble",
         "header": {
             "type": "box",
             "layout": "vertical",
+            "backgroundColor": "#FF4B4B",
             "contents": [
                 {
                     "type": "text",
-                    "text": "❌ ตรวจสอบไม่ผ่าน",
+                    "text": "⚠️ ตรวจสอบไม่ผ่าน",
                     "weight": "bold",
                     "size": "lg",
-                    "color": "#ff334b"
+                    "color": "#FFFFFF",
+                    "align": "center"
                 }
-            ]
+            ],
+            "paddingAll": "15px"
         },
         "body": {
             "type": "box",
@@ -1859,16 +1919,61 @@ def create_self_pickup_mismatch_flex(reason):
                     "type": "text",
                     "text": f"ขออภัยค่ะ {reason}",
                     "size": "md",
-                    "wrap": True
+                    "weight": "bold",
+                    "color": "#333333",
+                    "wrap": True,
+                    "align": "center"
                 },
                 {
                     "type": "text",
-                    "text": "กรุณาตรวจสอบหน้าพัสดุและถ่ายรูปใหม่อีกครั้งให้ชัดเจนนะคะ",
+                    "text": "ข้อมูลพัสดุในรูปไม่ตรงกับข้อมูลห้องของคุณ หรือรูปภาพอาจจะไม่ชัดเจน",
                     "size": "sm",
                     "color": "#666666",
-                    "wrap": True
+                    "wrap": True,
+                    "align": "center"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#FFF5F5",
+                    "paddingAll": "12px",
+                    "cornerRadius": "md",
+                    "margin": "lg",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "❗ กรุณาวางพัสดุคืนที่เดิม",
+                            "color": "#FF4B4B",
+                            "weight": "bold",
+                            "size": "sm",
+                            "align": "center"
+                        },
+                        {
+                            "type": "text",
+                            "text": "และตรวจสอบเลข PIN หรือหน้ากล่องใหม่อีกครั้งนะคะ",
+                            "size": "xs",
+                            "color": "#666666",
+                            "align": "center",
+                            "wrap": True,
+                            "margin": "xs"
+                        }
+                    ]
                 }
             ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "💡 ลองถ่ายรูปใหม่อีกครั้งให้ชัดเจนกว่าเดิม",
+                    "size": "xxs",
+                    "color": "#aaaaaa",
+                    "align": "center"
+                }
+            ],
+            "paddingAll": "md"
         }
     }
     return bubble

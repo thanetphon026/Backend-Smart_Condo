@@ -51,7 +51,8 @@ from flex_templates import (
     create_after_hours_confirmation_flex, 
     create_after_hours_cancellation_flex,
     create_self_pickup_verification_flex,   # New
-    create_self_pickup_mismatch_flex        # New
+    create_self_pickup_mismatch_flex,       # New
+    create_self_pickup_success_flex
 )
 
 # ================= CONFIGURATION =================
@@ -1939,8 +1940,7 @@ Rules:
         return "ขออภัย ระบบขัดข้องชั่วคราวค่ะ"
 
 
-# ================= AFTER-HOURS STATUS ENDPOINT =================
-
+@app.route('/api/after-hours/status', methods=['GET'])
 def get_after_hours_status():
     """ตรวจสอบสถานะเปิดรับลงทะเบียนนอกเวลา (cutoff 16:30)"""
     try:
@@ -2111,31 +2111,31 @@ def verify_self_pickup_image(user, parcels, image_path):
         parcel_info = "\\n".join([f"- PIN {p.get('pin')} : {p.get('transport')} (Tracking: {p.get('tracking_number')})" for p in parcels])
         
         prompt = f"""
-        Task: Verify User Self-Pickup Proof.
-        User Room: {room}
-        User Name: {name}
-        Expected Parcels:
+        Task: Strict Verification of User Self-Pickup Proof.
+        
+        Registered User Context:
+        - Room: {room}
+        - User Name: {name}
+        
+        Expected Parcels for this Room:
         {parcel_info}
         
-        The user is picking up these parcels after hours.
-        Analyze the image. It should show:
-        1. The user holding the parcel(s).
-        2. OR The parcel(s) itself clearly.
-        3. OR The user's face (selfie) with the parcels or at the pickup point.
+        Analyze the provided image carefully. The user is attempting to pick up a parcel after-hours.
         
-        Check for:
-        - Visible PIN numbers matching the specific list (e.g. {', '.join([p.get('pin') for p in parcels])}).
-        - Parcel labels matching Room {room} or Name {name}.
+        CRITICAL RULES:
+        1. ROOM MATCH: The image MUST show a parcel with a label that matches the user's room ({room}) or name ({name}).
+        2. IF NO MATCH: If the parcel in the photo clearly belongs to a different room (e.g., room number visible is NOT {room}), set "is_valid": false.
+        3. IF UNRELATED: If the image is a person's face only (without parcel), a dark screen, an animal, or unrelated objects, set "is_valid": false.
+        4. VERIFICATION: Look for any text in the image like tracking numbers or PINs that match the expected list.
         
-        If the image is completely unrelated (e.g. a cat, food, dark screen), reject it.
-        If looks like a valid pickup attempt (even if label not super clear but context fits), approve it with caution.
+        The goal is to prevent a user from mistakenly or intentionally picking up someone else's parcel.
         
         Output strictly in JSON format:
         {{
             "is_valid": true/false,
-            "reason": "Reason in Thai language (short)",
+            "reason": "Reason in Thai language (short and clear, e.g., 'ข้อมูลห้องไม่ตรงกับพัสดุ' or 'รูปภาพไม่ชัดเจน')",
             "confidence": "high/medium/low",
-            "detected_text": "any relevant text seen"
+            "detected_text": "any relevant text seen on the label"
         }}
         """
         
@@ -2269,7 +2269,7 @@ def process_postback_action(uid, data_str):
             else:
                 return {"text": "ไม่พบพัสดุที่ต้องยืนยัน หรือรายการถูกดำเนินการไปแล้ว"}
 
-        elif action == "reject_self_pickup":
+        elif action == "cancel_self_pickup" or action == "reject_self_pickup":
             return {"text": "ยกเลิกรายการเรียบร้อยแล้ว หากต้องการรับของกรุณาส่งรูปยืนยันใหม่นะคะ"}
             
         return {"text": "ไม่ทราบคำสั่ง"}
