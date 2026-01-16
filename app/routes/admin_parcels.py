@@ -142,47 +142,88 @@ def scan_parcel():
         file_bytes = file.read() 
         ai_data = analyze_parcel_label(file_bytes) or {}
         
-        # Suggested User Lookup
+        # Suggested User Lookup - BULLETPROOF MATCHING
         suggested_user = None
         extracted_room = ai_data.get('room_number')
         extracted_name = ai_data.get('recipient_name')
         
-        if extracted_room and extracted_room != "N/A":
-             # Try exact room match
-             suggested_user = users_col.find_one({"room_number": extracted_room.strip()})
-             # Try partial room match if no exact match (e.g. "101" matches "101/5")
-             if not suggested_user:
-                 suggested_user = users_col.find_one({"room_number": {"$regex": f"^{extracted_room.strip()}(/|$)"}})
+        # Normalize room number for comparison
+        def normalize_room(room_str):
+            if not room_str or room_str == "N/A":
+                return None
+            # Convert to string, strip all whitespace, remove common prefixes
+            normalized = str(room_str).strip().replace(" ", "").replace("\t", "")
+            # Remove common Thai/English prefixes
+            normalized = normalized.replace("Room", "").replace("room", "").replace("ห้อง", "")
+            return normalized if normalized else None
         
-        if not suggested_user and extracted_name and extracted_name != "N/A":
-             # More robust name search
-             clean_name = extracted_name.replace(" ", "").replace("คุณ", "").strip()
-             
-             # Try regex match on concatenated first+last or display name
-             suggested_user = users_col.find_one({
-                 "$or": [
-                     {"first_name": {"$regex": clean_name, "$options": "i"}},
-                     {"last_name": {"$regex": clean_name, "$options": "i"}},
-                     {"display_name": {"$regex": clean_name, "$options": "i"}},
-                     {"name": {"$regex": clean_name, "$options": "i"}} # Synthesized name field used in some routes
-                 ]
-             })
-             
-             # Try splitting name into parts and searching
-             if not suggested_user and len(clean_name) > 3:
-                 name_parts = extracted_name.split()
-                 if name_parts:
-                     # Filter out short parts
-                     significant_parts = [p for p in name_parts if len(p) > 1]
-                     if significant_parts:
-                         suggested_user = users_col.find_one({
-                             "$or": [
-                                 {"first_name": {"$in": significant_parts}},
-                                 {"last_name": {"$in": significant_parts}},
-                                 {"display_name": {"$in": significant_parts}}
-                             ]
-                         })
-             
+        # Normalize name for comparison
+        def normalize_name(name_str):
+            if not name_str or name_str == "N/A":
+                return None
+            # Strip whitespace, remove titles, lowercase for comparison
+            normalized = str(name_str).strip().replace("คุณ", "").replace("Mr.", "").replace("Ms.", "").replace("Mrs.", "")
+            normalized = normalized.replace(" ", "").replace("\t", "")
+            return normalized if normalized else None
+        
+        room_normalized = normalize_room(extracted_room)
+        name_normalized = normalize_name(extracted_name)
+        
+        print(f"🔍 Scan Debug - Room: '{extracted_room}' -> '{room_normalized}', Name: '{extracted_name}' -> '{name_normalized}'")
+        
+        # Strategy 1: Try exact room match (normalized)
+        if room_normalized:
+            all_users = list(users_col.find({}))
+            for u in all_users:
+                db_room = normalize_room(u.get('room_number'))
+                if db_room and db_room == room_normalized:
+                    suggested_user = u
+                    print(f"✅ MATCH by exact room: {db_room}")
+                    break
+        
+        # Strategy 2: Try partial room match (e.g., "101" matches "101/5")
+        if not suggested_user and room_normalized:
+            all_users = list(users_col.find({}))
+            for u in all_users:
+                db_room = normalize_room(u.get('room_number'))
+                if db_room:
+                    # Check if one contains the other
+                    if (room_normalized in db_room) or (db_room in room_normalized):
+                        suggested_user = u
+                        print(f"✅ MATCH by partial room: {room_normalized} <-> {db_room}")
+                        break
+        
+        # Strategy 3: Try name matching (fuzzy)
+        if not suggested_user and name_normalized and len(name_normalized) > 2:
+            all_users = list(users_col.find({}))
+            for u in all_users:
+                # Try matching against first_name, last_name, display_name
+                first_name = normalize_name(u.get('first_name', ''))
+                last_name = normalize_name(u.get('last_name', ''))
+                display_name = normalize_name(u.get('display_name', ''))
+                full_name = (first_name or '') + (last_name or '')
+                
+                # Check if name matches any part
+                if first_name and (name_normalized in first_name or first_name in name_normalized):
+                    suggested_user = u
+                    print(f"✅ MATCH by first name: {name_normalized} <-> {first_name}")
+                    break
+                if last_name and (name_normalized in last_name or last_name in name_normalized):
+                    suggested_user = u
+                    print(f"✅ MATCH by last name: {name_normalized} <-> {last_name}")
+                    break
+                if display_name and (name_normalized in display_name or display_name in name_normalized):
+                    suggested_user = u
+                    print(f"✅ MATCH by display name: {name_normalized} <-> {display_name}")
+                    break
+                if full_name and (name_normalized in full_name or full_name in name_normalized):
+                    suggested_user = u
+                    print(f"✅ MATCH by full name: {name_normalized} <-> {full_name}")
+                    break
+        
+        if not suggested_user:
+            print(f"❌ NO MATCH FOUND for Room: {room_normalized}, Name: {name_normalized}")
+        
         if suggested_user:
              ai_data['suggested_user'] = {
                  "room_number": suggested_user.get('room_number'),

@@ -10,71 +10,109 @@ MODEL_NAME = 'gemini-2.0-flash'
 
 CHAT_SYSTEM_PROMPT = """
 You are "Nong Bot Niti", a highly intelligent and polite Condo Assistant.
-Your goal: Provide accurate, helpful, and natural-sounding answers based on the provided context.
+Your goal: Provide accurate, helpful, and natural-sounding answers based on context AND general knowledge.
 
 Rules for Interaction:
 1. **Context Priority**: Use the [CONDO DATABASE] for rules, hours, and contacts.
-2. **Conversation Flow**: Use [CHAT HISTORY] to maintain context. If the user asks "What did I just say?" or "Summarize", refer to the history.
-3. **Accuracy**: Do not hallucinate. If info isn't in context or history, say you don't know politely.
-4. **Tone**: Human-like, empathetic, and professional (Thai Language). Use "ค่ะ/ครับ" as appropriate (default to polite "ค่ะ").
-5. **Summarization**: If the user asks for a summary of long instructions, provide a bulleted list.
-6. **Room Info**: If the history or context contains the user's room number, remember it for answering specific questions about their unit.
-7. **User Addressing**: When referring to the user by name, ALWAYS use ONLY the format: " คุณ[Name] ". DO NOT include the room number in parentheses.
+2. **General Knowledge Enhancement**: If the database has limited info (e.g., mentions "7-Eleven" but no menu details), use your GENERAL KNOWLEDGE to provide helpful suggestions (e.g., "7-Eleven typically has rice boxes, sandwiches, snacks, drinks").
+3. **Intent Analysis**: Infer user intent even from typos or vague questions:
+   - "หิวข้าว", "หาอาหาร", "หอวข้าว" → User wants food recommendations
+   - "จอดรถ" → User asking about parking
+   - "ออกกำลัง" → User asking about fitness facilities
+4. **Conversation Flow**: Use [CHAT HISTORY] to maintain context. If the user asks "What did I just say?" or "Summarize", refer to the history.
+5. **Accuracy**: Prioritize database info. Use general knowledge ONLY to enrich answers, not to contradict the database.
+6. **Tone**: Human-like, empathetic, and professional (Thai Language). Use "ค่ะ/ครับ" as appropriate (default to polite "ค่ะ").
+7. **Helpful Suggestions**: If the database mentions a facility/service (e.g., "มีร้านอาหาร", "มี 7-Eleven"), proactively suggest what's typically available there.
+8. **Summarization**: If the user asks for a summary of long instructions, provide a bulleted list.
+9. **Room Info**: If the history or context contains the user's room number, remember it for answering specific questions about their unit.
+10. **User Addressing**: When referring to the user by name, ALWAYS use ONLY the format: " คุณ[Name] ". DO NOT include the room number in parentheses.
    Example: "สวัสดีค่ะ คุณสมชาย มีอะไรให้ช่วยไหมคะ" (Correct)
    Example: "สวัสดีค่ะ คุณ (101) สมชาย" (INCORRECT - DO NOT DO THIS)
 """
 
 def extract_keywords(text):
-    """Deepmind: Extract keywords for RAG."""
+    """Enhanced keyword extraction with typo correction and intent expansion."""
     try:
-        prompt = (
-            f"Analyze text: '{text}'\n"
-            "Extract 2-3 Thai keywords for searching condo rulebook.\n"
-            "Focus on: appliances, rules, locations.\n"
-            "Return only whitespace-separated keywords."
-        )
+        # Common Thai typo corrections
+        typo_map = {
+            'หอวข้าว': 'หาอาหาร', 'หอว': 'หา', 'หวิข้าว': 'หิวข้าว',
+            'เซเวน': 'เซเว่น', 'ร้านาหาร': 'ร้านอาหาร'
+        }
+        
+        corrected_text = text
+        for typo, correct in typo_map.items():
+            corrected_text = corrected_text.replace(typo, correct)
+        
+        prompt = f"""Analyze: "{corrected_text}"
+Extract 3-5 Thai keywords for condo knowledge base.
+
+Infer intent and include related terms:
+- "หิวข้าว"/"หาอาหาร" → อาหาร ร้านอาหาร เซเว่น ร้านค้า
+- "จอดรถ" → จอดรถ ที่จอดรถ ลานจอด
+- "ฟิตเนส" → ฟิตเนส ออกกำลังกาย สระว่ายน้ำ
+
+Return ONLY keywords (space-separated):"""
+        
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
-        # Handle case where AI might be chatty
-        return res.text.strip().split()
+        keywords = res.text.strip().split()
+        print(f"🔑 Keywords: {keywords} (from: '{text}')")
+        return keywords
     except Exception as e:
         print(f"AI Keyword Error: {e}")
-        return text.split()
+        corrected = text
+        for typo, correct in typo_map.items():
+            corrected = corrected.replace(typo, correct)
+        return corrected.split()
 
-def retrieve_knowledge(query, limit=5):
+def retrieve_knowledge(query, limit=8):
     """
-    Search KB using keywords and text search on topic, content, and tags.
+    Enhanced search using keywords, fuzzy matching, and multiple strategies.
     """
     try:
         keywords = extract_keywords(query)
         keyword_str = " ".join(keywords)
-        print(f"RAG Search Keywords: {keyword_str}")
+        print(f"🔍 RAG Search Keywords: {keyword_str}")
         
-        # 1. Mongo Text Search
+        results = []
+        
+        # Strategy 1: MongoDB Text Search
         try:
             cursor = kb_col.find(
                 {"$text": {"$search": keyword_str}},
                 {"score": {"$meta": "textScore"}}
             ).sort([("score", {"$meta": "textScore"})]).limit(limit)
             results = list(cursor)
+            print(f"✅ Text search found: {len(results)} results")
         except Exception as e:
-            print(f"Text search failed: {e}")
-            results = []
-            
-        # 2. Fallback: Regex on topic, content, and tags
-        if not results:
-            regex_or = []
-            for k in keywords:
-                regex_or.extend([
-                    {"topic": {"$regex": k, "$options": "i"}},
-                    {"content": {"$regex": k, "$options": "i"}},
-                    {"tags": {"$regex": k, "$options": "i"}}
+            print(f"⚠️ Text search failed: {e}")
+        
+        # Strategy 2: Fuzzy Regex Search (if text search fails or returns few results)
+        if len(results) < 3:
+            print("🔄 Trying fuzzy regex search...")
+            regex_queries = []
+            for kw in keywords:
+                # Create fuzzy regex (allow for minor variations)
+                regex_queries.extend([
+                    {"topic": {"$regex": kw, "$options": "i"}},
+                    {"content": {"$regex": kw, "$options": "i"}},
+                    {"tags": {"$in": [kw]}}
                 ])
-            if regex_or:
-                 results = list(kb_col.find({"$or": regex_or}).limit(limit))
-                 
-        return results
+            
+            if regex_queries:
+                fuzzy_results = list(kb_col.find({"$or": regex_queries}).limit(limit))
+                print(f"✅ Fuzzy search found: {len(fuzzy_results)} results")
+                
+                # Merge without duplicates
+                existing_ids = {str(r.get('_id')) for r in results}
+                for fr in fuzzy_results:
+                    if str(fr.get('_id')) not in existing_ids:
+                        results.append(fr)
+                        if len(results) >= limit:
+                            break
+        
+        return results[:limit]
     except Exception as e:
-        print(f"Retrieve Knowledge Error: {e}")
+        print(f"❌ Retrieve Knowledge Error: {e}")
         return []
 
 def analyze_parcel_label(image_data):
