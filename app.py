@@ -869,7 +869,7 @@ Rules:
 """
 
         response = client.models.generate_content(
-            model='gemini-2.0-flash-exp',
+            model='gemini-3-flash-preview'',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -982,7 +982,7 @@ Rules:
 """
 
         response = client.models.generate_content(
-            model='gemini-2.0-flash-exp',
+            model='gemini-3-flash-preview'',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1153,7 +1153,7 @@ def detect_after_hours_intent_ai(text):
         )
         
         response = client.models.generate_content(
-            model='gemini-2.0-flash-exp',
+            model='gemini-3-flash-preview'',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1304,7 +1304,7 @@ Rules:
 """
             
             response = client.models.generate_content(
-                model='gemini-2.0-flash-exp',
+                model='gemini-3-flash-preview'',
                 contents=confirmation_prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json"
@@ -1600,30 +1600,7 @@ Rules:
             "text": msg,
             "flex": flex_content
         }
-
-
-# ================= AFTER-HOURS STATUS ENDPOINT =================
-
-@app.route('/api/after-hours/status', methods=['GET'])
-def get_after_hours_status():
-    """ตรวจสอบสถานะเปิดรับลงทะเบียนนอกเวลา (cutoff 16:30)"""
-    try:
-        now = get_bkk_now()
-        start_time = now.replace(hour=8, minute=0, second=0, microsecond=0)
-        end_time = now.replace(hour=16, minute=30, second=0, microsecond=0)
-        
-        # Open only between 08:00 and 16:30
-        is_open = start_time <= now <= end_time
-        is_closed = not is_open
-        
-        return jsonify({
-            "is_closed": is_closed,
-            "cutoff_time": "16:30",
-            "server_time": now.strftime("%H:%M")
-        })
-    except Exception as e:
-        return jsonify({"is_closed": True, "error": str(e)}), 500
-
+    
     # 2.2 Case: REGISTER_AH -> Start Selection Process
     if parcel_intent == "REGISTER_AH":
         # [NEW] 08:00 - 16:30 Service Hours Rule
@@ -1714,33 +1691,13 @@ def get_after_hours_status():
             
             total_pending = len(updated_pending_parcels)
             total_ah = sum(1 for p in updated_pending_parcels if p.get('is_after_hours', False))
-            total_registered_count = len(reg_pins) # Just registered in this action
-            
-            # Use Confirmation Flex (Re-using the logic from selection confirmation or create a new one??)
-            # The prompt asked for "blocks showing total, pending, etc" consistent with others
-            # Let's use create_after_hours_confirmation_flex which does exactly this
             
             flex_content = create_after_hours_confirmation_flex(
-                parcels_to_register, # pass full objects of registered items
+                parcels_to_register,
                 total_pending,
-                total_ah, # Pass TOTAL AH count (not just current batch)
+                total_ah,
                 room_number
             )
-
-            # Re-read create_after_hours_confirmation_flex definition to be sure.
-            # It takes: (registered_parcels_full, total_pending_count, total_registered_count, room_number)
-            # total_registered_count in that context was "count of items just registered".
-            
-            # Let's use the new create_parcel_status_flex structure but for confirmation? 
-            # OR modify the existing text reply to be a Flex.
-            # The user complained: "Success, Total 5, AH 1, Remaining 4" was WRONG.
-            # This implies the existing create_after_hours_confirmation_flex logic or input data was wrong.
-            
-            # Let's just correct the stats calculation here first and pass correct data.
-            # But wait, create_after_hours_confirmation_flex might NOT show the "Stats Breakdown" like the Selection Card.
-            # The user wants "Show total items, how many AH, how many Normal" like the Check Status card.
-            
-            # Let's use the valid stats we just calculated.
             
             parcel_list = "\n".join([f"  • PIN {p['pin']} - {p.get('transport','-')} ({p.get('tracking_number','-')})" for p in parcels_to_register])
             
@@ -1751,15 +1708,12 @@ def get_after_hours_status():
                 f"ขอบคุณที่แจ้งล่วงหน้านะคะ 🙏"
             )
             
-            # Returns DICT now to support Flex
             return {
                 "text": text_reply,
                 "flex": flex_content
             }
 
         # Case 2: No specific PINs, ask user to select (always ask, even for single parcel)
-        
-        # สร้างรายการพัสดุและถามให้เลือก (แม้มีชิ้นเดียว)
         parcel_list = []
         pins = []
         for idx, p in enumerate(pending_parcels, 1):
@@ -1779,10 +1733,6 @@ def get_after_hours_status():
             }}
         )
         
-        parcel_list_str = "\n".join(parcel_list)
-        
-        
-        
         # Calculate stats for the Flex Message
         total_pending = len(pending_parcels)
         total_ah = sum(1 for p in pending_parcels if p.get('is_after_hours', False))
@@ -1799,11 +1749,10 @@ def get_after_hours_status():
             "text": text_reply,
             "flex": flex_content
         }
-
-
-    # 3. ตรวจจับการยกเลิกรับนอกเวลา
-    is_cancel, target_pins = detect_after_hours_cancel_intent(text)
-    if is_cancel:
+    
+    # 3. ตรวจจับการยกเลิกรับนอกเวลา (After-Hours Cancellation)
+    is_cancel_ah, target_pins_cancel = detect_after_hours_cancel_intent(text)
+    if is_cancel_ah:
         room_number = user.get('room_number')
         
         # ดึงรายการพัสดุนอกเวลาทั้งหมดของผู้ใช้นี้ (ที่เป็น pending)
@@ -1819,16 +1768,16 @@ def get_after_hours_status():
         # Determine which parcels to cancel
         parcels_to_cancel = []
         
-        if target_pins == "ALL": # If "ALL" is explicitly requested
+        if target_pins_cancel == "ALL": # If "ALL" is explicitly requested
             parcels_to_cancel = current_ah_parcels
-        elif not target_pins: # If no specific pins are mentioned, but intent is cancel, assume ALL
+        elif not target_pins_cancel: # If no specific pins are mentioned, but intent is cancel, assume ALL
             parcels_to_cancel = current_ah_parcels
         else:
             for p in current_ah_parcels:
                 p_pin = str(p.get("pin", ""))
                 p_track = str(p.get("tracking_number", ""))
                 is_match = False
-                for t in target_pins:
+                for t in target_pins_cancel:
                     if t in p_pin or t in p_track:
                         is_match = True
                         break
@@ -1836,7 +1785,7 @@ def get_after_hours_status():
                     parcels_to_cancel.append(p)
             
             if not parcels_to_cancel:
-                 return f"❌ ไม่พบพัสดุที่ระบุ ({', '.join(target_pins)}) ในรายการนอกเวลาของคุณค่ะ"
+                 return f"❌ ไม่พบพัสดุที่ระบุ ({', '.join(target_pins_cancel)}) ในรายการนอกเวลาของคุณค่ะ"
 
         if not parcels_to_cancel:
             return "❌ ไม่มีการเปลี่ยนแปลงค่ะ"
@@ -1868,7 +1817,7 @@ def get_after_hours_status():
             "is_after_hours": True
         })
         
-        # 3. Message construction
+        # Message construction
         flex_content = create_after_hours_cancellation_flex(
             parcels_to_cancel, 
             remaining_ah, 
@@ -1883,6 +1832,7 @@ def get_after_hours_status():
         }
 
     # ================= AI Processing =================
+    # ถ้าไม่ match case ใดเลย ให้ใช้ AI ตอบ
     
     # ดึง Intent และ Context พร้อมกันเพื่อลดเวลา (Parallel)
     with ThreadPoolExecutor() as executor:
@@ -1896,14 +1846,12 @@ def get_after_hours_status():
         rag_context = ""
         if not is_simple_greeting:
             context_future = executor.submit(get_knowledge_context, text, user)
-            # ไม่ดึง rag_context ทันที รอจนกว่าจะใช้งาน
         else:
             context_future = None
 
         intent = intent_future.result()
 
-    # ================= ENHANCED CANCELLATION LOGIC =================
-    # AI-powered cancellation with context awareness
+    # ================= ENHANCED CANCELLATION LOGIC (from AI intent) =================
     if intent == "CANCEL":
         # Check context: are we in a process?
         if after_hours_state == 'selecting':
@@ -1945,6 +1893,28 @@ def get_after_hours_status():
     except Exception as e:
         print(f"Chat Error: {e}")
         return "ขออภัย ระบบขัดข้องชั่วคราวค่ะ"
+
+
+# ================= AFTER-HOURS STATUS ENDPOINT =================
+
+def get_after_hours_status():
+    """ตรวจสอบสถานะเปิดรับลงทะเบียนนอกเวลา (cutoff 16:30)"""
+    try:
+        now = get_bkk_now()
+        start_time = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        end_time = now.replace(hour=16, minute=30, second=0, microsecond=0)
+        
+        # Open only between 08:00 and 16:30
+        is_open = start_time <= now <= end_time
+        is_closed = not is_open
+        
+        return jsonify({
+            "is_closed": is_closed,
+            "cutoff_time": "16:30",
+            "server_time": now.strftime("%H:%M")
+        })
+    except Exception as e:
+        return jsonify({"is_closed": True, "error": str(e)}), 500
 
 # ================= LINE WEBHOOK =================
 
@@ -2127,7 +2097,7 @@ def verify_self_pickup_image(user, parcels, image_path):
         
         # Generate Content
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-3-flash-preview'',
             contents=[
                 types.Content(
                      role="user",
