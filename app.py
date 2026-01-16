@@ -206,28 +206,7 @@ def get_bkk_now():
     tz = datetime.timezone(datetime.timedelta(hours=7))
     return datetime.datetime.now(tz)
 
-# Helper functions for analyze_urgency_from_description and determine_final_urgency removed
-        final_score = (ai_score * 0.8) + (desc_score * 0.2)
-        
-        # แปลง score กลับเป็น urgency level
-        # final_score: 1.0-1.66 = Low, 1.67-2.33 = Medium, 2.34-3.0 = High
-        if final_score >= 2.4:  # เกือบ High (2.4/3 = 80%)
-            final_urgency = "High"
-        elif final_score >= 1.6:  # ระหว่าง Low-Medium
-            final_urgency = "Medium"
-        else:
-            final_urgency = "Low"
-        
-        print(f"📊 Urgency Calculation (Weighted 80/20):")
-        print(f"   AI Vision: {ai_urgency} (score={ai_score}, weight=0.8)")
-        print(f"   Description: {desc_urgency} (score={desc_score}, weight=0.2)")
-        print(f"   Final Score: {final_score:.2f} → {final_urgency}")
-        
-        return final_urgency
-        
-    except Exception as e:
-        print(f"❌ Urgency Decision Error: {e}")
-        return "Medium"
+
 
 def log_admin_action(action, performed_by, target=None, details=None):
     """
