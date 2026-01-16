@@ -148,19 +148,40 @@ def scan_parcel():
         extracted_name = ai_data.get('recipient_name')
         
         if extracted_room and extracted_room != "N/A":
-             suggested_user = users_col.find_one({"room_number": extracted_room})
+             # Try exact room match
+             suggested_user = users_col.find_one({"room_number": extracted_room.strip()})
+             # Try partial room match if no exact match (e.g. "101" matches "101/5")
+             if not suggested_user:
+                 suggested_user = users_col.find_one({"room_number": {"$regex": f"^{extracted_room.strip()}(/|$)"}})
         
         if not suggested_user and extracted_name and extracted_name != "N/A":
-             # Fuzzy name search (strip space/คุณ)
-             search_name = extracted_name.replace(" ", "").replace("คุณ", "")
-             # Find by first_name or last_name partial match
+             # More robust name search
+             clean_name = extracted_name.replace(" ", "").replace("คุณ", "").strip()
+             
+             # Try regex match on concatenated first+last or display name
              suggested_user = users_col.find_one({
                  "$or": [
-                     {"first_name": {"$regex": search_name, "$options": "i"}},
-                     {"last_name": {"$regex": search_name, "$options": "i"}},
-                     {"display_name": {"$regex": search_name, "$options": "i"}}
+                     {"first_name": {"$regex": clean_name, "$options": "i"}},
+                     {"last_name": {"$regex": clean_name, "$options": "i"}},
+                     {"display_name": {"$regex": clean_name, "$options": "i"}},
+                     {"name": {"$regex": clean_name, "$options": "i"}} # Synthesized name field used in some routes
                  ]
              })
+             
+             # Try splitting name into parts and searching
+             if not suggested_user and len(clean_name) > 3:
+                 name_parts = extracted_name.split()
+                 if name_parts:
+                     # Filter out short parts
+                     significant_parts = [p for p in name_parts if len(p) > 1]
+                     if significant_parts:
+                         suggested_user = users_col.find_one({
+                             "$or": [
+                                 {"first_name": {"$in": significant_parts}},
+                                 {"last_name": {"$in": significant_parts}},
+                                 {"display_name": {"$in": significant_parts}}
+                             ]
+                         })
              
         if suggested_user:
              ai_data['suggested_user'] = {

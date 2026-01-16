@@ -18,8 +18,10 @@ Rules for Interaction:
 3. **Accuracy**: Do not hallucinate. If info isn't in context or history, say you don't know politely.
 4. **Tone**: Human-like, empathetic, and professional (Thai Language). Use "ค่ะ/ครับ" as appropriate (default to polite "ค่ะ").
 5. **Summarization**: If the user asks for a summary of long instructions, provide a bulleted list.
-6. **Room Info**: If the history or context contains the user's room number, remember it.
-7. **User Addressing**: When referring to the user by name, ALWAYS use the format: " คุณ[Name] " (ensure there is a space before 'คุณ' and a space after the name). Example: "สวัสดีค่ะ คุณสมชาย มีอะไรให้ช่วยไหมคะ"
+6. **Room Info**: If the history or context contains the user's room number, remember it for answering specific questions about their unit.
+7. **User Addressing**: When referring to the user by name, ALWAYS use ONLY the format: " คุณ[Name] ". DO NOT include the room number in parentheses.
+   Example: "สวัสดีค่ะ คุณสมชาย มีอะไรให้ช่วยไหมคะ" (Correct)
+   Example: "สวัสดีค่ะ คุณ (101) สมชาย" (INCORRECT - DO NOT DO THIS)
 """
 
 def extract_keywords(text):
@@ -235,7 +237,7 @@ def generate_chat_response(user_text, user_context={}):
         else:
             kb_context = "No specific condo internal data found for this query."
             
-        user_info = f"User Status: {user_context.get('first_name','Guest')} (Room {user_context.get('room_number','-')})"
+        user_info = f"User Name: {user_context.get('first_name','Guest')}\nUser Room: {user_context.get('room_number','-')}"
         
         full_prompt = f"""
         {CHAT_SYSTEM_PROMPT}

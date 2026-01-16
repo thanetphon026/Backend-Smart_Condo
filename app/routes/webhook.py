@@ -46,6 +46,7 @@ def handle_text_message(event):
         user = {"line_user_id": user_id, "first_name": "Guest", "room_number": None}
 
     save_chat_history(user_id, 'user', text)
+    users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}})
     
     # 2. Analyze Intent
     intent = analyze_intent(text)
@@ -180,6 +181,8 @@ def handle_image_message(event):
         send_message(user_id, text="กรุณาติดต่อยืนยันตัวตนกับนิติบุคคลก่อนใช้งานฟีเจอร์นี้ครับ")
         return
     
+    users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}})
+    
     user_room = user.get('room_number')
 
     # 1. Download Image
@@ -251,6 +254,7 @@ def handle_image_message(event):
 def handle_postback(event):
     user_id = event.source.user_id
     data = event.postback.data
+    users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}})
     
     import urllib.parse
     parsed = dict(urllib.parse.parse_qsl(data))
