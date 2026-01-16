@@ -27,3 +27,16 @@ def upload_image(file):
     except Exception as e:
         print(f"Upload Error: {e}")
         return None
+
+def delete_resource(public_id):
+    """
+    Delete resource from Cloudinary by Public ID.
+    """
+    try:
+        if public_id:
+            cloudinary.uploader.destroy(public_id)
+            return True
+        return False
+    except Exception as e:
+        print(f"Delete Error: {e}")
+        return False

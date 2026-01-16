@@ -11,11 +11,7 @@ import io
 
 webhook_bp = Blueprint('webhook', __name__)
 
-
-def get_bkk_time():
-    import pytz
-    tz = pytz.timezone('Asia/Bangkok')
-    return datetime.datetime.now(tz)
+from ..utils.helpers import get_bkk_time
 
 @webhook_bp.route("/callback", methods=['POST'])
 def callback():

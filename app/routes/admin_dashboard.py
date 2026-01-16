@@ -3,11 +3,7 @@ from ..utils.db import parcels_col, users_col
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
-def get_bkk_time():
-    import datetime
-    import pytz
-    tz = pytz.timezone('Asia/Bangkok')
-    return datetime.datetime.now(tz)
+from ..utils.helpers import get_bkk_time
 
 @dashboard_bp.route('/api/admin/dashboard/stats', methods=['GET'])
 def get_stats():
