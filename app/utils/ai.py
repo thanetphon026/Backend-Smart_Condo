@@ -183,28 +183,48 @@ def analyze_parcel_label(image_data):
 
 def check_match(scanned_data, user_profile):
     """
-    Compare scanned data with user profile.
+    Robust comparison between scanned data and user profile.
     Returns: (is_match: bool, reason: str)
     """
     if not scanned_data or not scanned_data.get('is_label'):
-        return False, "Not a parcel label"
+        return False, "ไม่พบข้อมูลพัสดุจากรูปภาพ"
     
-    scanned_room = str(scanned_data.get('room_number') or "").strip()
-    user_room = str(user_profile.get('room_number') or "").strip()
+    # Normalizers
+    def normalize_room(room_str):
+        if not room_str or room_str == "N/A": return None
+        return str(room_str).strip().replace(" ", "").replace("ห้อง", "").replace("Room", "").replace("room", "")
+
+    def normalize_name(name_str):
+        if not name_str or name_str == "N/A": return None
+        return str(name_str).strip().replace("คุณ", "").replace("Mr.", "").replace("Ms.", "").replace("Mrs.", "").replace(" ", "")
+
+    scanned_room = normalize_room(scanned_data.get('room_number'))
+    user_room = normalize_room(user_profile.get('room_number'))
     
-    # Stricter with detailed details
-    if scanned_room and user_room and (scanned_room in user_room or user_room in scanned_room):
-        return True, "Room match"
-        
-    scanned_name = str(scanned_data.get('recipient_name') or "").replace(" ", "")
-    user_name = (user_profile.get('first_name', '') + user_profile.get('last_name', '')).replace(" ", "")
-    
-    if scanned_name and user_name:
-        if scanned_name in user_name or user_name in scanned_name:
-            return True, "Name match"
-            
-    # Mismatch Details
-    reason = f"Scanned Room: '{scanned_room}' vs User Room: '{user_room}'. Scanned Name: '{scanned_name}' vs User Name: '{user_name}'"
+    scanned_name = normalize_name(scanned_data.get('recipient_name'))
+    first_name = normalize_name(user_profile.get('first_name', ''))
+    last_name = normalize_name(user_profile.get('last_name', ''))
+    display_name = normalize_name(user_profile.get('display_name', ''))
+    full_name = (first_name or '') + (last_name or '')
+
+    # 1. Room Match (Exact or Partial)
+    if scanned_room and user_room:
+        if scanned_room == user_room or scanned_room in user_room or user_room in scanned_room:
+            return True, f"ห้องตรงกัน ({scanned_room})"
+
+    # 2. Name Match (Fuzzy)
+    if scanned_name:
+        if first_name and (scanned_name in first_name or first_name in scanned_name):
+            return True, "ชื่อตรงกัน (First Name)"
+        if last_name and (scanned_name in last_name or last_name in scanned_name):
+            return True, "นามสกุลตรงกัน (Last Name)"
+        if display_name and (scanned_name in display_name or display_name in scanned_name):
+            return True, "ชื่อไลน์ตรงกัน"
+        if full_name and (scanned_name in full_name or full_name in scanned_name):
+            return True, "ชื่อ-นามสกุลตรงกัน"
+
+    # Mismatch Detail
+    reason = f"OCR: {scanned_data.get('room_number')}/{scanned_data.get('recipient_name')} != User: {user_profile.get('room_number')}/{user_profile.get('first_name')}"
     return False, reason
 
 

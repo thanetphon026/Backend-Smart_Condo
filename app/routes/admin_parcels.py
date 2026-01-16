@@ -224,19 +224,38 @@ def scan_parcel():
         if not suggested_user:
             print(f"❌ NO MATCH FOUND for Room: {room_normalized}, Name: {name_normalized}")
         
+        # Prepare AI Data for frontend
+        ai_data['image_url'] = img_url
+        ai_data['parcel_count'] = 0
+        
         if suggested_user:
-             ai_data['suggested_user'] = {
-                 "room_number": suggested_user.get('room_number'),
-                 "name": f"{suggested_user.get('first_name','')} {suggested_user.get('last_name','')}".strip() or suggested_user.get('display_name')
-             }
+            room_num = suggested_user.get('room_number')
+            # Calculate pending parcels for this room
+            p_count = parcels_col.count_documents({"room_number": room_num, "status": "pending"})
+            
+            ai_data['user_found'] = {
+                "exists": True,
+                "room_number": room_num,
+                "first_name": suggested_user.get('first_name', ''),
+                "last_name": suggested_user.get('last_name', ''),
+                "display_name": suggested_user.get('display_name', '')
+            }
+            ai_data['parcel_count'] = p_count
+        else:
+            ai_data['user_found'] = {"exists": False}
+            # If no user found, but we have a room number from OCR, still try to count parcels
+            if room_normalized:
+                p_count = parcels_col.count_documents({"room_number": extracted_room, "status": "pending"})
+                ai_data['parcel_count'] = p_count
         
         return jsonify({
             "status": "success", 
-            "data": ai_data, 
-            "image_url": img_url
+            "data": ai_data
         })
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Scan Error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
