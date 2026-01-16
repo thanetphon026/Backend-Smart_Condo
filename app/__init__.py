@@ -6,6 +6,10 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
     
+    # Custom JSON Provider for ObjectId and Datetime
+    from .utils.json_provider import MongoJSONProvider
+    app.json = MongoJSONProvider(app)
+    
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
     # Import Utils to ensure DB connection

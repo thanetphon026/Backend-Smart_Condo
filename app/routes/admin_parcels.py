@@ -170,6 +170,7 @@ def scan_parcel():
 
         log_audit("Add Parcel", admin_name, target=f"Room {new_parcel['room_number']}", details=f"PIN: {pin}")
 
+        new_parcel['_id'] = str(new_parcel['_id'])
         return jsonify({"status": "success", "data": ai_data, "parcel": new_parcel})
         
     except Exception as e:

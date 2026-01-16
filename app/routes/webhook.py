@@ -1,4 +1,4 @@
-from flask import Blueprint, request, abort, current_app
+from flask import Blueprint, request, abort, current_app, jsonify
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, PostbackEvent
 from ..utils.line import line_handler, send_message, create_block_card
@@ -9,7 +9,17 @@ import datetime
 import requests
 import io
 
+
 webhook_bp = Blueprint('webhook', __name__)
+
+@webhook_bp.route("/", methods=['GET'])
+def health_check():
+    try:
+        from ..utils.db import mongo_client
+        mongo_client.admin.command('ping')
+        return jsonify({"status": "online", "db": "connected"}), 200
+    except Exception as e:
+        return jsonify({"status": "online", "db": "disconnected", "error": str(e)}), 500
 
 from ..utils.helpers import get_bkk_time
 
