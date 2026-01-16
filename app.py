@@ -34,7 +34,6 @@ from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
-from parcel_flex_templates import create_parcel_ask_selection_flex, create_parcel_registered_flex, create_parcel_cancelled_flex, create_number_confirmation_flex, create_parcel_status_flex as create_parcel_status_flex_v2
 from linebot.v3.webhooks import (
     MessageEvent, 
     TextMessageContent, 
@@ -50,10 +49,16 @@ from flex_templates import (
     create_after_hours_selection_flex, 
     create_after_hours_confirmation_flex, 
     create_after_hours_cancellation_flex,
-    create_self_pickup_verification_flex,   # New
-    create_self_pickup_mismatch_flex,       # New
-    create_self_pickup_success_flex
+    create_self_pickup_verification_flex,
+    create_self_pickup_mismatch_flex,
+    create_self_pickup_success_flex,
+    # NEW: After-hours pickup verification templates
+    create_pickup_verification_success_flex,
+    create_pickup_verification_failed_flex,
+    create_pickup_confirmed_flex,
+    create_system_closed_flex
 )
+
 
 # ================= CONFIGURATION =================
 load_dotenv()
@@ -224,7 +229,8 @@ def log_admin_action(action, performed_by, target=None, details=None):
             "performed_by": performed_by,
             "target": target,
             "timestamp": datetime.datetime.utcnow(),
-            "details": details or ""
+            "details": details or "",
+            "log_type": "admin"  # Mark as admin log
         }
         audit_logs_col.insert_one(log_entry)
         print(f"📝 Audit Log: {action} by {performed_by} -> {target}")
@@ -232,6 +238,235 @@ def log_admin_action(action, performed_by, target=None, details=None):
     except Exception as e:
         print(f"❌ Audit Log Error: {e}")
         return False
+
+def log_user_action(action, user_id, room_number=None, target=None, details=None):
+    """
+    บันทึกการดำเนินการของผู้ใช้งาน
+    Args:
+        action: การกระทำ (เช่น "Image Verification", "Pickup Confirmed")
+        user_id: LINE User ID
+        room_number: เลขห้อง
+        target: เป้าหมาย (เช่น PIN, Tracking Number)
+        details: รายละเอียดเพิ่มเติม
+    """
+    try:
+        log_entry = {
+            "action": action,
+            "performed_by": f"User {room_number}" if room_number else user_id,
+            "user_id": user_id,
+            "room_number": room_number,
+            "target": target,
+            "timestamp": datetime.datetime.utcnow(),
+            "details": details or "",
+            "log_type": "user"  # Mark as user log
+        }
+        audit_logs_col.insert_one(log_entry)
+        print(f"📝 User Log: {action} by {room_number} -> {target}")
+        return True
+    except Exception as e:
+        print(f"❌ User Log Error: {e}")
+        return False
+
+def is_after_hours_registration_open():
+    """
+    ตรวจสอบว่าระบบรับลงทะเบียนนอกเวลาเปิดอยู่หรือไม่
+    เปิด: 08:00 - 16:30 น. (เวลาไทย)
+    ปิด: หลัง 16:30 น. จนถึง 08:00 น. วันถัดไป
+    Returns:
+        tuple: (is_open: bool, current_time: datetime, message: str)
+    """
+    try:
+        bkk_now = get_bkk_now()
+        current_hour = bkk_now.hour
+        current_minute = bkk_now.minute
+        
+        # เปิดรับลงทะเบียน: 08:00 - 16:30
+        is_open = (current_hour > 8 or (current_hour == 8 and current_minute >= 0)) and \
+                  (current_hour < 16 or (current_hour == 16 and current_minute <= 30))
+        
+        if is_open:
+            message = f"ระบบเปิดรับลงทะเบียน (เวลา {bkk_now.strftime('%H:%M')} น.)"
+        else:
+            message = f"ระบบปิดรับลงทะเบียน (เวลา {bkk_now.strftime('%H:%M')} น.) - เปิดรับ 08:00-16:30 น."
+        
+        return is_open, bkk_now, message
+    except Exception as e:
+        print(f"❌ Time Check Error: {e}")
+        return False, datetime.datetime.now(), "ไม่สามารถตรวจสอบเวลาได้"
+
+def is_after_hours_pickup_time():
+    """
+    ตรวจสอบว่าอยู่ในช่วงเวลารับพัสดุนอกเวลาหรือไม่
+    ช่วงเวลารับ: 16:30 - 08:00 น. วันถัดไป (เวลาไทย)
+    Returns:
+        bool: True ถ้าอยู่ในช่วงเวลารับนอกเวลา
+    """
+    try:
+        bkk_now = get_bkk_now()
+        current_hour = bkk_now.hour
+        current_minute = bkk_now.minute
+        
+        # ช่วงเวลารับ: หลัง 16:30 หรือก่อน 08:00
+        is_pickup_time = (current_hour > 16 or (current_hour == 16 and current_minute > 30)) or \
+                        (current_hour < 8)
+        
+        return is_pickup_time
+    except Exception as e:
+        print(f"❌ Pickup Time Check Error: {e}")
+        return False
+
+def verify_parcel_image_with_ai(image_url, user_room_number):
+    """
+    ใช้ AI วิเคราะห์รูปภาพพัสดุและตรวจสอบว่าตรงกับห้องของผู้ใช้หรือไม่
+    Args:
+        image_url: URL ของรูปภาพที่ผู้ใช้ส่งมา
+        user_room_number: เลขห้องของผู้ใช้
+    Returns:
+        dict: {
+            "is_valid": bool,
+            "matched_parcel": dict or None,
+            "extracted_room": str or None,
+            "extracted_name": str or None,
+            "reason": str
+        }
+    """
+    try:
+        # ดึงพัสดุที่ลงทะเบียนรับนอกเวลาของห้องนี้
+        room_clean = str(user_room_number).replace("ห้อง", "").strip()
+        registered_parcels = list(parcels_col.find({
+            "room_number": {"$regex": f".*{room_clean}.*"},
+            "status": "pending",
+            "is_after_hours": True
+        }))
+        
+        if not registered_parcels:
+            return {
+                "is_valid": False,
+                "matched_parcel": None,
+                "extracted_room": None,
+                "extracted_name": None,
+                "reason": "ไม่พบพัสดุที่ลงทะเบียนรับนอกเวลา หรือไม่มีพัสดุคงค้าง"
+            }
+        
+        # ใช้ AI วิเคราะห์รูปภาพ
+        prompt = f"""
+วิเคราะห์รูปภาพพัสดุนี้และสกัดข้อมูลต่อไปนี้:
+1. เลขห้อง (Room Number)
+2. ชื่อผู้รับ (Recipient Name)
+3. บริษัทขนส่ง (Courier Company) ถ้ามี
+4. เลขพัสดุ (Tracking Number) ถ้ามี
+
+กรุณาตอบในรูปแบบ JSON:
+{{
+    "room_number": "เลขห้องที่พบ",
+    "recipient_name": "ชื่อผู้รับที่พบ",
+    "courier": "บริษัทขนส่งที่พบ",
+    "tracking": "เลขพัสดุที่พบ",
+    "is_parcel": true/false (true ถ้าเป็นรูปพัสดุ, false ถ้าไม่ใช่)
+}}
+
+หากไม่พบข้อมูลใด ให้ใส่ null
+หากรูปภาพไม่ใช่พัสดุ ให้ตั้ง is_parcel เป็น false
+"""
+        
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',  # ใช้ 1.5 Flash สำหรับ image analysis
+            contents=[
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(requests.get(image_url).content).decode()}}
+                    ]
+                }
+            ]
+        )
+        
+        # Parse AI response
+        ai_result = response.text.strip()
+        # ลบ markdown code block ถ้ามี
+        if ai_result.startswith("```json"):
+            ai_result = ai_result.replace("```json", "").replace("```", "").strip()
+        elif ai_result.startswith("```"):
+            ai_result = ai_result.replace("```", "").strip()
+        
+        try:
+            parsed_result = json.loads(ai_result)
+        except:
+            # ถ้า parse ไม่ได้ ให้ถือว่าไม่ใช่พัสดุ
+            return {
+                "is_valid": False,
+                "matched_parcel": None,
+                "extracted_room": None,
+                "extracted_name": None,
+                "reason": "ไม่สามารถอ่านข้อมูลจากรูปภาพได้ กรุณาถ่ายรูปให้ชัดเจนขึ้น"
+            }
+        
+        # ตรวจสอบว่าเป็นรูปพัสดุหรือไม่
+        if not parsed_result.get("is_parcel", False):
+            return {
+                "is_valid": False,
+                "matched_parcel": None,
+                "extracted_room": None,
+                "extracted_name": None,
+                "reason": "ไม่พบข้อมูลพัสดุในรูปภาพ กรุณาถ่ายรูปฉลากพัสดุให้ชัดเจน"
+            }
+        
+        extracted_room = parsed_result.get("room_number")
+        extracted_name = parsed_result.get("recipient_name")
+        
+        # ตรวจสอบว่าเลขห้องตรงกับผู้ใช้หรือไม่
+        if extracted_room:
+            extracted_room_clean = str(extracted_room).replace("ห้อง", "").replace("Room", "").replace("room", "").strip()
+            if room_clean not in extracted_room_clean and extracted_room_clean not in room_clean:
+                return {
+                    "is_valid": False,
+                    "matched_parcel": None,
+                    "extracted_room": extracted_room,
+                    "extracted_name": extracted_name,
+                    "reason": f"พัสดุนี้เป็นของห้อง {extracted_room} ไม่ใช่ห้อง {user_room_number}"
+                }
+        
+        # ค้นหาพัสดุที่ตรงกับข้อมูลที่สกัดได้
+        matched_parcel = None
+        for parcel in registered_parcels:
+            # ตรวจสอบชื่อผู้รับ
+            if extracted_name:
+                parcel_name = parcel.get("recipient_name", "").lower()
+                if extracted_name.lower() in parcel_name or parcel_name in extracted_name.lower():
+                    matched_parcel = parcel
+                    break
+        
+        # ถ้าไม่เจอจากชื่อ ให้เอาพัสดุแรกที่ลงทะเบียนไว้
+        if not matched_parcel and registered_parcels:
+            matched_parcel = registered_parcels[0]
+        
+        if matched_parcel:
+            return {
+                "is_valid": True,
+                "matched_parcel": matched_parcel,
+                "extracted_room": extracted_room,
+                "extracted_name": extracted_name,
+                "reason": "ตรวจสอบสำเร็จ พบพัสดุของคุณ"
+            }
+        else:
+            return {
+                "is_valid": False,
+                "matched_parcel": None,
+                "extracted_room": extracted_room,
+                "extracted_name": None,
+                "reason": "ไม่พบพัสดุที่ตรงกับข้อมูลในรูปภาพ"
+            }
+            
+    except Exception as e:
+        print(f"❌ Image Verification Error: {e}")
+        return {
+            "is_valid": False,
+            "matched_parcel": None,
+            "extracted_room": None,
+            "extracted_name": None,
+            "reason": f"เกิดข้อผิดพลาดในการตรวจสอบรูปภาพ: {str(e)}"
+        }
 
 # ================= CHAT HISTORY HELPER =================
 
@@ -2510,9 +2745,237 @@ def get_all_users():
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# ================= Complaints API =================
 
+# ================= AFTER-HOURS SYSTEM STATUS API =================
 
+@app.route('/api/after-hours/status', methods=['GET'])
+@require_api_token
+def get_after_hours_system_status():
+    """ดึงสถานะระบบรับลงทะเบียนนอกเวลา"""
+    try:
+        is_open, current_time, message = is_after_hours_registration_open()
+        
+        return jsonify({
+            "is_open": is_open,
+            "current_time": format_datetime(current_time),
+            "message": message,
+            "open_hours": "08:00 - 16:30 น.",
+            "pickup_hours": "18:00 - 22:00 น."
+        })
+    except Exception as e:
+        print(f"❌ After-hours status error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ================= AUDIT LOGS API =================
+
+@app.route('/api/audit-logs/admin', methods=['GET'])
+@require_api_token
+def get_admin_logs():
+    """ดึง Activity Logs ของ Admin (20 รายการล่าสุด)"""
+    try:
+        logs = list(audit_logs_col.find(
+            {"log_type": "admin"}
+        ).sort("timestamp", -1).limit(20))
+        
+        result = []
+        for log in logs:
+            result.append({
+                "id": str(log['_id']),
+                "performer": log.get("performed_by", "-"),
+                "action": log.get("action", "-"),
+                "target": log.get("target", "-"),
+                "timestamp": format_datetime(log.get("timestamp")),
+                "details": log.get("details", "")
+            })
+        
+        return jsonify({"items": result})
+    except Exception as e:
+        print(f"❌ Admin logs error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/audit-logs/user', methods=['GET'])
+@require_api_token
+def get_user_logs():
+    """ดึง Activity Logs ของ User (20 รายการล่าสุด)"""
+    try:
+        logs = list(audit_logs_col.find(
+            {"log_type": "user"}
+        ).sort("timestamp", -1).limit(20))
+        
+        result = []
+        for log in logs:
+            result.append({
+                "id": str(log['_id']),
+                "performer": log.get("performed_by", "-"),
+                "action": log.get("action", "-"),
+                "target": log.get("target", "-"),
+                "timestamp": format_datetime(log.get("timestamp")),
+                "details": log.get("details", ""),
+                "room_number": log.get("room_number", "-")
+            })
+        
+        return jsonify({"items": result})
+    except Exception as e:
+        print(f"❌ User logs error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ================= CSV EXPORT APIs =================
+
+@app.route('/api/audit-logs/admin/export', methods=['GET'])
+@require_api_token
+def export_admin_logs_csv():
+    """ส่งออก Admin Logs เป็นไฟล์ CSV"""
+    try:
+        logs = list(audit_logs_col.find(
+            {"log_type": "admin"}
+        ).sort("timestamp", -1))
+        
+        # สร้าง CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Header
+        writer.writerow(['ผู้ดำเนินการ', 'กิจกรรม', 'เป้าหมาย', 'วันเวลา', 'รายละเอียด'])
+        
+        # Data
+        for log in logs:
+            timestamp = log.get("timestamp")
+            if timestamp:
+                # Format เป็น DD/MM/YYYY HH:MM
+                bkk_tz = pytz.timezone('Asia/Bangkok')
+                if timestamp.tzinfo is None:
+                    timestamp = pytz.utc.localize(timestamp)
+                bkk_time = timestamp.astimezone(bkk_tz)
+                timestamp_str = bkk_time.strftime('%d/%m/%Y %H:%M')
+            else:
+                timestamp_str = '-'
+            
+            writer.writerow([
+                log.get("performed_by", "-"),
+                log.get("action", "-"),
+                log.get("target", "-"),
+                timestamp_str,
+                log.get("details", "")
+            ])
+        
+        # ส่งไฟล์
+        output.seek(0)
+        return Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={
+                'Content-Disposition': f'attachment; filename=admin_logs_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+                'Content-Type': 'text/csv; charset=utf-8-sig'  # UTF-8 with BOM for Excel
+            }
+        )
+    except Exception as e:
+        print(f"❌ Export admin logs error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/audit-logs/user/export', methods=['GET'])
+@require_api_token
+def export_user_logs_csv():
+    """ส่งออก User Logs เป็นไฟล์ CSV"""
+    try:
+        logs = list(audit_logs_col.find(
+            {"log_type": "user"}
+        ).sort("timestamp", -1))
+        
+        # สร้าง CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Header
+        writer.writerow(['ผู้ดำเนินการ', 'เลขห้อง', 'กิจกรรม', 'เป้าหมาย', 'วันเวลา', 'รายละเอียด'])
+        
+        # Data
+        for log in logs:
+            timestamp = log.get("timestamp")
+            if timestamp:
+                # Format เป็น DD/MM/YYYY HH:MM
+                bkk_tz = pytz.timezone('Asia/Bangkok')
+                if timestamp.tzinfo is None:
+                    timestamp = pytz.utc.localize(timestamp)
+                bkk_time = timestamp.astimezone(bkk_tz)
+                timestamp_str = bkk_time.strftime('%d/%m/%Y %H:%M')
+            else:
+                timestamp_str = '-'
+            
+            writer.writerow([
+                log.get("performed_by", "-"),
+                log.get("room_number", "-"),
+                log.get("action", "-"),
+                log.get("target", "-"),
+                timestamp_str,
+                log.get("details", "")
+            ])
+        
+        # ส่งไฟล์
+        output.seek(0)
+        return Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={
+                'Content-Disposition': f'attachment; filename=user_logs_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+                'Content-Type': 'text/csv; charset=utf-8-sig'  # UTF-8 with BOM for Excel
+            }
+        )
+    except Exception as e:
+        print(f"❌ Export user logs error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/parcels/after-hours/export', methods=['GET'])
+@require_api_token
+def export_after_hours_parcels_csv():
+    """ส่งออกรายการพัสดุนอกเวลาเป็นไฟล์ CSV"""
+    try:
+        parcels = list(parcels_col.find({
+            "status": "pending",
+            "is_after_hours": True
+        }).sort("timestamp", -1))
+        
+        # สร้าง CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Header
+        writer.writerow(['เลขห้อง', 'ชื่อผู้รับ', 'บริษัทขนส่ง', 'เลขพัสดุ', 'PIN', 'วันเวลา'])
+        
+        # Data
+        for parcel in parcels:
+            timestamp = parcel.get("timestamp")
+            if timestamp:
+                # Format เป็น DD/MM/YYYY HH:MM
+                bkk_tz = pytz.timezone('Asia/Bangkok')
+                if timestamp.tzinfo is None:
+                    timestamp = pytz.utc.localize(timestamp)
+                bkk_time = timestamp.astimezone(bkk_tz)
+                timestamp_str = bkk_time.strftime('%d/%m/%Y %H:%M')
+            else:
+                timestamp_str = '-'
+            
+            writer.writerow([
+                parcel.get("room_number", "-"),
+                parcel.get("recipient_name", "-"),
+                parcel.get("transport", "-"),
+                parcel.get("tracking_number", "-"),
+                parcel.get("pin", "-"),
+                timestamp_str
+            ])
+        
+        # ส่งไฟล์
+        output.seek(0)
+        return Response(
+            output.getvalue(),
+            mimetype='text/csv',
+            headers={
+                'Content-Disposition': f'attachment; filename=after_hours_parcels_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+                'Content-Type': 'text/csv; charset=utf-8-sig'  # UTF-8 with BOM for Excel
+            }
+        )
+    except Exception as e:
+        print(f"❌ Export after-hours parcels error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # ================= PARCELS ENDPOINT =================
 

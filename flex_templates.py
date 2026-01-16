@@ -1977,3 +1977,702 @@ def create_self_pickup_mismatch_flex(reason):
         }
     }
     return bubble
+
+# ================= NEW: AFTER-HOURS PICKUP VERIFICATION TEMPLATES =================
+
+def create_pickup_verification_success_flex(parcel, user_image_url, room_number):
+    """
+    สร้าง Flex Message สวยงามสำหรับการตรวจสอบพัสดุสำเร็จ
+    แสดงรูปที่ผู้ใช้ถ่าย + ข้อมูลพัสดุที่ตรงกัน + ปุ่มยืนยันรับ
+    """
+    pin = parcel.get('pin', '-')
+    transport = parcel.get('transport', '-')
+    tracking = parcel.get('tracking_number', '-')
+    recipient_name = parcel.get('recipient_name', '-')
+    
+    bubble = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "✅ ตรวจสอบสำเร็จ",
+                            "weight": "bold",
+                            "color": "#FFFFFF",
+                            "size": "lg",
+                            "flex": 1
+                        },
+                        {
+                            "type": "text",
+                            "text": f"ห้อง {room_number}",
+                            "color": "#FFFFFF",
+                            "size": "sm",
+                            "align": "end"
+                        }
+                    ]
+                }
+            ],
+            "backgroundColor": "#1DB446",
+            "paddingAll": "20px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "🎉 นี่คือพัสดุของคุณ!",
+                    "weight": "bold",
+                    "size": "xl",
+                    "color": "#1DB446",
+                    "margin": "md",
+                    "align": "center"
+                },
+                {
+                    "type": "text",
+                    "text": "ข้อมูลตรงกับระบบ สามารถยืนยันรับได้เลยค่ะ",
+                    "size": "sm",
+                    "color": "#666666",
+                    "align": "center",
+                    "wrap": True,
+                    "margin": "sm"
+                },
+                {
+                    "type": "separator",
+                    "margin": "lg"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "lg",
+                    "spacing": "sm",
+                    "backgroundColor": "#F8F9FA",
+                    "cornerRadius": "md",
+                    "paddingAll": "15px",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "📦 PIN",
+                                    "color": "#aaaaaa",
+                                    "size": "sm",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": pin,
+                                    "wrap": True,
+                                    "color": "#333333",
+                                    "size": "md",
+                                    "flex": 4,
+                                    "weight": "bold"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "👤 ผู้รับ",
+                                    "color": "#aaaaaa",
+                                    "size": "sm",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": recipient_name,
+                                    "wrap": True,
+                                    "color": "#333333",
+                                    "size": "sm",
+                                    "flex": 4,
+                                    "weight": "bold"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "🚚 ขนส่ง",
+                                    "color": "#aaaaaa",
+                                    "size": "sm",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": transport,
+                                    "wrap": True,
+                                    "color": "#333333",
+                                    "size": "sm",
+                                    "flex": 4
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "📋 เลขพัสดุ",
+                                    "color": "#aaaaaa",
+                                    "size": "sm",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": tracking,
+                                    "wrap": True,
+                                    "color": "#666666",
+                                    "size": "xs",
+                                    "flex": 4
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "action": {
+                        "type": "postback",
+                        "label": "✅ ยืนยันรับพัสดุ",
+                        "data": f"action=confirm_pickup&pin={pin}"
+                    },
+                    "style": "primary",
+                    "color": "#1DB446",
+                    "height": "sm"
+                },
+                {
+                    "type": "button",
+                    "action": {
+                        "type": "postback",
+                        "label": "❌ ยกเลิก",
+                        "data": f"action=cancel_pickup&pin={pin}"
+                    },
+                    "style": "secondary",
+                    "height": "sm"
+                },
+                {
+                    "type": "text",
+                    "text": "⏰ สามารถยืนยันได้ภายใน 24 ชั่วโมง",
+                    "size": "xxs",
+                    "color": "#aaaaaa",
+                    "align": "center",
+                    "margin": "md"
+                }
+            ]
+        }
+    }
+    
+    # Add user's photo as hero image
+    if user_image_url and user_image_url.strip():
+        bubble["hero"] = {
+            "type": "image",
+            "url": user_image_url,
+            "size": "full",
+            "aspectRatio": "20:13",
+            "aspectMode": "cover",
+            "action": {
+                "type": "uri",
+                "uri": user_image_url
+            }
+        }
+    
+    return bubble
+
+def create_pickup_verification_failed_flex(reason, user_image_url=None):
+    """
+    สร้าง Flex Message สำหรับการตรวจสอบพัสดุไม่ผ่าน
+    แสดงคำเตือนและคำแนะนำ (ปุ่มยืนยันถูกปิดใช้งาน)
+    """
+    bubble = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "⚠️ ไม่ใช่พัสดุของคุณ",
+                    "weight": "bold",
+                    "color": "#FFFFFF",
+                    "size": "lg",
+                    "align": "center"
+                }
+            ],
+            "backgroundColor": "#FF4B4B",
+            "paddingAll": "20px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "❌ ตรวจสอบไม่ผ่าน",
+                    "weight": "bold",
+                    "size": "xl",
+                    "color": "#FF4B4B",
+                    "margin": "md",
+                    "align": "center"
+                },
+                {
+                    "type": "text",
+                    "text": reason,
+                    "size": "sm",
+                    "color": "#666666",
+                    "align": "center",
+                    "wrap": True,
+                    "margin": "md"
+                },
+                {
+                    "type": "separator",
+                    "margin": "lg"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#FFF5F5",
+                    "cornerRadius": "md",
+                    "paddingAll": "15px",
+                    "margin": "lg",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "📍 กรุณาดำเนินการ",
+                            "weight": "bold",
+                            "size": "sm",
+                            "color": "#FF4B4B",
+                            "margin": "none"
+                        },
+                        {
+                            "type": "text",
+                            "text": "1. วางพัสดุคืนที่เดิม\n2. ตรวจสอบเลข PIN หรือชื่อผู้รับ\n3. ถ่ายรูปใหม่ให้ชัดเจน",
+                            "size": "xs",
+                            "color": "#666666",
+                            "wrap": True,
+                            "margin": "md"
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#FFF9E6",
+                    "cornerRadius": "md",
+                    "paddingAll": "12px",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "💡 เคล็ดลับ",
+                            "weight": "bold",
+                            "size": "xs",
+                            "color": "#FF9900"
+                        },
+                        {
+                            "type": "text",
+                            "text": "ถ่ายรูปให้เห็นฉลากพัสดุชัดเจน โดยเฉพาะชื่อผู้รับและเลขห้อง",
+                            "size": "xxs",
+                            "color": "#666666",
+                            "wrap": True,
+                            "margin": "xs"
+                        }
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "action": {
+                        "type": "message",
+                        "label": "📸 ถ่ายรูปใหม่",
+                        "text": "ถ่ายรูปพัสดุใหม่"
+                    },
+                    "style": "primary",
+                    "color": "#007BFF",
+                    "height": "sm"
+                },
+                {
+                    "type": "text",
+                    "text": "หรือติดต่อนิติบุคคล 02-689-6888",
+                    "size": "xxs",
+                    "color": "#aaaaaa",
+                    "align": "center",
+                    "margin": "md"
+                }
+            ]
+        }
+    }
+    
+    # Add user's photo as hero image if available
+    if user_image_url and user_image_url.strip():
+        bubble["hero"] = {
+            "type": "image",
+            "url": user_image_url,
+            "size": "full",
+            "aspectRatio": "20:13",
+            "aspectMode": "cover",
+            "action": {
+                "type": "uri",
+                "uri": user_image_url
+            }
+        }
+    
+    return bubble
+
+def create_pickup_confirmed_flex(parcel, user_image_url, room_number):
+    """
+    สร้าง Flex Message สวยงามสำหรับยืนยันการรับพัสดุสำเร็จ
+    """
+    pin = parcel.get('pin', '-')
+    transport = parcel.get('transport', '-')
+    tracking = parcel.get('tracking_number', '-')
+    recipient_name = parcel.get('recipient_name', '-')
+    
+    bubble = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "🎉 รับพัสดุสำเร็จ",
+                            "weight": "bold",
+                            "color": "#FFFFFF",
+                            "size": "lg",
+                            "flex": 1
+                        },
+                        {
+                            "type": "text",
+                            "text": f"ห้อง {room_number}",
+                            "color": "#FFFFFF",
+                            "size": "sm",
+                            "align": "end"
+                        }
+                    ]
+                }
+            ],
+            "backgroundColor": "#1DB446",
+            "paddingAll": "20px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "✅ ยืนยันการรับพัสดุแล้ว",
+                    "weight": "bold",
+                    "size": "xl",
+                    "color": "#1DB446",
+                    "margin": "md",
+                    "align": "center"
+                },
+                {
+                    "type": "text",
+                    "text": "ขอบคุณที่ใช้บริการรับพัสดุนอกเวลาค่ะ",
+                    "size": "sm",
+                    "color": "#666666",
+                    "align": "center",
+                    "wrap": True,
+                    "margin": "sm"
+                },
+                {
+                    "type": "separator",
+                    "margin": "lg"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "lg",
+                    "spacing": "sm",
+                    "backgroundColor": "#F0F9FF",
+                    "cornerRadius": "md",
+                    "paddingAll": "15px",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "📦 รายละเอียดพัสดุ",
+                            "weight": "bold",
+                            "size": "sm",
+                            "color": "#007BFF",
+                            "margin": "none"
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "margin": "md",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "PIN",
+                                    "color": "#aaaaaa",
+                                    "size": "xs",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": pin,
+                                    "color": "#333333",
+                                    "size": "sm",
+                                    "flex": 4,
+                                    "weight": "bold"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "ผู้รับ",
+                                    "color": "#aaaaaa",
+                                    "size": "xs",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": recipient_name,
+                                    "color": "#333333",
+                                    "size": "xs",
+                                    "flex": 4
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "baseline",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": "ขนส่ง",
+                                    "color": "#aaaaaa",
+                                    "size": "xs",
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": transport,
+                                    "color": "#666666",
+                                    "size": "xs",
+                                    "flex": 4
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#E8F5E9",
+                    "cornerRadius": "md",
+                    "paddingAll": "12px",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "✨ บันทึกการรับพัสดุเรียบร้อยแล้ว",
+                            "weight": "bold",
+                            "size": "xs",
+                            "color": "#1DB446",
+                            "align": "center"
+                        },
+                        {
+                            "type": "text",
+                            "text": f"เวลา: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')} น.",
+                            "size": "xxs",
+                            "color": "#666666",
+                            "align": "center",
+                            "margin": "xs"
+                        }
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "🏠 Smart Condo - ระบบจัดการพัสดุอัจฉริยะ",
+                    "size": "xxs",
+                    "color": "#aaaaaa",
+                    "align": "center"
+                }
+            ],
+            "paddingAll": "md"
+        }
+    }
+    
+    # Add user's photo as hero image
+    if user_image_url and user_image_url.strip():
+        bubble["hero"] = {
+            "type": "image",
+            "url": user_image_url,
+            "size": "full",
+            "aspectRatio": "20:13",
+            "aspectMode": "cover",
+            "action": {
+                "type": "uri",
+                "uri": user_image_url
+            }
+        }
+    
+    return bubble
+
+def create_system_closed_flex():
+    """
+    สร้าง Flex Message แจ้งว่าระบบรับนอกเวลาปิดแล้ว
+    """
+    bubble = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "⏰ ระบบปิดรับลงทะเบียน",
+                    "weight": "bold",
+                    "color": "#FFFFFF",
+                    "size": "lg",
+                    "align": "center"
+                }
+            ],
+            "backgroundColor": "#FF9900",
+            "paddingAll": "20px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "ขณะนี้ปิดรับลงทะเบียนแล้วค่ะ",
+                    "weight": "bold",
+                    "size": "xl",
+                    "color": "#FF9900",
+                    "margin": "md",
+                    "align": "center"
+                },
+                {
+                    "type": "text",
+                    "text": "ระบบรับลงทะเบียนนอกเวลาปิดรับที่ 16:30 น. ทุกวัน",
+                    "size": "sm",
+                    "color": "#666666",
+                    "align": "center",
+                    "wrap": True,
+                    "margin": "md"
+                },
+                {
+                    "type": "separator",
+                    "margin": "lg"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#FFF9E6",
+                    "cornerRadius": "md",
+                    "paddingAll": "15px",
+                    "margin": "lg",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "⏰ เวลาทำการ",
+                            "weight": "bold",
+                            "size": "sm",
+                            "color": "#FF9900",
+                            "margin": "none"
+                        },
+                        {
+                            "type": "text",
+                            "text": "• เปิดรับลงทะเบียน: 08:00 - 16:30 น.\n• รับพัสดุนอกเวลา: 18:00 - 22:00 น.",
+                            "size": "xs",
+                            "color": "#666666",
+                            "wrap": True,
+                            "margin": "md"
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#F0F9FF",
+                    "cornerRadius": "md",
+                    "paddingAll": "12px",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "💡 คำแนะนำ",
+                            "weight": "bold",
+                            "size": "xs",
+                            "color": "#007BFF"
+                        },
+                        {
+                            "type": "text",
+                            "text": "กรุณาลงทะเบียนก่อน 16:30 น. เพื่อให้นิติบุคคลมีเวลาจัดเตรียมพัสดุให้ค่ะ",
+                            "size": "xxs",
+                            "color": "#666666",
+                            "wrap": True,
+                            "margin": "xs"
+                        }
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "📞 สอบถามเพิ่มเติม: 02-689-6888",
+                    "size": "xxs",
+                    "color": "#aaaaaa",
+                    "align": "center"
+                }
+            ],
+            "paddingAll": "md"
+        }
+    }
+    
+    return bubble
+
