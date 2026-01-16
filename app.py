@@ -35,6 +35,7 @@ from linebot.v3.messaging import (
     ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
 from parcel_flex_templates import create_parcel_ask_selection_flex, create_parcel_registered_flex, create_parcel_cancelled_flex, create_number_confirmation_flex, create_parcel_status_flex as create_parcel_status_flex_v2
+from linebot.v3.webhooks import (
     MessageEvent, 
     TextMessageContent, 
     ImageMessageContent, 
@@ -1629,8 +1630,12 @@ def get_after_hours_status():
     """ตรวจสอบสถานะเปิดรับลงทะเบียนนอกเวลา (cutoff 16:30)"""
     try:
         now = get_bkk_now()
-        cutoff_time = now.replace(hour=16, minute=30, second=0, microsecond=0)
-        is_closed = now > cutoff_time
+        start_time = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        end_time = now.replace(hour=16, minute=30, second=0, microsecond=0)
+        
+        # Open only between 08:00 and 16:30
+        is_open = start_time <= now <= end_time
+        is_closed = not is_open
         
         return jsonify({
             "is_closed": is_closed,
@@ -1642,14 +1647,15 @@ def get_after_hours_status():
 
     # 2.2 Case: REGISTER_AH -> Start Selection Process
     if parcel_intent == "REGISTER_AH":
-        # [NEW] 16:30 Cutoff Rule
+        # [NEW] 08:00 - 16:30 Service Hours Rule
         now = get_bkk_now()
-        cutoff_time = now.replace(hour=16, minute=30, second=0, microsecond=0)
+        start_time = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        end_time = now.replace(hour=16, minute=30, second=0, microsecond=0)
         
-        if now > cutoff_time:
+        if not (start_time <= now <= end_time):
              return (
-                 "⛔ ขออภัยค่ะ ขณะนี้ปิดรับการลงทะเบียนรับพัสดุนอกเวลาแล้วค่ะ\n"
-                 "(เวลาทำการลงทะเบียน: ก่อน 16:30 น. ของทุกวัน)\n\n"
+                 "⛔ ขออภัยค่ะ ขณะนี้อยู่นอกเวลาลงทะเบียนรับพัสดุนอกเวลาค่ะ\n"
+                 "(เวลาทำการลงทะเบียน: 08:00 - 16:30 น. ของทุกวัน)\n\n"
                  "หากมีเหตุจำเป็น กรุณาติดต่อเจ้าหน้าที่นิติบุคคลโดยตรงนะคะ 🙏"
              )
 
@@ -2011,51 +2017,7 @@ def handle_text_message(event):
         else:
              line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=reply_text)]))
 
-                    }
-                }
-                
-                complaints_col.insert_one(new_complaint)
-                print(f"✅ บันทึกการร้องเรียนสำเร็จ: ID={new_complaint.get('_id')}")
-                
-                # 6. Clear State
-                users_col.update_one(
-                    {"line_user_id": uid}, 
-                    {"$set": {"complaint_state": "normal", "draft_desc": None}}
-                )
-                
-                # 7. ตอบกลับผู้ใช้ด้วย Flex Message
-                flex_card = create_complaint_received_flex(
-                    description=user_desc,
-                    image_url=img_url,
-                    priority=final_urgency,
-                    room=user.get('room_number', '-')
-                )
-                
-                success_msg = (
-                    f"✅ บอทรับแจ้งเรื่องเรียบร้อยแล้วค่ะ! 🙏\n"
-                    f"⚠️ ระดับความสำคัญ: {final_urgency}"
-                )
-                
-                # Send Flex Message with image
-                send_line_message(uid, message=success_msg, flex_contents=flex_card)
-                
-                # Audit Log
-                log_admin_action(
-                    action="User Filed Complaint",
-                    performed_by=f"User {user.get('first_name', 'Unknown')} (Room {user.get('room_number', '-')})",
-                    target=f"New Complaint",
-                    details=f"Filed complaint via LINE - Urgency: {final_urgency}"
-                )
-                
-            except Exception as e:
-                print(f"❌ Error: {e}")
-                import traceback
-                traceback.print_exc()
-                line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text="เกิดข้อผิดพลาดในการประมวลผลค่ะ โปรดลองอีกครั้ง")]))
-            finally:
-                if os.path.exists(temp_path): os.remove(temp_path)
-        else:
-            line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text="ได้รับรูปแล้วค่ะ 📸 (ไม่ได้อยู่ในโหมดแจ้งร้องเรียน)")]))
+
 
 @line_handler.add(MessageEvent, message=ImageMessageContent)
 def handle_image_message(event):
