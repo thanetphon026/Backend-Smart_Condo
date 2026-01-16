@@ -131,8 +131,9 @@ def scan_parcel():
              return jsonify({"status": "error", "message": "No image uploaded"}), 400
              
         file = request.files['image']
-        if not validate_image(file)[0]:
-             return jsonify({"status": "error", "message": "Invalid image format/size"}), 400
+        is_valid, msg = validate_image(file)
+        if not is_valid:
+             return jsonify({"status": "error", "message": msg}), 400
              
         # Uploading to Cloudinary early to get URL for preview
         img_url = upload_image(file)

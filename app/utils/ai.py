@@ -1,4 +1,5 @@
 from google import genai
+from google.genai import types
 from ..config import Config
 from .db import kb_col
 import re
@@ -88,12 +89,13 @@ def analyze_parcel_label(image_data):
         Return only raw JSON. If not a label, set is_label to false.
         """
         
-        # Wrapping as dict for better Gemini API compatibility if needed
-        image_part = {"mime_type": "image/jpeg", "data": image_data}
-        
+        # New Google GenAI SDK (v1) expects specific structures or Part objects
         response = client.models.generate_content(
             model=MODEL_NAME,
-            contents=[prompt, image_part] 
+            contents=[
+                types.Part.from_text(text=prompt),
+                types.Part.from_bytes(data=image_data, mime_type='image/jpeg')
+            ]
         )
         
         # Clean markdown json

@@ -11,13 +11,26 @@ cloudinary.config(
 )
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 def validate_image(file):
     if not file:
-        return False, "No file"
-    if '.' not in file.filename or \
-       file.filename.rsplit('.', 1)[1].lower() not in ALLOWED_EXTENSIONS:
-        return False, "Invalid extension"
+        return False, "No file uploaded"
+    
+    # Check extension
+    filename = file.filename.lower()
+    if '.' not in filename or \
+       filename.rsplit('.', 1)[1] not in ALLOWED_EXTENSIONS:
+        return False, f"Invalid file type. Supported: {', '.join(ALLOWED_EXTENSIONS).upper()}"
+    
+    # Check size
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0) # Reset pointer
+    
+    if file_size > MAX_FILE_SIZE:
+        return False, f"File too large. Maximum size is 10MB (Current: {file_size / (1024*1024):.1f}MB)"
+        
     return True, "OK"
 
 def upload_image(file):

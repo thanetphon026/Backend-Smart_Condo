@@ -27,13 +27,24 @@ def ensure_indexes():
         parcels_col.create_index([("timestamp", -1)])
         parcels_col.create_index([("room_number", 1)])
         
-        # Knowledge Base (Vector/Text Search)
-        kb_col.create_index([
-            ("topic", "text"),
-            ("content", "text"),
-            ("tags", "text")
-        ])
-        
+        # Knowledge Base (Text Search)
+        # MongoDB only allows ONE text index. If a different one exists, we must drop it.
+        try:
+            # Check for existing text index
+            for index in kb_col.list_indexes():
+                if any(v == 'text' for v in index['key'].values()):
+                    if index['name'] != "rag_text_index":
+                        print(f"🗑️ Dropping old text index: {index['name']}")
+                        kb_col.drop_index(index['name'])
+            
+            kb_col.create_index([
+                ("topic", "text"),
+                ("content", "text"),
+                ("tags", "text")
+            ], name="rag_text_index", weights={"topic": 3, "content": 2, "tags": 1})
+        except Exception as ie:
+            print(f"⚠️ KB Index Note: {ie}")
+            
         print("✅ MongoDB Indexes ensured.")
     except Exception as e:
         print(f"⚠️ Failed to create indexes: {e}")
