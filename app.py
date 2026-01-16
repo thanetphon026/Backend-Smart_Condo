@@ -3625,10 +3625,7 @@ def web_chat_api():
 
 # process_web_complaint_image REMOVED
 
-        })
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+
 
 # ================= CHAT HISTORY API =================
 
