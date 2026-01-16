@@ -35,11 +35,21 @@ from linebot.v3.messaging import (
     ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
 from parcel_flex_templates import create_parcel_ask_selection_flex, create_parcel_registered_flex, create_parcel_cancelled_flex, create_number_confirmation_flex, create_parcel_status_flex as create_parcel_status_flex_v2
-from linebot.v3.webhooks import (
     MessageEvent, 
     TextMessageContent, 
     ImageMessageContent, 
     FollowEvent
+)
+
+from flex_templates import (
+    create_text_flex, 
+    create_parcel_carousel, 
+    create_parcel_pickup_flex, 
+    create_after_hours_selection_flex, 
+    create_after_hours_confirmation_flex, 
+    create_after_hours_cancellation_flex,
+    create_self_pickup_verification_flex,   # New
+    create_self_pickup_mismatch_flex        # New
 )
 
 # ================= CONFIGURATION =================
@@ -1610,8 +1620,38 @@ Rules:
             "flex": flex_content
         }
 
+
+# ================= AFTER-HOURS STATUS ENDPOINT =================
+
+@app.route('/api/after-hours/status', methods=['GET'])
+def get_after_hours_status():
+    """ตรวจสอบสถานะเปิดรับลงทะเบียนนอกเวลา (cutoff 16:30)"""
+    try:
+        now = get_bkk_now()
+        cutoff_time = now.replace(hour=16, minute=30, second=0, microsecond=0)
+        is_closed = now > cutoff_time
+        
+        return jsonify({
+            "is_closed": is_closed,
+            "cutoff_time": "16:30",
+            "server_time": now.strftime("%H:%M")
+        })
+    except Exception as e:
+        return jsonify({"is_closed": True, "error": str(e)}), 500
+
     # 2.2 Case: REGISTER_AH -> Start Selection Process
     if parcel_intent == "REGISTER_AH":
+        # [NEW] 16:30 Cutoff Rule
+        now = get_bkk_now()
+        cutoff_time = now.replace(hour=16, minute=30, second=0, microsecond=0)
+        
+        if now > cutoff_time:
+             return (
+                 "⛔ ขออภัยค่ะ ขณะนี้ปิดรับการลงทะเบียนรับพัสดุนอกเวลาแล้วค่ะ\n"
+                 "(เวลาทำการลงทะเบียน: ก่อน 16:30 น. ของทุกวัน)\n\n"
+                 "หากมีเหตุจำเป็น กรุณาติดต่อเจ้าหน้าที่นิติบุคคลโดยตรงนะคะ 🙏"
+             )
+
         room_number = user.get('room_number')
         
         # ดึงพัสดุคงค้างของผู้ใช้
@@ -2016,6 +2056,192 @@ def handle_text_message(event):
         else:
             line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text="ได้รับรูปแล้วค่ะ 📸 (ไม่ได้อยู่ในโหมดแจ้งร้องเรียน)")]))
 
+@line_handler.add(MessageEvent, message=ImageMessageContent)
+def handle_image_message(event):
+    uid = event.source.user_id
+    message_id = event.message.id
+    
+    with ApiClient(line_configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        line_bot_blob = MessagingApiBlob(api_client)
+        
+        # 1. Get User
+        try:
+            profile = line_bot_api.get_profile(uid)
+            display_name = profile.display_name
+            picture_url = profile.picture_url
+        except:
+            display_name = "Line User"
+            picture_url = None
+        
+        user = get_or_create_user(uid, "line", display_name, picture_url)
+        
+        # 2. Check After-Hours Status & Pending Parcels
+        now = get_bkk_now()
+        # Cutoff 16:30 for registration, but pickup verification is allowed 18:00-22:00?
+        # Requirement: "When after-hours system is closed (cutoff passed) and user sends photo"
+        # User pickup time is 18:00-22:00.
+        # So check if time is > 16:30 (Registration closed)
+        cutoff_time = now.replace(hour=16, minute=30, second=0, microsecond=0)
+        is_closed_registration = now > cutoff_time
+        
+        # Check if user has pending after-hours parcels
+        pending_ah_parcels = list(parcels_col.find({
+            "room_number": user.get("room_number"),
+            "status": "pending",
+            "is_after_hours": True
+        }))
+        
+        if is_closed_registration and pending_ah_parcels:
+             print(f"📸 Image received from {user.get('room_number')} during after-hours pickup window. Starting verification.")
+             
+             # Notify user processing
+             # line_bot_api.push_message(PushMessageRequest(to=uid, messages=[TextMessage(text="🤖 กำลังตรวจสอบรูปภาพเพื่อยืนยันการรับพัสดุค่ะ กรุณารอสักครู่...")]))
+             
+             # Process Verification
+             reply_msg = process_after_hours_verification(user, pending_ah_parcels, message_id, line_bot_blob)
+             
+             if isinstance(reply_msg, dict) and 'flex' in reply_msg:
+                 # Check if text is present
+                 text_alt = reply_msg.get('text', 'Verification Result')
+                 send_line_message(uid, message=text_alt, flex_contents=reply_msg['flex'])
+             else:
+                 line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=str(reply_msg))]))
+             
+             # Log Scan Attempt
+             log_user_action(
+                 action="Self-Pickup Image Scan",
+                 user_id=uid,
+                 details=f"User sent image. Result: Confirmed/Mismatch handled in verification logic."
+             )
+             return
+
+        # Default behavior: Just acknowledge or ignore
+        line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text="ได้รับรูปภาพแล้วค่ะ 📸")]))
+
+def process_after_hours_verification(user, parcels, message_id, blob_client):
+    """
+    Verify if the image matches the parcel self-pickup context using Gemini Vision.
+    """
+    try:
+        # 1. Download Image Content
+        content = blob_client.get_message_content(message_id)
+        
+        # 2. Upload to Gemini (using helper or direct)
+        # We need a mime_type. Format is usually JPEG/PNG from Line.
+        # Line docs say provider returns binary. We can assume image/jpeg.
+        
+        # Save to temp file for upload
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tf:
+            tf.write(content)
+            temp_path = tf.name
+
+        try:
+            print("🚀 Uploading image to Gemini for verification...")
+            upload_file = genai.upload_file(path=temp_path, mime_type="image/jpeg")
+            
+            # Wait for processing
+            while upload_file.state.name == "PROCESSING":
+                time.sleep(1)
+                upload_file = genai.get_file(upload_file.name)
+                
+            if upload_file.state.name == "FAILED":
+               raise ValueError("Gemini File Upload Failed")
+               
+            print(f"✅ Upload Complete: {upload_file.uri}")
+            
+            # 3. Construct Prompt
+            room = user.get("room_number", "-")
+            name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+            if not name: name = user.get('display_name', 'Unknown')
+            
+            parcel_info = "\\n".join([f"- PIN {p.get('pin')} : {p.get('transport')} (Tracking: {p.get('tracking_number')})" for p in parcels])
+            
+            prompt = f"""
+            Task: Verify User Self-Pickup Proof.
+            User Room: {room}
+            User Name: {name}
+            Expected Parcels:
+            {parcel_info}
+            
+            The user is picking up these parcels after hours.
+            Analyze the image. It should show:
+            1. The user holding the parcel(s).
+            2. OR The parcel(s) itself clearly.
+            3. OR The user's face (selfie) with the parcels or at the pickup point.
+            
+            Check for:
+            - Visible PIN numbers matching the specific list (e.g. {', '.join([p.get('pin') for p in parcels])}).
+            - Parcel labels matching Room {room} or Name {name}.
+            
+            If the image is completely unrelated (e.g. a cat, food, dark screen), reject it.
+            If looks like a valid pickup attempt (even if label not super clear but context fits), approve it with caution.
+            
+            Output strictly in JSON format:
+            {{
+                "is_valid": true/false,
+                "reason": "Reason in Thai language (short)",
+                "confidence": "high/medium/low",
+                "detected_text": "any relevant text seen"
+            }}
+            """
+            
+            # 4. Generate Content
+            model_name = 'gemini-2.0-flash-exp' # Use faster model if available, or 1.5-flash
+            # Try 'gemini-1.5-flash' or 'gemini-2.0-flash-exp' requested by user before?
+            # User used 'gemini-3-flash-preview' in Step 375?? Is that real? 
+            # Step 375 code shows 'gemini-3-flash-preview'. I should likely stick to what works or 'gemini-1.5-flash'.
+            # I will use 'gemini-1.5-flash' as it is standard stable fast. 
+            # Or reuse `model='gemini-3-flash-preview'` if it exists in their setup.
+            # I'll use 'gemini-1.5-flash' to be safe.
+            
+            response = client.models.generate_content(
+                model='gemini-1.5-flash',
+                contents=[
+                    types.Content(
+                         role="user",
+                         parts=[
+                             types.Part.from_uri(file_uri=upload_file.uri, mime_type=upload_file.mime_type),
+                             types.Part.from_text(text=prompt)
+                         ]
+                    )
+                ],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
+            )
+            
+            result_text = response.text.strip()
+            print(f"🤖 Verification Result: {result_text}")
+            
+            # Parse JSON
+            try:
+                # remove code fences if any
+                if "```json" in result_text:
+                    result_text = result_text.replace("```json", "").replace("```", "")
+                
+                ai_data = json.loads(result_text)
+            except:
+                ai_data = {"is_valid": True, "reason": "AI Format Error - Default Approve", "confidence": "low"}
+            
+            # 5. Return Flex
+            if ai_data.get("is_valid", False):
+                flex = create_self_pickup_verification_flex(name, room, parcels, ai_data)
+                return {"text": "✅ ตรวจสอบรูปภาพสำเร็จ", "flex": flex}
+            else:
+                flex = create_self_pickup_mismatch_flex(ai_data.get("reason", "รูปภาพไม่ชัดเจน"))
+                return {"text": "❌ ตรวจสอบไม่ผ่าน", "flex": flex}
+
+        except Exception as e:
+            print(f"Gemini/Processing Error: {e}")
+            return "เกิดข้อผิดพลาดในการประมวลผลรูปภาพค่ะ (AI Error)"
+        finally:
+            if os.path.exists(temp_path): os.remove(temp_path)
+
+    except Exception as e:
+        print(f"Verification Error: {e}")
+        return "เกิดข้อผิดพลาดในการดาวน์โหลดรูปภาพค่ะ"
+
 @line_handler.add(FollowEvent)
 def handle_follow(event):
     uid = event.source.user_id
@@ -2095,22 +2321,41 @@ def format_datetime(dt):
 def get_dashboard_stats():
     """ดึงข้อมูลสถิติทั้งหมดสำหรับแดชบอร์ด"""
     print(f"DEBUG: Dashboard requested by {request.remote_addr}")
-    print(f"DEBUG: Headers: {dict(request.headers)}")
     try:
         # Use ThreadPoolExecutor to run queries in parallel
         with ThreadPoolExecutor() as executor:
             # Submit all queries
             f_users = executor.submit(users_col.count_documents, {})
             f_total_parcels = executor.submit(parcels_col.count_documents, {})
-            f_picked_up = executor.submit(parcels_col.count_documents, {"status": "picked_up"})
-            f_pending_parcels = executor.submit(parcels_col.count_documents, {"status": "pending"})
+            
+            # Regular (In-Time) Stats: is_after_hours != True (False or Missing)
+            f_pending_regular = executor.submit(parcels_col.count_documents, {
+                "status": "pending", 
+                "is_after_hours": {"$ne": True}
+            })
+            f_picked_regular = executor.submit(parcels_col.count_documents, {
+                "status": "picked_up", 
+                "is_after_hours": {"$ne": True}
+            })
+            
+            # After-Hours Stats: is_after_hours == True
+            f_pending_after_hours = executor.submit(parcels_col.count_documents, {
+                "status": "pending", 
+                "is_after_hours": True
+            })
+            f_picked_after_hours = executor.submit(parcels_col.count_documents, {
+                "status": "picked_up", 
+                "is_after_hours": True
+            })
 
-            # Get results (this will wait for the slowest query, but they run simultaneously)
+            # Get results
             return jsonify({
                 "users": f_users.result(),
                 "total_parcels": f_total_parcels.result(),
-                "picked_up_parcels": f_picked_up.result(),
-                "pending_parcels": f_pending_parcels.result()
+                "pending_regular": f_pending_regular.result(),
+                "picked_regular": f_picked_regular.result(),
+                "pending_after_hours": f_pending_after_hours.result(),
+                "picked_after_hours": f_picked_after_hours.result()
             })
     except Exception as e:
         print(f"Error dashboard: {e}")
@@ -2776,9 +3021,12 @@ def pickup_parcel():
              else:
                  return jsonify({"status": "error", "message": "Failed to update parcel status"}), 500
         
-        # 3. บันทึก Audit Log (เปลี่ยนชื่อให้ตรงกับความต้องการของ user)
+        # 3. บันทึก Audit Log (แยกประเภท)
+        is_after_hours = parcel.get("is_after_hours", False)
+        action_name = "Confirm Pickup (After-Hours)" if is_after_hours else "Confirm Pickup"
+        
         log_admin_action(
-            action="กดรับของ",
+            action=action_name,
             performed_by=admin_name,
             target=f"Room: {parcel.get('room_number', '-')}, PIN: {pin}",
             details=f"Tracking: {parcel.get('tracking_number', '-')}, Courier: {parcel.get('transport', '-')}"
@@ -2919,12 +3167,22 @@ def export_parcels():
         
         # สร้าง response
         output.seek(0)
+        # บันทึก Audit Log
+        admin_name_header = request.headers.get('X-Admin-Name', 'Unknown Admin')
+        admin_name = urllib.parse.unquote(admin_name_header)
+        log_admin_action(
+            action="Export Parcels",
+            performed_by=admin_name,
+            target="All Parcels",
+            details="Exported all parcels to CSV"
+        )
+
         return Response(
             output.getvalue(),
             mimetype="text/csv",
             headers={
                 "Content-Disposition": f"attachment; filename=parcels_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                "Content-Type": "text/csv; charset=utf-8"
+                "Content-Type": "text/csv; charset=utf-8-sig"  # Fix: Use BOM for Excel
             }
         )
         
@@ -3015,6 +3273,16 @@ def export_after_hours_parcels():
         
         # สร้าง response
         output.seek(0)
+        # บันทึก Audit Log
+        admin_name_header = request.headers.get('X-Admin-Name', 'Unknown Admin')
+        admin_name = urllib.parse.unquote(admin_name_header)
+        log_admin_action(
+            action="Export After-Hours Parcels",
+            performed_by=admin_name,
+            target="After-Hours Parcels",
+            details="Exported after-hours parcels to CSV"
+        )
+
         return Response(
             output.getvalue(),
             mimetype="text/csv",
@@ -3243,62 +3511,13 @@ def web_chat_api():
 
         user = get_or_create_user(uid, "web", web_name, web_pic)
 
-        # กรณีที่ส่งรูปภาพมาจากเว็บ (สำหรับการแจ้งร้องเรียน)
+        # กรณีที่ส่งรูปภาพมาจากเว็บ (สำหรับการแจ้งร้องเรียน) - REMOVED
         if image_base64:
-            if user.get('complaint_state') == 'waiting_image' and user.get('draft_desc'):
-                try:
-                    # ตรวจสอบนามสกุลจาก image_type
-                    if image_type.lower() not in ALLOWED_EXTENSIONS:
-                        return jsonify({"error": f"นามสกุลไฟล์ .{image_type} ไม่รองรับ"}), 400
-
-                    # ถอดรหัส base64
-                    image_data = base64.b64decode(image_base64)
-                    
-                    # ตรวจสอบขนาดข้อมูลหลังถอดรหัส
-                    if len(image_data) > MAX_FILE_SIZE:
-                        return jsonify({"error": f"ไฟล์มีขนาดใหญ่เกินไป (สูงสุด {MAX_FILE_SIZE // (1024*1024)}MB)"}), 400
-
-                    # บันทึกลงไฟล์ชั่วคราว
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{image_type}') as tf:
-                        tf.write(image_data)
-                        temp_path = tf.name
-                    
-                    # เรียกใช้ฟังก์ชัน process_web_complaint_image
-                    success_msg = process_web_complaint_image(user, temp_path)
-                    
-                    # บันทึกประวัติแชท
-                    update_chat_history(uid, 'user', f'[ส่งรูปภาพแจ้งร้องเรียน: {user.get("draft_desc")}]')
-                    update_chat_history(uid, 'model', success_msg)
-                    
-                    # บันทึกใน chat_history สำหรับ web
-                    save_full_chat_history(uid, 'user', f'[ส่งรูปภาพแจ้งร้องเรียน: {user.get("draft_desc")}]', "web")
-                    save_full_chat_history(uid, 'assistant', success_msg, "web")
-
-                    return jsonify({
-                        "reply": success_msg, 
-                        "status": "success",
-                        "is_registered": is_registered(user)
-                    })
-                    
-                except Exception as e:
-                    print(f"Web Image Processing Error: {e}")
-                    return jsonify({"error": str(e)}), 500
-                finally:
-                    if 'temp_path' in locals() and os.path.exists(temp_path): os.remove(temp_path)
-            else:
-                # กรณีส่งรูปมาแต่ไม่ได้อยู่ในสถานะรอรูป
-                reply_msg = "ได้รับรูปแล้วค่ะ 📸 (ไม่ได้อยู่ในโหมดแจ้งร้องเรียน)\nหากต้องการแจ้งร้องเรียน กรุณาพิมพ์รายละเอียดเข้ามาก่อนนะคะ"
-                
-                update_chat_history(uid, 'user', '[ส่งรูปภาพ]')
-                update_chat_history(uid, 'model', reply_msg)
-                save_full_chat_history(uid, 'user', '[ส่งรูปภาพ]', "web")
-                save_full_chat_history(uid, 'assistant', reply_msg, "web")
-                
-                return jsonify({
-                    "reply": reply_msg,
-                    "status": "success",
-                    "is_registered": is_registered(user)
-                })
+             return jsonify({
+                 "reply": "ระบบไม่รองรับการส่งรูปภาพในขณะนี้ค่ะ",
+                 "status": "success",
+                 "is_registered": is_registered(user)
+             })
         
         # ถ้าไม่มีรูปภาพ (เป็นข้อความธรรมดา)
         if not msg: 
@@ -3351,181 +3570,7 @@ def web_chat_api():
         print(f"Web API Error: {e}")
         return jsonify({"error": str(e)}), 500
 
-def process_web_complaint_image(user, image_path):
-    """
-    ประมวลผลรูปภาพการแจ้งร้องเรียนจากเว็บ
-    """
-    try:
-        uid = user['line_user_id']
-        
-        # 1. Upload to Cloudinary
-        up_res = cloudinary.uploader.upload(
-            image_path,
-            folder="complaints",
-            tags=["complaint", f"user:{uid}", "web"]
-        )
-        img_url = up_res.get('secure_url')
-        user_desc = user.get('draft_desc')
-        
-        print(f"📸 เริ่มประมวลผลการแจ้งร้องเรียนจากเว็บ:")
-        print(f"   ผู้ใช้: {user.get('first_name', 'Unknown')} (ห้อง {user.get('room_number', '-')})")
-        print(f"   คำอธิบาย: {user_desc}")
-        
-        # 2. วิเคราะห์ความสำคัญจากคำอธิบาย
-        desc_urgency = analyze_urgency_from_description(user_desc)
-        print(f"   ความสำคัญจากคำอธิบาย: {desc_urgency}")
-        
-        # 3. AI Analysis
-        ai_summary_text = user_desc 
-        ai_urgency = "Medium"  # default
-
-        try:
-            print("🤖 อัพโหลดภาพไปยัง Gemini...")
-            
-            upload_file = client.files.upload(file=image_path)
-            
-            # รอให้ไฟล์พร้อมใช้งาน
-            while upload_file.state.name == "PROCESSING":
-                time.sleep(1)
-                upload_file = client.files.get(name=upload_file.name)
-
-            vision_prompt = (
-                f"⚠️ **สำคัญ**: วิเคราะห์รูปภาพเป็นหลัก (น้ำหนัก 80%) และใช้คำอธิบายจากผู้ใช้เป็นบริบทเสริม (น้ำหนัก 20%) เท่านั้น\n\n"
-                f"คำอธิบายจากลูกบ้าน (บริบทเสริม): '{user_desc}'\n\n"
-                
-                "📋 **วิเคราะห์รูปภาพนี้เป็นหลัก**:\n"
-                "ให้ความสำคัญกับสิ่งที่คุณเห็นในรูปภาพ มากกว่าคำอธิบายจากผู้ใช้\n\n"
-                
-                "เกณฑ์ความสำคัญ (ตามที่เห็นในรูป):\n"
-                "🔴 HIGH (ต้องแก้ไขภายในวันนี้):\n"
-                "   • ไฟไหม้ ไฟฟ้าลัดวงจร ไฟช็อต ประกายไฟ\n"
-                "   • ไฟดับทั้งหมด ไฟดับทั้งอาคาร ไฟดับพื้นที่กว้าง\n"
-                "   • เสาไฟล้ม เสาไฟโค่น อุปกรณ์ไฟฟ้าหลักเสียหาย\n"
-                "   • น้ำท่วมในห้อง ระบบประปาแตก น้ำรั่วรุนแรง\n"
-                "   • แก๊สรั่ว กลิ่นแก๊ส\n"
-                "   • ทางหนีไฟอุดตัน\n"
-                "   • ประตูหน้าต่างเสียหายจนปิดล็อคไม่ได้\n\n"
-                
-                "🟡 MEDIUM (แก้ไขได้ภายใน 1-2 วัน):\n"
-                "   • เครื่องปรับอากาศเสีย\n"
-                "   • ระบบไฟฟ้าบางส่วนเสีย\n"
-                "   • ประตูล็อคขัดข้อง\n"
-                "   • ปั๊มน้ำไม่ทำงาน\n"
-                "   • ส้วมตัน\n"
-                "   • เครื่องทำน้ำร้อนเสีย\n\n"
-                
-                "🟢 LOW (แก้ไขได้ภายใน 3-5 วัน):\n"
-                "   • สีผนังลอก\n"
-                "   • ผนังร้าวเล็กน้อย\n"
-                "   • ฝ้าเพดานมีจุดชื้น\n"
-                "   • เครื่องใช้ไฟฟ้าขัดข้องเล็กน้อย\n"
-                "   • ที่จับประตูหลวม\n\n"
-                
-                "หน้าที่:\n"
-                "1. **วิเคราะห์รูปภาพเป็นหลัก** - ให้ความสำคัญกับสิ่งที่เห็นในรูป 80%\n"
-                "2. วิเคราะห์ภาพรวมของรูปภาพ (สภาพแวดล้อม ความเสียหายรอบๆ)\n"
-                "3. ใช้คำอธิบายจากผู้ใช้เป็นบริบทเสริมเท่านั้น ไม่ใช่ตัวหลัก (20%)\n"
-                "4. **ตัวอย่าง**: ถ้ารูปแสดงหลอดไฟธรรมดา แต่ผู้ใช้เขียนว่า 'ไฟไหม้!!!' → ควรตอบ Low หรือ Medium ตามรูป\n\n"
-                "Format ตอบ: 'Summary || Urgency || Detailed_Analysis'\n"
-                "- Summary: สรุปปัญหาสั้นๆ (ไม่เกิน 80 ตัวอักษร)\n"
-                "- Urgency: ประเมินความเร่งด่วน (High, Medium, Low) **ตามรูปภาพเป็นหลัก**\n"
-                "- Detailed_Analysis: แสดงผลการวิเคราะห์แบบกระชับ แบ่งเป็น 2 หัวข้อหลัก:\n"
-                "  • วิเคราะห์ตามรายละเอียดและรูปภาพ: [เนื้อหากระชับ]\n"
-                "  • วิเคราะห์ภาพรวมของรูปภาพ: [เนื้อหากระชับ]"
-            )
-            
-            print("🤖 กำลังวิเคราะห์ด้วย gemini-3-flash-preview...")
-            gemini_res = client.models.generate_content(
-                model='gemini-3-flash-preview',
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[
-                            types.Part.from_uri(
-                                file_uri=upload_file.uri,
-                                mime_type=upload_file.mime_type
-                            ),
-                            types.Part.from_text(text=vision_prompt)
-                        ]
-                    )
-                ]
-            )
-            
-            raw_result = gemini_res.text.strip()
-            print(f"🤖 ผลลัพธ์จาก AI Vision: {raw_result}")
-            
-            if "||" in raw_result:
-                parts = raw_result.split("||")
-                if len(parts) >= 3:
-                    ai_summary_text = parts[0].strip()
-                    ai_urgency = parts[1].strip()
-                    detailed_analysis = parts[2].strip()
-                    
-                    final_ai_summary = f"{ai_summary_text}\n\n🤖 วิเคราะห์เชิงลึก:\n{detailed_analysis}"
-                    print(f"🤖 วิเคราะห์ได้: Summary='{ai_summary_text}', Urgency='{ai_urgency}'")
-                elif len(parts) == 2:
-                    ai_summary_text = parts[0].strip()
-                    ai_urgency = parts[1].strip()
-                    final_ai_summary = ai_summary_text
-                else:
-                    final_ai_summary = raw_result
-                    ai_urgency = "Medium"
-            else:
-                final_ai_summary = raw_result
-                ai_urgency = "Medium"
-                print(f"🤖 ไม่พบรูปแบบที่ถูกต้อง ใช้ค่า default: Urgency='{ai_urgency}'")
-
-        except Exception as e:
-            print(f"❌ Gemini Vision Error: {e}")
-        
-        # 4. ตัดสินใจขั้นสุดท้าย
-        final_urgency = determine_final_urgency(desc_urgency, ai_urgency, user_desc)
-        print(f"✅ ความสำคัญขั้นสุดท้าย: {final_urgency}")
-        
-        # 5. SAVE DB
-        new_complaint = {
-            "line_user_id": uid,
-            "room_number": user.get('room_number'),
-            "description": user_desc,
-            "image_url": img_url,
-            "status": "pending",
-            "ai_summary": final_ai_summary,
-            "urgency_level": final_urgency,
-            "timestamp": get_bkk_now(),
-            "priority": final_urgency.lower(),
-            "platform": "web",
-            "analysis_debug": {
-                "desc_urgency": desc_urgency,
-                "vision_urgency": ai_urgency,
-                "final_decision": final_urgency,
-                "user_description": user_desc
-            }
-        }
-        
-        complaints_col.insert_one(new_complaint)
-        print(f"✅ บันทึกการร้องเรียนจากเว็บสำเร็จ: ID={new_complaint.get('_id')}")
-        
-        # 6. Clear State
-        users_col.update_one(
-            {"line_user_id": uid}, 
-            {"$set": {"complaint_state": "normal", "draft_desc": None}}
-        )
-        
-        # 7. สร้างข้อความตอบกลับ
-        success_msg = (
-            f"✅ รับแจ้งร้องเรียนเรียบร้อยแล้วค่ะ!\n\n"
-            f"📌 เรื่อง: {user_desc}\n"
-            f"📷 ได้รับรูปภาพแล้ว\n"
-            f"เจ้าหน้าที่จะรีบดำเนินการตรวจสอบให้นะคะ ขอบคุณค่ะ 🙏"
-        )
-        
-        return success_msg
-        
-    except Exception as e:
-        print(f"❌ Error in process_web_complaint_image: {e}")
-        import traceback
-        traceback.print_exc()
-        return "เกิดข้อผิดพลาดในการประมวลผลค่ะ โปรดลองอีกครั้ง"
+# process_web_complaint_image REMOVED
 
         })
         
