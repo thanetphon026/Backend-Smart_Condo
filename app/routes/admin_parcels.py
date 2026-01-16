@@ -13,7 +13,12 @@ import secrets
 parcels_bp = Blueprint('parcels', __name__)
 
 def generate_pin():
-    return secrets.randbelow(90000) + 10000 
+    """Generate a 5-digit PIN that is unique among all 'pending' parcels."""
+    while True:
+        pin = secrets.randbelow(90000) + 10000
+        # Check if this PIN is already in use by a pending parcel
+        if not parcels_col.find_one({"pin": pin, "status": "pending"}):
+            return pin
 
 @parcels_bp.route('/api/admin/parcels', methods=['GET'])
 def get_parcels():
@@ -299,7 +304,11 @@ def create_parcel():
         log_audit("Add Parcel", admin_name, target=f"Room {new_parcel['room_number']}", details=f"PIN: {pin}")
         
         new_parcel['_id'] = str(new_parcel['_id'])
-        return jsonify({"status": "success", "data": new_parcel})
+        return jsonify({
+            "status": "saved", 
+            "pin": pin,
+            "data": new_parcel
+        })
         
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
