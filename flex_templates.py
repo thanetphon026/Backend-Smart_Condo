@@ -1711,3 +1711,164 @@ def create_complaint_received_flex(description, image_url, priority, room):
         }
     
     return bubble
+
+def create_self_pickup_verification_flex(name, room, parcels, ai_data):
+    """
+    Create a Flex Message for confirming self-pickup verification.
+    """
+    parcel_items = []
+    for p in parcels:
+        parcel_items.append({
+            "type": "box",
+            "layout": "baseline",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"📦 PIN {p.get('pin')}",
+                    "weight": "bold",
+                    "size": "sm",
+                    "color": "#1a237e",
+                    "flex": 0
+                },
+                {
+                    "type": "text",
+                    "text": f"{p.get('transport', '-')}",
+                    "size": "sm",
+                    "color": "#666666",
+                    "wrap": True
+                }
+            ]
+        })
+
+    bubble = {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "✅ ตรวจสอบรูปภาพสำเร็จ",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#06c755"
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"ห้อง {room} - {name}",
+                    "size": "md",
+                    "weight": "bold",
+                    "wrap": True
+                },
+                {
+                    "type": "separator",
+                    "margin": "sm"
+                },
+                {
+                    "type": "text",
+                    "text": "รายการพัสดุ:",
+                    "size": "sm",
+                    "color": "#aaaaaa",
+                    "margin": "md"
+                },
+                *parcel_items,
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#f8f9fa",
+                    "paddingAll": "10px",
+                    "margin": "md",
+                    "cornerRadius": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"เหตุผล: {ai_data.get('reason', 'ตรวจสอบผ่านจากรูปภาพ')}",
+                            "size": "sm",
+                            "color": "#333333",
+                            "wrap": True
+                        }
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "horizontal",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "height": "sm",
+                    "color": "#06c755",
+                    "action": {
+                        "type": "postback",
+                        "label": "ยืนยันรับของแล้ว",
+                        "data": "action=confirm_self_pickup"
+                    }
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "color": "#efefef",
+                    "action": {
+                        "type": "postback",
+                        "label": "ยกเลิก",
+                        "data": "action=cancel_self_pickup"
+                    }
+                }
+            ]
+        }
+    }
+    return bubble
+
+def create_self_pickup_mismatch_flex(reason):
+    """
+    Create a Flex Message for a mismatch in self-pickup verification.
+    """
+    bubble = {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "❌ ตรวจสอบไม่ผ่าน",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#ff334b"
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"ขออภัยค่ะ {reason}",
+                    "size": "md",
+                    "wrap": True
+                },
+                {
+                    "type": "text",
+                    "text": "กรุณาตรวจสอบหน้าพัสดุและถ่ายรูปใหม่อีกครั้งให้ชัดเจนนะคะ",
+                    "size": "sm",
+                    "color": "#666666",
+                    "wrap": True
+                }
+            ]
+        }
+    }
+    return bubble
