@@ -537,7 +537,7 @@ def extract_keywords(user_text):
             "ตัดคำขยายหรือคำฟุ่มเฟือยออก ตอบเฉพาะคำหลักคั่นด้วยช่องว่างเท่านั้น"
         )
         keyword_res = client.models.generate_content(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash-exp',
             contents=analysis_prompt
         )
         return keyword_res.text.strip().split()
@@ -684,7 +684,7 @@ def analyze_intent(text):
         )
         
         response = client.models.generate_content(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash-exp',
             contents=prompt
         )
         intent_result = response.text.strip().upper()
@@ -873,7 +873,7 @@ Rules:
 """
 
         response = client.models.generate_content(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash-exp',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -986,7 +986,7 @@ Rules:
 """
 
         response = client.models.generate_content(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash-exp',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1055,7 +1055,7 @@ Rules:
 """
 
         response = client.models.generate_content(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash-exp',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1114,7 +1114,7 @@ Text: "3 4" -> {{"indices": [3, 4]}}
 """
 
         response = client.models.generate_content(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash-exp',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1157,7 +1157,7 @@ def detect_after_hours_intent_ai(text):
         )
         
         response = client.models.generate_content(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash-exp',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1228,7 +1228,7 @@ Rules:
 """
 
         response = client.models.generate_content(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash-exp',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1348,7 +1348,7 @@ Rules:
 """
             
             response = client.models.generate_content(
-                model='gemini-3-flash-preview',
+                model='gemini-2.0-flash-exp',
                 contents=confirmation_prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json"
@@ -1928,7 +1928,7 @@ Rules:
     history = get_gemini_chat_history(uid)
     try:
         chat = client.chats.create(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash-exp',
             config=types.GenerateContentConfig(system_instruction=CHAT_SYSTEM_PROMPT),
             history=history
         )
@@ -2141,7 +2141,7 @@ def verify_self_pickup_image(user, parcels, image_path):
         
         # Generate Content
         response = client.models.generate_content(
-            model='gemini-3-flash-preview',
+            model='gemini-2.0-flash-exp',
             contents=[
                 types.Content(
                      role="user",
@@ -2770,7 +2770,7 @@ def scan_parcel_api():
         """
         
         gemini_res = client.models.generate_content(
-            model='gemini-3-flash-preview', # Use fast model for OCR
+            model='gemini-2.0-flash-exp', # Use fast model for OCR
             contents=[
                 types.Content(
                     role="user",
