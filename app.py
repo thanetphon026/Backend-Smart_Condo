@@ -1054,7 +1054,9 @@ Rules:
             model='gemini-3-flash-preview',
             contents=prompt,
             config=types.GenerateContentConfig(
-                response_mime_type="application/json"
+                response_mime_type="application/json",
+                temperature=0.1,  # Lower temperature for more consistent intent classification
+                max_output_tokens=200  # Limit output for faster response
             )
         )
         
@@ -1075,11 +1077,21 @@ Rules:
         
     except Exception as e:
         print(f"❌ Intent Analysis Error: {e}")
-        # Fallback keyword matching
+        # Expanded fallback keyword matching for better coverage
         text_lower = text.lower()
-        if any(kw in text_lower for kw in ["นอกเวลา", "after"]):
+        
+        # After-hours registration keywords
+        register_kw = ["นอกเวลา", "after", "ลงทะเบียน", "รับนอก", "after-hours"]
+        if any(kw in text_lower for kw in register_kw):
             return "REGISTER_AH", []
-        if any(kw in text_lower for kw in ["เช็ค", "ตรวจสอบ", "มีของ", "ดูรายการ"]):
+        
+        # Status check keywords (expanded)
+        check_kw = [
+            "เช็ค", "ตรวจสอบ", "มีของ", "ดูรายการ",
+            "พัสดุ", "parcel", "ของ", "ค้าง", "มี",
+            "รายการ", "status", "check", "ดู"
+        ]
+        if any(kw in text_lower for kw in check_kw):
             return "CHECK_STATUS", []
         
         return "NO", []
@@ -1567,7 +1579,21 @@ Rules:
             return "❌ เกิดข้อผิดพลาดค่ะ กรุณาลองใหม่อีกครั้ง"
     
     # 2. Parcel Intent Analysis (Register AH / Check Status)
-    parcel_intent, target_pins = analyze_parcel_intent(text)
+    # Fast path - keyword detection without AI for common queries (performance optimization)
+    text_lower = text.lower()
+    parcel_keywords = ["พัสดุ", "parcel", "ของ", "ของฝาก"]
+    check_keywords = ["เช็ค", "ตรวจสอบ", "มี", "ค้าง", "ดู", "รายการ", "status", "check"]
+    register_keywords = ["รับนอกเวลา", "ลงทะเบียน", "นอกเวลา", "after hours", "after-hours"]
+    
+    # Fast match for parcel status check
+    if any(pk in text_lower for pk in parcel_keywords) and any(ck in text_lower for ck in check_keywords):
+        parcel_intent, target_pins = "CHECK_STATUS", []
+    # Fast match for after-hours registration
+    elif any(rk in text_lower for rk in register_keywords):
+        parcel_intent, target_pins = "REGISTER_AH", []
+    else:
+        # Use AI analysis for ambiguous cases (maintains AI intent analysis)
+        parcel_intent, target_pins = analyze_parcel_intent(text)
     
     # 2.1 Case: CHECK_STATUS -> Show Green Flex Card (No database update)
     if parcel_intent == "CHECK_STATUS":
@@ -1832,30 +1858,37 @@ Rules:
         }
 
     # ================= AI Processing =================
-    # ถ้าไม่ match case ใดเลย ให้ใช้ AI ตอบ
+    # Balanced approach: AI accuracy + Performance optimization
     
-    # ดึง Intent และ Context พร้อมกันเพื่อลดเวลา (Parallel)
-    with ThreadPoolExecutor() as executor:
-        # 1. วิเคราะห์เจตนา (พร้อม Cache)
+    # Use parallel execution for speed (AI + RAG simultaneously)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        # 1. AI Intent Analysis (for accuracy)
         intent_future = executor.submit(analyze_intent, text)
         
-        # 2. ดึงความรู้ (RAG) ถ้าไม่ใช่การทักทายสั้นๆ
-        greeting_words = ["สวัสดี", "หวัดดี", "hello", "hi", "สวัสดีค่ะ", "สวัสดีครับ", "ดี", "ดีจ้า"]
+        # 2. RAG Context (for accuracy)
+        greeting_words = ["สวัสดี", "หวัดดี", "hello", "hi", "สวัสดีค่ะ", "สวัสดีครับ"]
         is_simple_greeting = text.strip().lower() in [g.lower() for g in greeting_words]
         
-        rag_context = ""
         if not is_simple_greeting:
+            # Use RAG for non-greetings (for contextual accuracy)
             context_future = executor.submit(get_knowledge_context, text, user)
         else:
             context_future = None
-
-        intent = intent_future.result()
-
-    # ================= ENHANCED CANCELLATION LOGIC (from AI intent) =================
+        
+        # Wait for AI intent (should be fast with optimized model)
+        try:
+            intent = intent_future.result(timeout=3)  # 3 second timeout
+        except:
+            # Fallback to keyword detection
+            text_lower = text.lower()
+            if any(kw in text_lower for kw in ["ยกเลิก", "cancel", "หยุด"]):
+                intent = "CANCEL"
+            else:
+                intent = "CHAT"
+    
+    # Handle cancellation intent
     if intent == "CANCEL":
-        # Check context: are we in a process?
         if after_hours_state == 'selecting':
-            # Cancel parcel selection
             users_col.update_one(
                 {"line_user_id": uid},
                 {"$set": {
@@ -1866,30 +1899,38 @@ Rules:
             )
             return "❌ ยกเลิกการลงทะเบียนรับพัสดุนอกเวลาเรียบร้อยค่ะ"
         else:
-            # Not in any process
             return (
                 "ขณะนี้คุณไม่ได้อยู่ในกระบวนการใดๆ ค่ะ \n"
                 "(ลงทะเบียนรับพัสดุนอกเวลา)\n\n"
                 "หากต้องการความช่วยเหลือ สามารถพิมพ์คำถามได้เลยค่ะ 😊"
             )
-
-    # ตรวจสอบ RAG Context ที่ดึงมาแบบ Parallel
-    if context_future:
-        rag_result = context_future.result()
-        context_msg = f"\n[Context]:\n{rag_result}\n" if rag_result else ""
-    else:
-        # สำหรับคำทักทาย ใช้ข้อมูลส่วนตัวเบื้องต้น
-        context_msg = f"\n[Context]:\nผู้ใช้งาน: {user.get('first_name', 'ลูกบ้าน')} {user.get('last_name', '')} (ห้อง {user.get('room_number', 'ไม่ระบุ')})\n"
     
+    # Get RAG context with timeout
+    if context_future:
+        try:
+            rag_result = context_future.result(timeout=3)  # 3 second timeout
+            context_msg = f"\n[Context]:\n{rag_result}\n" if rag_result else ""
+        except:
+            # Fallback to basic context if RAG times out
+            context_msg = f"\n[Context]:\nผู้ใช้: {user.get('first_name', '')} (ห้อง {user.get('room_number', '-')})\n"
+    else:
+        # Simple greeting context
+        context_msg = f"\n[Context]:\nผู้ใช้: {user.get('first_name', 'ลูกบ้าน')} {user.get('last_name', '')} (ห้อง {user.get('room_number', 'ไม่ระบุ')})\n"
+    
+    # Final Gemini chat with optimized model
     history = get_gemini_chat_history(uid)
     try:
         chat = client.chats.create(
-            model='gemini-3-flash-preview',
-            config=types.GenerateContentConfig(system_instruction=CHAT_SYSTEM_PROMPT),
+            model='gemini-3-flash-preview',  # Faster model
+            config=types.GenerateContentConfig(
+                system_instruction=CHAT_SYSTEM_PROMPT,
+                temperature=0.7,
+                max_output_tokens=500
+            ),
             history=history
         )
         res = chat.send_message(f"{text}\n{context_msg}")
-        return res.text.strip() # Handler will auto-wrap this in Text Flex
+        return res.text.strip()
     except Exception as e:
         print(f"Chat Error: {e}")
         return "ขออภัย ระบบขัดข้องชั่วคราวค่ะ"
