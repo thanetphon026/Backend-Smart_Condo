@@ -2498,42 +2498,7 @@ def get_all_users():
 
 # ================= Complaints API =================
 
-# ================= Complaints API (REMOVED) =================
-# All complaint functionality has been removed.           items.sort(key=lambda x: (
-                -get_priority_score(x.get('priority', 'medium')),
-                -(x.get('timestamp', datetime.datetime.min).timestamp())
-            ))
 
-        result = []
-        for c in items:
-            # หาข้อมูลผู้ใช้เพิ่มเติม
-            user = users_col.find_one({"line_user_id": c.get("line_user_id")})
-            
-            # แปลง priority เป็นภาษาไทยสำหรับแสดงผล
-            priority_th = {
-                "high": "สูง (ต้องแก้ไขวันนี้)",
-                "medium": "กลาง (แก้ไข 1-2 วัน)",
-                "low": "ต่ำ (แก้ไข 3-5 วัน)"
-            }.get(c.get("priority", "medium"), c.get("priority", "medium"))
-            
-            result.append({
-                "id": str(c.get('_id')),
-                "room_number": c.get("room_number", "-"),
-                "description": c.get("description", "-"),
-                "summary": c.get("ai_summary", "-"),
-                "status": c.get("status", "pending"),
-                "priority": c.get("priority", "medium"),
-                "priority_th": priority_th,
-                "timestamp": format_datetime(c.get("timestamp")),
-                "image_url": c.get("image_url", ""),
-                "display_name": user.get("display_name", "-") if user else "-",
-                "first_name": user.get("first_name", "") if user else "",
-                "last_name": user.get("last_name", "") if user else "",
-                "urgency_level": c.get("urgency_level", "Medium")
-            })
-        return jsonify({"items": result})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 # ================= PARCELS ENDPOINT =================
 
