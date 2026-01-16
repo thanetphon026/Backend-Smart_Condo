@@ -982,7 +982,7 @@ Rules:
 """
 
         response = client.models.generate_content(
-            model='gemini-3-flash-preview'',
+            model='gemini-3-flash-preview',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1153,7 +1153,7 @@ def detect_after_hours_intent_ai(text):
         )
         
         response = client.models.generate_content(
-            model='gemini-3-flash-preview'',
+            model='gemini-3-flash-preview',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1304,7 +1304,7 @@ Rules:
 """
             
             response = client.models.generate_content(
-                model='gemini-3-flash-preview'',
+                model='gemini-3-flash-preview',
                 contents=confirmation_prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json"
@@ -2097,7 +2097,7 @@ def verify_self_pickup_image(user, parcels, image_path):
         
         # Generate Content
         response = client.models.generate_content(
-            model='gemini-3-flash-preview'',
+            model='gemini-3-flash-preview',
             contents=[
                 types.Content(
                      role="user",
