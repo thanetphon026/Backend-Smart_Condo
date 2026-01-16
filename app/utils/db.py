@@ -21,7 +21,7 @@ def ensure_indexes():
         
         # Parcels
         parcels_col.create_index([("tracking_number", 1)])
-        parcels_col.create_index([("pin", 1)])
+        parcels_col.create_index([("pin", 1)], unique=True)
         parcels_col.create_index([("status", 1)])
         parcels_col.create_index([("is_after_hours", 1)])
         parcels_col.create_index([("timestamp", -1)])
