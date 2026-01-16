@@ -89,27 +89,25 @@ def analyze_parcel_label(image_data):
 
         Fields to extract:
         1. Recipient Name (ชื่อผู้รับ):
-           - Look for the text after "ผู้รับ (TO)" or just "TO".
+           - Look for the text after "ผู้รับ (TO)" or "TO".
+           - IMPORTANT: If a room number or house number (e.g., 28/548) is appended to the name, STRIP IT OUT and place it in the unit_number field.
            - Extract the full name strictly in Thai (or English if Thai is absent).
-           - Ignore titles like "คุณ" if possible, but keep the name complete.
+           - Ignore titles like "คุณ".
 
         2. House/Room Number (เลขห้อง/เลขที่บ้าน):
-           - Look at the address section under the Recipient Name.
-           - Extract the primary house or unit number, which usually contains digits and a slash (e.g., 28/548, 222/1, 730/541).
-           - Do NOT extract the postal code here.
+           - Can be found: 1) Appended to name, 2) In address, 3) Floating near the top/right corner.
+           - Usually contains a slash (/) e.g., 123/45, 9/123.
+           - STRIP labels like "แขวง", "เขต", "จ.", "ถ." or "จังหวัด". Do NOT include the provincial/district address parts here.
+           - Only extract the unit identifying number.
 
         3. Tracking Number (รหัสขนส่ง):
-           - Look for the barcode number labelled as "TH..." or under the main barcode.
-           - For Shopee Xpress (SPX), it usually starts with "TH".
-           - Do NOT confuse it with "Shopee Order No." (which is different).
-           - Example format: TH2654310236651.
-
+           - Barcode number starting with "TH", "7C", etc., or under the main barcode.
+        
         4. Logistics Company (บริษัทขนส่ง):
-           - Identify the logo or text at the top header (e.g., SPX Express, Kerry, J&T, Flash).
-           - In these images, it is likely "SPX Express".
+           - Identify from logo/header (SPX, Flash, J&T, Kerry, Post).
 
         Output Format:
-        Return the result strictly in JSON format as follows:
+        Return ONLY valid JSON:
         {
           "recipient_name": "Recipient Name",
           "room_number": "Unit/Room Number",
@@ -118,7 +116,7 @@ def analyze_parcel_label(image_data):
           "is_label": true
         }
         
-        If the image is NOT a parcel label, set "is_label" to false and other fields to "N/A".
+        If not a label, set "is_label": false.
         """
         
         # New Google GenAI SDK (v1) expects specific structures or Part objects

@@ -142,6 +142,32 @@ def scan_parcel():
         file_bytes = file.read() 
         ai_data = analyze_parcel_label(file_bytes) or {}
         
+        # Suggested User Lookup
+        suggested_user = None
+        extracted_room = ai_data.get('room_number')
+        extracted_name = ai_data.get('recipient_name')
+        
+        if extracted_room and extracted_room != "N/A":
+             suggested_user = users_col.find_one({"room_number": extracted_room})
+        
+        if not suggested_user and extracted_name and extracted_name != "N/A":
+             # Fuzzy name search (strip space/คุณ)
+             search_name = extracted_name.replace(" ", "").replace("คุณ", "")
+             # Find by first_name or last_name partial match
+             suggested_user = users_col.find_one({
+                 "$or": [
+                     {"first_name": {"$regex": search_name, "$options": "i"}},
+                     {"last_name": {"$regex": search_name, "$options": "i"}},
+                     {"display_name": {"$regex": search_name, "$options": "i"}}
+                 ]
+             })
+             
+        if suggested_user:
+             ai_data['suggested_user'] = {
+                 "room_number": suggested_user.get('room_number'),
+                 "name": f"{suggested_user.get('first_name','')} {suggested_user.get('last_name','')}".strip() or suggested_user.get('display_name')
+             }
+        
         return jsonify({
             "status": "success", 
             "data": ai_data, 
