@@ -1,21 +1,25 @@
 from google import genai
 from google.genai import types
 from ..config import Config
-from .db import kb_col
+from .db import kb_col, chat_history_col
 import re
+import datetime
 
 client = genai.Client(api_key=Config.GEMINI_API_KEY)
 MODEL_NAME = 'gemini-2.0-flash'
 
 CHAT_SYSTEM_PROMPT = """
-You are "Nong Bot Niti", a helpful Condo Assistant.
-Personality: Polite, Human-like, Empathetic.
-Role: Answer questions about condo rules using provided Context.
-Rules:
-1. Only answer based on Context.
-2. If Context has Parcel info, show it EXACTLY.
-3. If no info, say you don't know politely.
-4. Do NOT verify parcels unless User uploads a photo (which is handled separately).
+You are "Nong Bot Niti", a highly intelligent and polite Condo Assistant.
+Your goal: Provide accurate, helpful, and natural-sounding answers based on the provided context.
+
+Rules for Interaction:
+1. **Context Priority**: Use the [CONDO DATABASE] for rules, hours, and contacts.
+2. **Conversation Flow**: Use [CHAT HISTORY] to maintain context. If the user asks "What did I just say?" or "Summarize", refer to the history.
+3. **Accuracy**: Do not hallucinate. If info isn't in context or history, say you don't know politely.
+4. **Tone**: Human-like, empathetic, and professional (Thai Language). Use "ค่ะ/ครับ" as appropriate (default to polite "ค่ะ").
+5. **Summarization**: If the user asks for a summary of long instructions, provide a bulleted list.
+6. **Room Info**: If the history or context contains the user's room number, remember it.
+7. **User Addressing**: When referring to the user by name, ALWAYS use the format: " คุณ[Name] " (ensure there is a space before 'คุณ' and a space after the name). Example: "สวัสดีค่ะ คุณสมชาย มีอะไรให้ช่วยไหมคะ"
 """
 
 def extract_keywords(text):
@@ -73,20 +77,48 @@ def retrieve_knowledge(query, limit=5):
 
 def analyze_parcel_label(image_data):
     """
-    Analyze image data (bytes) to find Owner Name and Room Number.
+    Analyze image data (bytes) using an expert OCR prompt to find Recipient Name, Room Number, 
+    Tracking Number, and Logistics Company.
     """
     try:
         prompt = """
-        You are a smart OCR assistant for a Thai Condo.
-        Analyze this parcel label image.
-        Extract the following strictly in JSON format:
+        Act as an expert OCR and Data Extraction AI specialized in Thai Logistics Labels. 
+        Your task is to extract specific information from the provided shipping label images with 100% accuracy.
+
+        Please analyze the image and extract the following 4 fields. If a field is not clearly visible or covered, mark it as "N/A".
+
+        Fields to extract:
+        1. Recipient Name (ชื่อผู้รับ):
+           - Look for the text after "ผู้รับ (TO)" or just "TO".
+           - Extract the full name strictly in Thai (or English if Thai is absent).
+           - Ignore titles like "คุณ" if possible, but keep the name complete.
+
+        2. House/Room Number (เลขห้อง/เลขที่บ้าน):
+           - Look at the address section under the Recipient Name.
+           - Extract the primary house or unit number, which usually contains digits and a slash (e.g., 28/548, 222/1, 730/541).
+           - Do NOT extract the postal code here.
+
+        3. Tracking Number (รหัสขนส่ง):
+           - Look for the barcode number labelled as "TH..." or under the main barcode.
+           - For Shopee Xpress (SPX), it usually starts with "TH".
+           - Do NOT confuse it with "Shopee Order No." (which is different).
+           - Example format: TH2654310236651.
+
+        4. Logistics Company (บริษัทขนส่ง):
+           - Identify the logo or text at the top header (e.g., SPX Express, Kerry, J&T, Flash).
+           - In these images, it is likely "SPX Express".
+
+        Output Format:
+        Return the result strictly in JSON format as follows:
         {
-            "name": "Full name of recipient (Thai/English)",
-            "room_number": "Room number (e.g., 101, 12/34)",
-            "tracking_number": "Carrier tracking number",
-            "is_label": true
+          "recipient_name": "Recipient Name",
+          "room_number": "Unit/Room Number",
+          "tracking_number": "Tracking Number",
+          "transport": "Logistics Company",
+          "is_label": true
         }
-        Return only raw JSON. If not a label, set is_label to false.
+        
+        If the image is NOT a parcel label, set "is_label" to false and other fields to "N/A".
         """
         
         # New Google GenAI SDK (v1) expects specific structures or Part objects
@@ -126,7 +158,7 @@ def check_match(scanned_data, user_profile):
     if scanned_room and user_room and (scanned_room in user_room or user_room in scanned_room):
         return True, "Room match"
         
-    scanned_name = str(scanned_data.get('name') or "").replace(" ", "")
+    scanned_name = str(scanned_data.get('recipient_name') or "").replace(" ", "")
     user_name = (user_profile.get('first_name', '') + user_profile.get('last_name', '')).replace(" ", "")
     
     if scanned_name and user_name:
@@ -171,10 +203,31 @@ def analyze_intent(text):
 
 def generate_chat_response(user_text, user_context={}):
     """
-    Generates a response using Gemini + RAG.
+    Generates a response using Gemini + RAG + Chat History.
     """
     try:
-        # RAG Step
+        line_user_id = user_context.get('line_user_id')
+        
+        # 1. Fetch Chat History (Last 10 turns)
+        history_context = ""
+        if line_user_id:
+            history = list(chat_history_col.find(
+                {"line_user_id": line_user_id}
+            ).sort("timestamp", -1).limit(10))
+            
+            # Reverse to get chronological order
+            history.reverse()
+            
+            if history:
+                history_text = []
+                for h in history:
+                    role_label = "User" if h['role'] == 'user' else "AI"
+                    history_text.append(f"{role_label}: {h['message']}")
+                history_context = "\n".join(history_text)
+            else:
+                history_context = "No previous history."
+        
+        # 2. RAG Step (Knowledge Retrieval)
         docs = retrieve_knowledge(user_text)
         if docs:
             kb_context = "\n".join([
@@ -189,21 +242,25 @@ def generate_chat_response(user_text, user_context={}):
         full_prompt = f"""
         {CHAT_SYSTEM_PROMPT}
         
-        [CONTEXT FROM CONDO DATABASE]
+        [CONDO DATABASE]
         {kb_context}
         
-        [USER SESSION]
+        [USER PROFILE]
         {user_info}
         
-        [USER QUESTION]
-        {user_text}
+        [CHAT HISTORY]
+        {history_context}
+        
+        [CURRENT USER MESSAGE]
+        User: {user_text}
         
         Instruction: 
-        1. Answer based strictly on the CONTEXT provided. 
-        2. If the question is complex, break down the answer logically using the context. 
-        3. If no relevant info exists in context, politely explain what info is available or refer to juristic office.
+        1. Review the HISTORY to understand the flow.
+        2. Answer the CURRENT MESSAGE based on DATABASE and HISTORY.
+        3. If the user asks for a summary of history or earlier database facts, provide it clearly.
+        4. Be precise. If the user asks about something mentioned 2 turns ago, answer correctly.
         
-        Answer (Thai Language):
+        AI Answer (Thai):
         """
         
         res = client.models.generate_content(model=MODEL_NAME, contents=full_prompt)

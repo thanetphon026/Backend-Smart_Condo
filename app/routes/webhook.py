@@ -108,7 +108,8 @@ def handle_register_outside(user, user_id):
             color="#06c755"
         )
         send_message(user_id, flex_contents=card)
-        log_audit("Register Outside", user_id, target=f"Room {room}", details=f"Count: {result.modified_count}")
+        room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
+        log_audit("Register Outside", room_name, target="รอรับพัสดุ", details=f"พัสดุ {result.modified_count} ชิ้น")
     else:
         # Check if already registered or no parcels
         total_pending = parcels_col.count_documents({"room_number": room, "status": "pending"})
@@ -164,7 +165,8 @@ def handle_cancel_outside(user, user_id):
     
     if result.modified_count > 0:
          send_message(user_id, text=f"✅ ยกเลิกการรับนอกเวลาสำเร็จ {result.modified_count} รายการ")
-         log_audit("Cancel Outside", user_id, target=f"Room {room}", details=f"Count: {result.modified_count}")
+         room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
+         log_audit("Cancel Outside", room_name, target="ยกเลิกนัดหมาย", details=f"พัสดุ {result.modified_count} ชิ้น")
     else:
          send_message(user_id, text="ไม่พบรายการที่จะยกเลิกครับ")
 
@@ -221,13 +223,15 @@ def handle_image_message(event):
     # 4. Match Logic
     is_match, reason = check_match(label_data, user)
     
-    log_audit("User Scan", user_id, target=f"Room {user_room}", details=f"Match: {is_match} ({reason})")
+    room_name = f"ห้อง {user_room} - {user.get('first_name', 'Guest')}"
+    status_text = "สแกนสำเร็จ" if is_match else "สแกนไม่ผ่าน"
+    log_audit("User Scan", room_name, target=status_text, details=f"ผลลัพธ์: {reason}")
     
     if is_match:
         card = create_block_card(
             title="ข้อมูลถูกต้อง",
             status="✅ ยืนยันเจ้าของพัสดุ",
-            details=f"พัสดุรหัสห้อง {label_data.get('room_number','-')} ชื่อ {label_data.get('name','-')}\nตรงกับข้อมูลของคุณ",
+            details=f"พัสดุรหัสห้อง {label_data.get('room_number','-')} ชื่อ {label_data.get('recipient_name','-')}\nตรงกับข้อมูลของคุณ",
             confirm_action={"type": "postback", "label": "ยืนยันการรับของ", "data": f"action=confirm_self&room={user_room}"},
             reject_action={"type": "message", "label": "ยกเลิก / ถ่ายใหม่", "text": "ยกเลิก"},
             color="#06c755"
@@ -273,6 +277,7 @@ def handle_postback(event):
                 color="#06c755"
             )
             send_message(user_id, flex_contents=card)
-            log_audit("Self Pickup Success", user_id, target=f"Room {room}", details=f"Count: {result.modified_count}")
+            room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
+            log_audit("Self Pickup Success", room_name, target="รับพัสดุเองสำเร็จ", details=f"พัสดุดำเนินการแล้ว {result.modified_count} ชิ้น")
         else:
             send_message(user_id, text="เกิดข้อผิดพลาด หรือพัสดุถูกรับไปแล้ว")
