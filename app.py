@@ -38,7 +38,8 @@ from parcel_flex_templates import create_parcel_ask_selection_flex, create_parce
     MessageEvent, 
     TextMessageContent, 
     ImageMessageContent, 
-    FollowEvent
+    FollowEvent,
+    PostbackEvent
 )
 
 from flex_templates import (
@@ -2093,154 +2094,145 @@ def handle_image_message(event):
         }))
         
         if is_closed_registration and pending_ah_parcels:
-             print(f"📸 Image received from {user.get('room_number')} during after-hours pickup window. Starting verification.")
-             
-             # Notify user processing
-             # line_bot_api.push_message(PushMessageRequest(to=uid, messages=[TextMessage(text="🤖 กำลังตรวจสอบรูปภาพเพื่อยืนยันการรับพัสดุค่ะ กรุณารอสักครู่...")]))
+             print(f"📸 Image received from {user.get('room_number')} during after-hours pickup window. Starting verification (LINE).")
              
              # Process Verification
-             reply_msg = process_after_hours_verification(user, pending_ah_parcels, message_id, line_bot_blob)
-             
-             if isinstance(reply_msg, dict) and 'flex' in reply_msg:
-                 # Check if text is present
-                 text_alt = reply_msg.get('text', 'Verification Result')
-                 send_line_message(uid, message=text_alt, flex_contents=reply_msg['flex'])
-             else:
-                 line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=str(reply_msg))]))
-             
-             # Log Scan Attempt
-             log_user_action(
-                 action="Self-Pickup Image Scan",
-                 user_id=uid,
-                 details=f"User sent image. Result: Confirmed/Mismatch handled in verification logic."
-             )
+             try:
+                 # Download Image
+                 content = line_bot_blob.get_message_content(message_id)
+                 with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tf:
+                     tf.write(content)
+                     temp_path = tf.name
+                 
+                 # Verify
+                 verify_result = verify_self_pickup_image(user, pending_ah_parcels, temp_path)
+                 
+                 # Reply
+                 if verify_result.get('flex'):
+                     send_line_message(uid, message=verify_result.get('text', 'Verification Result'), flex_contents=verify_result['flex'])
+                 else:
+                     line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=verify_result.get('text', 'Error'))]))
+                     
+                 # Log
+                 log_user_action(
+                     action="Self-Pickup Image Scan (LINE)",
+                     user_id=uid,
+                     details=f"Result: {verify_result.get('text')} - {verify_result.get('reason', '-')}"
+                 )
+             except Exception as e:
+                 print(f"LINE Image Error: {e}")
+                 line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text="เกิดข้อผิดพลาดในการตรวจสอบรูปภาพค่ะ")]))
+             finally:
+                 if 'temp_path' in locals() and os.path.exists(temp_path): os.remove(temp_path)
              return
 
         # Default behavior: Just acknowledge or ignore
         line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text="ได้รับรูปภาพแล้วค่ะ 📸")]))
 
-def process_after_hours_verification(user, parcels, message_id, blob_client):
+def verify_self_pickup_image(user, parcels, image_path):
     """
-    Verify if the image matches the parcel self-pickup context using Gemini Vision.
+    Shared Logic: Verify if the image matches the parcel self-pickup context using Gemini Vision.
+    Returns: dict { "is_valid": bool, "text": str, "flex": dict (optional), "reason": str }
     """
     try:
-        # 1. Download Image Content
-        content = blob_client.get_message_content(message_id)
+        print("🚀 Uploading image to Gemini for verification...")
+        upload_file = genai.upload_file(path=image_path, mime_type="image/jpeg")
         
-        # 2. Upload to Gemini (using helper or direct)
-        # We need a mime_type. Format is usually JPEG/PNG from Line.
-        # Line docs say provider returns binary. We can assume image/jpeg.
+        # Wait for processing
+        while upload_file.state.name == "PROCESSING":
+            time.sleep(1)
+            upload_file = genai.get_file(upload_file.name)
+            
+        if upload_file.state.name == "FAILED":
+           raise ValueError("Gemini File Upload Failed")
+           
+        print(f"✅ Upload Complete: {upload_file.uri}")
         
-        # Save to temp file for upload
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tf:
-            tf.write(content)
-            temp_path = tf.name
-
-        try:
-            print("🚀 Uploading image to Gemini for verification...")
-            upload_file = genai.upload_file(path=temp_path, mime_type="image/jpeg")
-            
-            # Wait for processing
-            while upload_file.state.name == "PROCESSING":
-                time.sleep(1)
-                upload_file = genai.get_file(upload_file.name)
-                
-            if upload_file.state.name == "FAILED":
-               raise ValueError("Gemini File Upload Failed")
-               
-            print(f"✅ Upload Complete: {upload_file.uri}")
-            
-            # 3. Construct Prompt
-            room = user.get("room_number", "-")
-            name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-            if not name: name = user.get('display_name', 'Unknown')
-            
-            parcel_info = "\\n".join([f"- PIN {p.get('pin')} : {p.get('transport')} (Tracking: {p.get('tracking_number')})" for p in parcels])
-            
-            prompt = f"""
-            Task: Verify User Self-Pickup Proof.
-            User Room: {room}
-            User Name: {name}
-            Expected Parcels:
-            {parcel_info}
-            
-            The user is picking up these parcels after hours.
-            Analyze the image. It should show:
-            1. The user holding the parcel(s).
-            2. OR The parcel(s) itself clearly.
-            3. OR The user's face (selfie) with the parcels or at the pickup point.
-            
-            Check for:
-            - Visible PIN numbers matching the specific list (e.g. {', '.join([p.get('pin') for p in parcels])}).
-            - Parcel labels matching Room {room} or Name {name}.
-            
-            If the image is completely unrelated (e.g. a cat, food, dark screen), reject it.
-            If looks like a valid pickup attempt (even if label not super clear but context fits), approve it with caution.
-            
-            Output strictly in JSON format:
-            {{
-                "is_valid": true/false,
-                "reason": "Reason in Thai language (short)",
-                "confidence": "high/medium/low",
-                "detected_text": "any relevant text seen"
-            }}
-            """
-            
-            # 4. Generate Content
-            model_name = 'gemini-2.0-flash-exp' # Use faster model if available, or 1.5-flash
-            # Try 'gemini-1.5-flash' or 'gemini-2.0-flash-exp' requested by user before?
-            # User used 'gemini-3-flash-preview' in Step 375?? Is that real? 
-            # Step 375 code shows 'gemini-3-flash-preview'. I should likely stick to what works or 'gemini-1.5-flash'.
-            # I will use 'gemini-1.5-flash' as it is standard stable fast. 
-            # Or reuse `model='gemini-3-flash-preview'` if it exists in their setup.
-            # I'll use 'gemini-1.5-flash' to be safe.
-            
-            response = client.models.generate_content(
-                model='gemini-1.5-flash',
-                contents=[
-                    types.Content(
-                         role="user",
-                         parts=[
-                             types.Part.from_uri(file_uri=upload_file.uri, mime_type=upload_file.mime_type),
-                             types.Part.from_text(text=prompt)
-                         ]
-                    )
-                ],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
+        # Construct Prompt
+        room = user.get("room_number", "-")
+        name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+        if not name: name = user.get('display_name', 'Unknown')
+        
+        parcel_info = "\\n".join([f"- PIN {p.get('pin')} : {p.get('transport')} (Tracking: {p.get('tracking_number')})" for p in parcels])
+        
+        prompt = f"""
+        Task: Verify User Self-Pickup Proof.
+        User Room: {room}
+        User Name: {name}
+        Expected Parcels:
+        {parcel_info}
+        
+        The user is picking up these parcels after hours.
+        Analyze the image. It should show:
+        1. The user holding the parcel(s).
+        2. OR The parcel(s) itself clearly.
+        3. OR The user's face (selfie) with the parcels or at the pickup point.
+        
+        Check for:
+        - Visible PIN numbers matching the specific list (e.g. {', '.join([p.get('pin') for p in parcels])}).
+        - Parcel labels matching Room {room} or Name {name}.
+        
+        If the image is completely unrelated (e.g. a cat, food, dark screen), reject it.
+        If looks like a valid pickup attempt (even if label not super clear but context fits), approve it with caution.
+        
+        Output strictly in JSON format:
+        {{
+            "is_valid": true/false,
+            "reason": "Reason in Thai language (short)",
+            "confidence": "high/medium/low",
+            "detected_text": "any relevant text seen"
+        }}
+        """
+        
+        # Generate Content
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=[
+                types.Content(
+                     role="user",
+                     parts=[
+                         types.Part.from_uri(file_uri=upload_file.uri, mime_type=upload_file.mime_type),
+                         types.Part.from_text(text=prompt)
+                     ]
                 )
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
             )
-            
-            result_text = response.text.strip()
-            print(f"🤖 Verification Result: {result_text}")
-            
-            # Parse JSON
-            try:
-                # remove code fences if any
-                if "```json" in result_text:
-                    result_text = result_text.replace("```json", "").replace("```", "")
-                
-                ai_data = json.loads(result_text)
-            except:
-                ai_data = {"is_valid": True, "reason": "AI Format Error - Default Approve", "confidence": "low"}
-            
-            # 5. Return Flex
-            if ai_data.get("is_valid", False):
-                flex = create_self_pickup_verification_flex(name, room, parcels, ai_data)
-                return {"text": "✅ ตรวจสอบรูปภาพสำเร็จ", "flex": flex}
-            else:
-                flex = create_self_pickup_mismatch_flex(ai_data.get("reason", "รูปภาพไม่ชัดเจน"))
-                return {"text": "❌ ตรวจสอบไม่ผ่าน", "flex": flex}
-
-        except Exception as e:
-            print(f"Gemini/Processing Error: {e}")
-            return "เกิดข้อผิดพลาดในการประมวลผลรูปภาพค่ะ (AI Error)"
-        finally:
-            if os.path.exists(temp_path): os.remove(temp_path)
+        )
+        
+        result_text = response.text.strip()
+        print(f"🤖 Verification Result: {result_text}")
+        
+        # Parse JSON
+        try:
+            if "```json" in result_text:
+                result_text = result_text.replace("```json", "").replace("```", "")
+            ai_data = json.loads(result_text)
+        except:
+            ai_data = {"is_valid": True, "reason": "AI Format Error - Default Approve", "confidence": "low"}
+        
+        # Return Result
+        if ai_data.get("is_valid", False):
+            flex = create_self_pickup_verification_flex(name, room, parcels, ai_data)
+            return {
+                "is_valid": True,
+                "text": "✅ ตรวจสอบรูปภาพสำเร็จ",
+                "flex": flex,
+                "reason": ai_data.get("reason")
+            }
+        else:
+            flex = create_self_pickup_mismatch_flex(ai_data.get("reason", "รูปภาพไม่ชัดเจน"))
+            return {
+                "is_valid": False,
+                "text": "❌ ตรวจสอบไม่ผ่าน: " + ai_data.get("reason", ""),
+                "flex": flex,
+                "reason": ai_data.get("reason")
+            }
 
     except Exception as e:
         print(f"Verification Error: {e}")
-        return "เกิดข้อผิดพลาดในการดาวน์โหลดรูปภาพค่ะ"
+        return {"is_valid": False, "text": "เกิดข้อผิดพลาดในการประมวลผลรูปภาพ (System Error)", "reason": str(e)}
 
 @line_handler.add(FollowEvent)
 def handle_follow(event):
@@ -2271,6 +2263,82 @@ def handle_follow(event):
             )
 
         line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=msg)]))
+
+def process_postback_action(uid, data_str):
+    """
+    Shared Logic: Process postback actions (button clicks)
+    Returns: dict { "text": str, "flex": dict (optional) }
+    """
+    try:
+        data = dict(item.split("=") for item in data_str.split("&"))
+        action = data.get("action")
+        
+        print(f"👉 Postback Action: {action} by {uid}")
+        
+        if action == "confirm_self_pickup":
+            # Logic: Confirm parcels pickup
+            # 1. Update parcels
+            # 2. Notify
+            
+            # Find parcels for this user that are pending self-pickup logic
+            # (Assuming logic selects by user context or specific IDs passed in data, 
+            #  but data might be limited in size. Safer to query pending AH parcels for user again)
+            
+            # Verify user exists
+            user = users_col.find_one({"line_user_id": uid})
+            if not user:
+                return {"text": "ไม่พบข้อมูลผู้ใช้"}
+                
+            room_number = user.get("room_number")
+            
+            # Update all pending AH parcels for this room to picked_up
+            result = parcels_col.update_many(
+                {
+                    "room_number": room_number,
+                    "status": "pending",
+                    "is_after_hours": True
+                },
+                {
+                    "$set": {
+                        "status": "picked_up",
+                        "picked_up_at": get_bkk_now(),
+                        "pickup_method": "self_pickup_verified"
+                    }
+                }
+            )
+            
+            if result.modified_count > 0:
+                msg = f"✅ ยืนยันการรับพัสดุเรียบร้อยแล้ว จำนวน {result.modified_count} ชิ้น\nขอบคุณที่ใช้บริการครับ"
+                log_user_action("Confirm Self-Pickup", uid, f"Picked up {result.modified_count} parcels")
+                return {"text": msg, "flex": create_self_pickup_success_flex(result.modified_count)}
+            else:
+                return {"text": "ไม่พบพัสดุที่ต้องยืนยัน หรือรายการถูกดำเนินการไปแล้ว"}
+
+        elif action == "reject_self_pickup":
+            return {"text": "ยกเลิกรายการเรียบร้อยแล้ว หากต้องการรับของกรุณาส่งรูปยืนยันใหม่นะคะ"}
+            
+        return {"text": "ไม่ทราบคำสั่ง"}
+
+    except Exception as e:
+        print(f"Postback Error: {e}")
+        return {"text": "เกิดข้อผิดพลาดในการทำรายการ"}
+
+@line_handler.add(PostbackEvent)
+def handle_postback(event):
+    uid = event.source.user_id
+    data = event.postback.data
+    
+    with ApiClient(line_configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        
+        result = process_postback_action(uid, data)
+        
+        # Reply
+        # If flex is present, send flex
+        if result.get("flex"):
+             send_line_message(uid, message=result.get("text"), flex_contents=result.get("flex"))
+        else:
+             line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=result.get("text"))]))
 
 # ================= HEALTH CHECK ENDPOINT =================
 
@@ -3507,17 +3575,96 @@ def web_chat_api():
         
         existing_user = users_col.find_one({"line_user_id": uid})
         if not existing_user and (not web_name or not web_pic):
-            return jsonify({"error": "New users must provide Profile Data"}), 403
+            web_pic = data.get('picture_url', 'https://via.placeholder.com/150')
+        postback_data = data.get('postback_data') # New field
 
         user = get_or_create_user(uid, "web", web_name, web_pic)
 
-        # กรณีที่ส่งรูปภาพมาจากเว็บ (สำหรับการแจ้งร้องเรียน) - REMOVED
-        if image_base64:
+        # Handle Postback (Button Click)
+        if postback_data:
+             print(f"👉 Web Postback: {postback_data}")
+             result = process_postback_action(uid, postback_data)
+             
+             # Log
+             log_user_action("Web Postback", uid, f"Data: {postback_data} - {result.get('text')}")
+             
+             # Save to chat history
+             # update_chat_history(uid, 'user', f'[Action: {postback_data}]') # Optional
+             update_chat_history(uid, 'model', result.get('text'))
+             
              return jsonify({
-                 "reply": "ระบบไม่รองรับการส่งรูปภาพในขณะนี้ค่ะ",
+                 "reply": result.get('text'),
+                 "flex": result.get('flex'),
                  "status": "success",
                  "is_registered": is_registered(user)
              })
+
+        if image_base64:
+             # 1. Check AH Status
+             now = get_bkk_now()
+             cutoff_time = now.replace(hour=16, minute=30, second=0, microsecond=0)
+             is_closed_registration = now > cutoff_time
+             
+             # 2. Check pending parcels
+             pending_ah_parcels = list(parcels_col.find({
+                "room_number": user.get("room_number"),
+                "status": "pending",
+                "is_after_hours": True
+             }))
+             
+             if is_closed_registration and pending_ah_parcels:
+                 # Web Verification Flow
+                 try:
+                     image_data = base64.b64decode(image_base64)
+                     
+                     if len(image_data) > MAX_FILE_SIZE:
+                         return jsonify({"error": f"ไฟล์ใหญ่เกินไป (>5MB)"}), 400
+                         
+                     with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{image_type}') as tf:
+                        tf.write(image_data)
+                        temp_path = tf.name
+                        
+                     # Call Shared Verification
+                     print(f"📸 Web Image Verification for {user.get('room_number')}")
+                     verify_result = verify_self_pickup_image(user, pending_ah_parcels, temp_path)
+                     
+                     # Map result to Web Response
+                     # We return the flex object. The Admin Frontend might need to display it.
+                     # Or we construct a rich HTML/Text reply if flex not supported.
+                     
+                     reply_text = verify_result.get('text')
+                     flex_data = verify_result.get('flex')
+                     
+                     # Log
+                     log_user_action(
+                         action="Self-Pickup Image Scan (Web)",
+                         user_id=uid,
+                         details=f"Result: {reply_text}"
+                     )
+                     
+                     # Update Chat
+                     update_chat_history(uid, 'user', '[ส่งรูปภาพยืนยันตัวตน]')
+                     update_chat_history(uid, 'model', reply_text)
+                     
+                     return jsonify({
+                         "reply": reply_text,
+                         "flex": flex_data, # Frontend can use this to render card
+                         "status": "success",
+                         "is_registered": is_registered(user)
+                     })
+                     
+                 except Exception as e:
+                     print(f"Web Verify Error: {e}")
+                     return jsonify({"error": str(e)}), 500
+                 finally:
+                     if 'temp_path' in locals() and os.path.exists(temp_path): os.remove(temp_path)
+             else:
+                 # Not in AH mode or no parcels
+                 return jsonify({
+                     "reply": "ระบบปิดรับรูปภาพทั่วไปในขณะนี้ (ส่งได้เฉพาะยืนยันรับของนอกเวลา)",
+                     "status": "success",
+                     "is_registered": is_registered(user)
+                 })
         
         # ถ้าไม่มีรูปภาพ (เป็นข้อความธรรมดา)
         if not msg: 
