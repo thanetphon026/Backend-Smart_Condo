@@ -40,7 +40,8 @@ from parcel_service import (
 )
 from user_service import (
     get_or_create_user, is_registered, register_user,
-    find_user_by_room_or_name, update_chat_history, get_chat_history
+    find_user_by_room_or_name, update_chat_history, get_chat_history,
+    search_users
 )
 from line_service import send_line_message, reply_line_message,send_parcel_notification
 
@@ -50,7 +51,8 @@ from parcel_flex_templates import (
     create_parcel_cancelled_flex,
     create_parcel_ask_selection_flex,
     create_number_confirmation_flex,
-    create_parcel_status_flex
+    create_parcel_status_flex,
+    create_confirm_pickup_flex
 )
 
 # LINE SDK imports
@@ -213,13 +215,12 @@ def confirm_parcel(pin):
             user = find_user_by_room_or_name(room_number=parcel['room_number'])
             if user and user.get('line_user_id'):
                 # Send pickup notification
-                notification_msg = (
-                    f"✅ รับพัสดุแล้ว!\n\n"
-                    f"📦 บริษัทขนส่ง: {parcel.get('transport')}\n"
-                    f"🔢 เลขพัสดุ: {parcel.get('tracking_number')}\n\n"
-                    f"ขอบคุณที่รับของค่ะ 🙏"
+                # Send pickup notification as Flex Message
+                send_parcel_notification(
+                    user['line_user_id'],
+                    parcel,
+                    create_confirm_pickup_flex
                 )
-                send_line_message(user['line_user_id'], message=notification_msg)
             
             # Log action
             log_admin_action(
@@ -309,18 +310,11 @@ def scan_parcel():
             )
             
             if user and user.get('line_user_id'):
-                notification_msg = (
-                    f"📦 มีพัสดุมาใหม่!\n\n"
-                    f"🏠 ห้อง: {parcel_data['room_number']}\n"
-                    f"📮 บริษัท: {parcel_data['transport']}\n"
-                    f"🔢 เลขพัสดุ: {parcel_data['tracking_number']}\n"
-                    f"🔑 PIN: {pin}\n\n"
-                    f"แจ้ง PIN ให้เจ้าหน้าที่เมื่อมารับของค่ะ 😊"
-                )
-                send_line_message(
+                # Send FLEX notification
+                send_parcel_notification(
                     user['line_user_id'],
-                    message=notification_msg,
-                    image_url=image_url
+                    parcel_data,
+                    create_parcel_registered_flex
                 )
             
             # Log action
@@ -650,22 +644,19 @@ def process_user_message(user, text, platform="line"):
         my_parcels = get_parcels(status="pending", room_number=room_number)
         
         if my_parcels:
-            parcel_list = []
-            for idx, p in enumerate(my_parcels, 1):
-                parcel_list.append(
-                    f"{idx}. {p.get('transport')}  | เลขพัสดุ: {p.get('tracking_number')} | PIN: {p.get('pin')}"
-                )
-            
+            # Return Flex Message
+            flex_content = create_parcel_status_flex(my_parcels, room_number)
             return {
-                "text": (
-                    f"📦 พัสดุของคุณ:\n"
-                    f"🏠 ห้อง {room_number}\n\n"
-                    + "\n".join(parcel_list) +
-                    f"\n\nหากต้องการรับของนอกเวลา (หลัง 16:30 น.) ให้ถ่ายรูปพัสดุส่งเข้ามาได้เลยค่ะ 😊"
-                )
+                "text": f"คุณมีพัสดุรอรับ {len(my_parcels)} รายการค่ะ",
+                "flex": flex_content
             }
         else:
-            return {"text": f"ขณะนี้ยังไม่มีพัสดุค้างอยู่สำหรับห้อง {room_number} ค่ะ 📦"}
+            # Return Flex Message (Empty)
+            flex_content = create_parcel_status_flex([], room_number)
+            return {
+                "text": f"ขณะนี้ยังไม่มีพัสดุค้างอยู่สำหรับห้อง {room_number} ค่ะ 📦",
+                "flex": flex_content
+            }
     
     # General chat with AI + RAG
     try:
@@ -716,7 +707,7 @@ def confirm_pickup_by_user(user, pin):
         
         flex = create_confirm_pickup_flex(
             parcel,
-            getattr(parcel, 'image_url', None), # Original parcel image
+            parcel.get('image_url'), # Original parcel image
             is_user_action=True
         )
         
@@ -997,6 +988,19 @@ def index():
         "version": "2.0.0",
         "status": "running"
     })
+
+# ================= USER MANAGEMENT ENDPOINTS =================
+
+@app.route('/api/admin/users/search', methods=['GET'])
+@require_api_token
+def search_users_endpoint():
+    """Search users"""
+    try:
+        query = request.args.get('q', '')
+        users = search_users(query)
+        return jsonify({"status": "success", "data": users})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 # ================= RUN APP =================
 

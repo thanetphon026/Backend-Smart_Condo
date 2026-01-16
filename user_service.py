@@ -227,3 +227,35 @@ def get_chat_history(uid):
     except Exception as e:
         print(f"❌ Get Chat History Error: {e}")
         return []
+
+def search_users(query_text="", limit=50):
+    """
+    Search users by name, room, or phone
+    """
+    try:
+        criteria = {}
+        if query_text:
+            criteria["$or"] = [
+                {"first_name": {"$regex": query_text, "$options": "i"}},
+                {"last_name": {"$regex": query_text, "$options": "i"}},
+                {"room_number": {"$regex": query_text, "$options": "i"}},
+                {"phone_number": {"$regex": query_text, "$options": "i"}},
+                {"display_name": {"$regex": query_text, "$options": "i"}}
+            ]
+        
+        cursor = users_col.find(criteria).sort("last_active", -1).limit(limit)
+        users = list(cursor)
+        
+        # Format for API response
+        formatted_users = []
+        for u in users:
+            u['_id'] = str(u['_id'])
+            # Don't send entire chat history
+            if 'chat_history' in u:
+                del u['chat_history']
+            formatted_users.append(u)
+            
+        return formatted_users
+    except Exception as e:
+        print(f"❌ Search Users Error: {e}")
+        return []
