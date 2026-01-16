@@ -123,56 +123,75 @@ def export_outside():
 
 @parcels_bp.route('/api/admin/parcels/scan', methods=['POST'])
 def scan_parcel():
+    """
+    Step 1: Just scan and return AI analysis. DO NOT SAVE TO DB.
+    """
     try:
         if 'image' not in request.files:
              return jsonify({"status": "error", "message": "No image uploaded"}), 400
              
         file = request.files['image']
-        if not validate_image(file):
+        if not validate_image(file)[0]:
              return jsonify({"status": "error", "message": "Invalid image format/size"}), 400
              
+        # Uploading to Cloudinary early to get URL for preview
         img_url = upload_image(file)
         
         file.seek(0)
         file_bytes = file.read() 
         ai_data = analyze_parcel_label(file_bytes) or {}
         
+        return jsonify({
+            "status": "success", 
+            "data": ai_data, 
+            "image_url": img_url
+        })
+        
+    except Exception as e:
+        print(f"Scan Error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@parcels_bp.route('/api/admin/parcels', methods=['POST'])
+def create_parcel():
+    """
+    Step 2: Save to DB and Notify User.
+    """
+    try:
+        data = request.json
+        admin_name = request.headers.get('X-Admin-Name', 'Admin')
+        
         pin = generate_pin()
         new_parcel = {
-            "room_number": ai_data.get('room_number', 'Unknown'),
-            "recipient_name": ai_data.get('name', 'Unknown'),
-            "tracking_number": ai_data.get('tracking_number', ''),
-            "transport": "Unknown", 
-            "image_url": img_url,
+            "room_number": data.get('room_number', 'Unknown'),
+            "recipient_name": data.get('recipient_name', 'Unknown'),
+            "tracking_number": data.get('tracking_number', ''),
+            "transport": data.get('transport', 'Unknown'), 
+            "image_url": data.get('image_url'),
             "pin": pin,
             "status": "pending",
             "is_after_hours": False,
             "timestamp": datetime.datetime.utcnow(),
-            "created_by": request.headers.get('X-Admin-Name', 'Admin')
+            "created_by": admin_name
         }
         
         parcels_col.insert_one(new_parcel)
         
-        admin_name = request.headers.get('X-Admin-Name', 'Admin')
-        
-        # Notify if User exists
+        # Notify User
         user = users_col.find_one({"room_number": new_parcel['room_number']})
         if user:
-             # Block Card Notification
              card = create_block_card(
                 title="พัสดุมาใหม่",
                 status=f"PIN: {pin}",
-                details=f"มีพัสดุใหม่มาถึงคุณ ติดต่อรับได้ที่นิติบุคคล",
-                image_url=img_url,
+                details="มีพัสดุมาใหม่ กรุณาติดต่อรับได้ที่นิติบุคคล",
+                image_url=new_parcel['image_url'],
                 color="#007bff"
              )
              send_message(user['line_user_id'], flex_contents=card)
 
         log_audit("Add Parcel", admin_name, target=f"Room {new_parcel['room_number']}", details=f"PIN: {pin}")
-
+        
         new_parcel['_id'] = str(new_parcel['_id'])
-        return jsonify({"status": "success", "data": ai_data, "parcel": new_parcel})
+        return jsonify({"status": "success", "data": new_parcel})
         
     except Exception as e:
-        print(f"Scan Error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500

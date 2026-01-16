@@ -12,12 +12,11 @@ def get_logs():
     
     query = {}
     if log_type == 'user':
-        # User actions usually have 'User' in action name or performed_by is user_id (starts with U)
-        # Simplify based on ACTION names we defined in webhook
-        query['action'] = {"$in": ["User Register Outside Hours", "User Scan", "User Confirm Receive", "Self Pickup Success"]}
+        # Sync with webhook.py and admin_parcels actions
+        query['action'] = {"$in": ["Register Outside", "User Scan", "Self Pickup Success", "Cancel Outside"]}
     else:
         # Admin Actions
-        query['action'] = {"$nin": ["User Register Outside Hours", "User Scan", "User Confirm Receive", "Self Pickup Success"]}
+        query['action'] = {"$nin": ["Register Outside", "User Scan", "Self Pickup Success", "Cancel Outside"]}
 
     logs = list(audit_logs_col.find(query).sort("timestamp", -1).limit(limit))
     for l in logs:

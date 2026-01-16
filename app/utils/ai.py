@@ -33,16 +33,16 @@ def extract_keywords(text):
         print(f"AI Keyword Error: {e}")
         return text.split()
 
-def retrieve_knowledge(query, limit=3):
+def retrieve_knowledge(query, limit=5):
     """
-    Search KB using keywords and text search.
+    Search KB using keywords and text search on topic, content, and tags.
     """
     try:
         keywords = extract_keywords(query)
         keyword_str = " ".join(keywords)
         print(f"RAG Search Keywords: {keyword_str}")
         
-        # 1. Mongo Text Search (Requires Index)
+        # 1. Mongo Text Search
         try:
             cursor = kb_col.find(
                 {"$text": {"$search": keyword_str}},
@@ -50,14 +50,20 @@ def retrieve_knowledge(query, limit=3):
             ).sort([("score", {"$meta": "textScore"})]).limit(limit)
             results = list(cursor)
         except Exception as e:
-            print(f"Text search failed (index might be missing): {e}")
+            print(f"Text search failed: {e}")
             results = []
             
-        # 2. Fallback: Regex if no results
+        # 2. Fallback: Regex on topic, content, and tags
         if not results:
-            regex_queries = [{"question": {"$regex": k, "$options": "i"}} for k in keywords]
-            if regex_queries:
-                 results = list(kb_col.find({"$or": regex_queries}).limit(limit))
+            regex_or = []
+            for k in keywords:
+                regex_or.extend([
+                    {"topic": {"$regex": k, "$options": "i"}},
+                    {"content": {"$regex": k, "$options": "i"}},
+                    {"tags": {"$regex": k, "$options": "i"}}
+                ])
+            if regex_or:
+                 results = list(kb_col.find({"$or": regex_or}).limit(limit))
                  
         return results
     except Exception as e:
@@ -66,24 +72,28 @@ def retrieve_knowledge(query, limit=3):
 
 def analyze_parcel_label(image_data):
     """
-    Analyze image data (bytes or object) to find Owner Name and Room Number.
+    Analyze image data (bytes) to find Owner Name and Room Number.
     """
     try:
         prompt = """
+        You are a smart OCR assistant for a Thai Condo.
         Analyze this parcel label image.
-        Extract the following ONLY in JSON format:
+        Extract the following strictly in JSON format:
         {
-            "name": "found name (Thai or English)",
-            "room_number": "found room number (digits)",
-            "tracking_number": "found tracking number",
-             "is_label": boolean (true if it looks like a parcel label)
+            "name": "Full name of recipient (Thai/English)",
+            "room_number": "Room number (e.g., 101, 12/34)",
+            "tracking_number": "Carrier tracking number",
+            "is_label": true
         }
-        If fields are missing, use null.
+        Return only raw JSON. If not a label, set is_label to false.
         """
+        
+        # Wrapping as dict for better Gemini API compatibility if needed
+        image_part = {"mime_type": "image/jpeg", "data": image_data}
         
         response = client.models.generate_content(
             model=MODEL_NAME,
-            contents=[prompt, image_data] 
+            contents=[prompt, image_part] 
         )
         
         # Clean markdown json
@@ -165,25 +175,33 @@ def generate_chat_response(user_text, user_context={}):
         # RAG Step
         docs = retrieve_knowledge(user_text)
         if docs:
-            kb_context = "\n".join([f"Q: {d.get('question','')}\nA: {d.get('answer','')}" for d in docs])
+            kb_context = "\n".join([
+                f"Topic: {d.get('topic','-')}\nContent: {d.get('content','')}\nTags: {', '.join(d.get('tags',[]))}" 
+                for d in docs
+            ])
         else:
-            kb_context = "No specific rules found in database."
+            kb_context = "No specific condo internal data found for this query."
             
-        user_info = f"User: {user_context.get('first_name','Guest')} Room: {user_context.get('room_number','-')}"
+        user_info = f"User Status: {user_context.get('first_name','Guest')} (Room {user_context.get('room_number','-')})"
         
         full_prompt = f"""
         {CHAT_SYSTEM_PROMPT}
         
-        [USER INFO]
-        {user_info}
-        
-        [KNOWLEDGE BASE]
+        [CONTEXT FROM CONDO DATABASE]
         {kb_context}
         
-        [USER QUERY]
+        [USER SESSION]
+        {user_info}
+        
+        [USER QUESTION]
         {user_text}
         
-        Answer (Answer normally as a helpful assistant. Do NOT use Block Cards here, just text):
+        Instruction: 
+        1. Answer based strictly on the CONTEXT provided. 
+        2. If the question is complex, break down the answer logically using the context. 
+        3. If no relevant info exists in context, politely explain what info is available or refer to juristic office.
+        
+        Answer (Thai Language):
         """
         
         res = client.models.generate_content(model=MODEL_NAME, contents=full_prompt)

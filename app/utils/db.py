@@ -27,11 +27,12 @@ def ensure_indexes():
         parcels_col.create_index([("timestamp", -1)])
         parcels_col.create_index([("room_number", 1)])
         
-        # Audit Logs
-        audit_logs_col.create_index([("timestamp", -1)])
-        
-        # Chat History
-        chat_history_col.create_index([("line_user_id", 1), ("timestamp", -1)])
+        # Knowledge Base (Vector/Text Search)
+        kb_col.create_index([
+            ("topic", "text"),
+            ("content", "text"),
+            ("tags", "text")
+        ])
         
         print("✅ MongoDB Indexes ensured.")
     except Exception as e:
