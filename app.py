@@ -34,7 +34,6 @@ from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, MessagingApiBlob,
     ReplyMessageRequest, PushMessageRequest, TextMessage, ImageMessage, FlexMessage, FlexContainer
 )
-from flex_templates import create_text_flex, create_parcel_carousel, create_complaint_update_flex, create_parcel_pickup_flex, create_after_hours_selection_flex, create_after_hours_confirmation_flex, create_after_hours_cancellation_flex, create_after_hours_error_flex, create_parcel_status_flex, create_complaint_ask_details_flex, create_complaint_ask_image_flex, create_complaint_received_flex
 from parcel_flex_templates import create_parcel_ask_selection_flex, create_parcel_registered_flex, create_parcel_cancelled_flex, create_number_confirmation_flex, create_parcel_status_flex as create_parcel_status_flex_v2
 from linebot.v3.webhooks import (
     MessageEvent, 
@@ -107,7 +106,7 @@ try:
     # Collections
     users_col = db["users"]
     parcels_col = db["parcels"]
-    complaints_col = db["complaints"]
+    # complaints_col removed
     kb_col = db["knowledge_base"]
     admins_col = db["admins"]
     audit_logs_col = db["audit_logs"]
@@ -127,14 +126,6 @@ try:
             users_col.create_index([("platform", 1)])
             users_col.create_index([("last_active", -1)])
             users_col.create_index([("room_number", 1)])
-            
-            # Complaints: ค้นหาตาม status, priority, timestamp (NOT Unique for user)
-            complaints_col.create_index([("status", 1)])
-            complaints_col.create_index([("priority", 1)])
-            complaints_col.create_index([("timestamp", -1)])
-            complaints_col.create_index([("line_user_id", 1)])
-            complaints_col.create_index([("status", 1), ("priority", -1), ("timestamp", -1)])
-            complaints_col.create_index([("room_number", 1)])
             
             # Parcels: ค้นหาตาม status, pin, timestamp, is_after_hours
             parcels_col.create_index([("status", 1)])
@@ -166,7 +157,6 @@ try:
     print(f"📊 Database Stats:")
     print(f"   - Users: {users_col.count_documents({})}")
     print(f"   - Parcels: {parcels_col.count_documents({})}")
-    print(f"   - Complaints: {complaints_col.count_documents({})}")
     print(f"   - Admins: {admins_col.count_documents({})}")
 except Exception as e:
     print(f"❌ MongoDB Error: {e}")
@@ -204,84 +194,7 @@ def get_bkk_now():
     tz = datetime.timezone(datetime.timedelta(hours=7))
     return datetime.datetime.now(tz)
 
-def analyze_urgency_from_description(user_desc):
-    """
-    วิเคราะห์ความสำคัญเบื้องต้นจากข้อความที่ผู้ใช้แจ้ง
-    """
-    try:
-        if not user_desc: return "Low"
-        user_desc_lower = user_desc.lower()
-        
-        # เกณฑ์ความสำคัญ:
-        # 🔴 HIGH (ต้องแก้ไขภายในวันนี้)
-        high_keywords = [
-            "ไฟไหม้", "ไฟลุก", "ไฟช็อต", "ไฟฟ้าลัดวงจร", "ไฟดูด", "ไฟสปาร์ค",
-            "ไฟดับ", "ดับไฟ", "ไฟหมด", "ไฟดับทั้งหมด", "ไฟดับทั้งคอนโด", "ไฟดับทั้งอาคาร",
-            "เสาไฟล้ม", "เสาไฟ", "เสาล้ม", "เสาโค่น", "เสาไฟโค่น", "เสาไฟฟ้าล้ม",
-            "น้ำท่วม", "น้ำรั่วมาก", "น้ำซึมมาก", "น้ำแตก", "ท่อน้ำแตก", "ท่อประปาแตก",
-            "แก๊สรั่ว", "กลิ่นแก๊ส", "แก๊สหอบ", "แก๊สผิดปกติ",
-            "ทางหนีไฟอุดตัน", "บันไดหนีไฟ", "ทางหนีไฟ",
-            "ประตูหน้าต่างเสียหาย", "ล็อคไม่ได้", "ปิดล็อคไม่ได้", "ประตูพัง", "หน้าต่างพัง",
-            "โจร", "ขโมย", "ปล้น", "งัดแงะ", "อันตราย", "ฉุกเฉิน", "ด่วนมาก", "ระเบิด"
-        ]
-        
-        # 🟡 MEDIUM (แก้ไขได้ภายใน 1-2 วัน)
-        medium_keywords = [
-            "เครื่องปรับอากาศ", "แอร์เสีย", "แอร์ไม่เย็น", "แอร์รั่ว", "แอร์น้ำหยด",
-            "ไฟฟ้าบางส่วนเสีย", "ไฟไม่ติด", "สวิทช์เสีย", "ปลั๊กไฟเสีย", "เบรกเกอร์",
-            "ประตูล็อคขัดข้อง", "ล็อคประตู", "กุญแจ", "ลูกบิดเสีย",
-            "ปั๊มน้ำ", "น้ำไม่ไหล", "น้ำอ่อน", 
-            "ส้วมตัน", "ชักโครก", "ท่อตัน", "กดไม่ลง",
-            "เครื่องทำน้ำร้อน", "เครื่องทำน้ำอุ่น", "น้ำไม่ร้อน"
-        ]
-        
-        # 🟢 LOW (แก้ไขได้ภายใน 3-5 วัน)
-        low_keywords = [
-            "สีลอก", "สีผนังลอก", "สีร่อน",
-            "ผนังร้าว", "รอยร้าว", "ร้าวเล็กน้อย",
-            "ฝ้าเพดาน", "ฝ้ารั่ว", "จุดชื้น", "คราบน้ำ",
-            "เครื่องใช้ไฟฟ้าขัดข้อง", "เครื่องใช้ไฟฟ้า",
-            "ที่จับประตูหลวม", "ลูกบิดหลวม", "บานพับ",
-            "มุ้งลวด", "หลอดไฟ", "ไฟกระพริบ"
-        ]
-        
-        for kw in high_keywords:
-            if kw in user_desc_lower: return "High"
-        for kw in medium_keywords:
-            if kw in user_desc_lower: return "Medium"
-        for kw in low_keywords:
-            if kw in user_desc_lower: return "Low"
-            
-        return "Low"
-    except Exception as e:
-        print(f"❌ Urgency Description Analysis Error: {e}")
-        return "Medium"
-
-def determine_final_urgency(desc_urgency, ai_urgency, user_desc):
-    """
-    กำหนดความสำคัญขั้นสุดท้ายโดยพิจารณาจากทั้งสองแหล่ง
-    น้ำหนัก: AI Vision (รูป) 80%, Description 20%
-    """
-    try:
-        user_desc_lower = user_desc.lower() if user_desc else ""
-        
-        # Normalize inputs
-        desc_urgency = (desc_urgency or "Low").capitalize()
-        ai_urgency = (ai_urgency or "Low").capitalize()
-        
-        # 🔥 กฎพิเศษ (Safety First): ถ้ามีคำว่า "ไฟไหม้" ในรูป หรืออันตรายร้ายแรง
-        # ให้สรุปเป็น High ทันที (เพราะปกติ AI Vision จะจับได้)
-        emergency_keywords = ["ไฟไหม้", "ไฟลุก", "ไฟฟ้าลัดวงจร", "ประกายไฟ", "น้ำท่วม", "แก๊สรั่ว", "ระเบิด", "ไฟฟ้าช็อต"]
-        if ai_urgency == "High" and any(kw in user_desc_lower for kw in emergency_keywords):
-            print(f"🔥 EMERGENCY DETECTED: AI={ai_urgency}, Desc contains emergency keywords")
-            return "High"
-        
-        # แปลง urgency เป็น score (High=3, Medium=2, Low=1)
-        urgency_map = {"High": 3, "Medium": 2, "Low": 1}
-        ai_score = urgency_map.get(ai_urgency, 1)
-        desc_score = urgency_map.get(desc_urgency, 1)
-        
-        # คำนวณ weighted score (AI 80%, Desc 20%)
+# Helper functions for analyze_urgency_from_description and determine_final_urgency removed
         final_score = (ai_score * 0.8) + (desc_score * 0.2)
         
         # แปลง score กลับเป็น urgency level
@@ -641,8 +554,7 @@ def get_knowledge_context(user_text, user):
     ดึงข้อมูล Context ทั้งหมด:
     1. ข้อมูลส่วนตัว (Users)
     2. พัสดุของห้องตัวเอง (Parcels)
-    3. การแจ้งร้องเรียนของตัวเอง (Complaints)
-    4. ความรู้ทั่วไป (Knowledge Base)
+    3. ความรู้ทั่วไป (Knowledge Base)
     """
     context_parts = []
     
@@ -676,26 +588,11 @@ def get_knowledge_context(user_text, user):
                 p_str += "\nถ้าจะรับพัสดุแจ้ง PIN ให้พนักงานได้เลยนะคะ"
                 
                 parcel_context = p_str
-        
-        # 1.2 Complaints (ดูเฉพาะ ID ตัวเอง - 3 รายการล่าสุด)
-        complaint_context = "ประวัติการแจ้งร้องเรียน: ไม่มีประวัติการแจ้งร้องเรียนล่าสุด (ระบบปกติ)"
-        my_complaints = list(complaints_col.find({"line_user_id": user['line_user_id']}).sort("timestamp", -1).limit(3))
-        if my_complaints:
-            c_list = []
-            for c in my_complaints:
-                status_th = {
-                    "waiting_image": "รอรูปภาพ",
-                    "pending": "รอดำเนินการ",
-                    "resolved": "เสร็จสิ้น"
-                }.get(c.get('status'), c.get('status'))
-                c_list.append(f"- เรื่อง: {c.get('description')} (สถานะ: {status_th})")
-            complaint_context = "ประวัติแจ้งร้องเรียนล่าสุด:\n" + "\n".join(c_list)
 
         personal_data_str = (
             f"[ข้อมูลส่วนตัวของผู้ใช้ (Private Data)]\n"
             f"{user_info}\n"
             f"{parcel_context}\n"
-            f"{complaint_context}\n"
         )
         context_parts.append(personal_data_str)
 
@@ -782,10 +679,10 @@ def analyze_intent(text):
         prompt = (
             f"Classify user intent: '{text}'\n"
             "Categories:\n"
-            "1. COMPLAINT_START: User wants to report an issue but hasn't provided details yet (e.g., 'แจ้งร้องเรียน', 'มีปัญหาครับ', 'ร้องเรียนหน่อย', 'แจ้งเรื่อง').\n"
-            "2. COMPLAINT_DETAIL: User provides specific details of a problem (e.g., 'ไฟทางเดินเสีย', 'น้ำรั่วที่ระเบียง', 'แอร์ไม่เย็นเลย', 'ไฟติดๆดับๆ').\n"
-            "3. CANCEL: User wants to cancel or says they don't want to report anymore, including typos (e.g., 'ยกเลิก', 'ไม่แจ้งแล้ว', 'ไม่เจ้ง', 'ไม่เเจ่งล้', 'พอแล้ว').\n"
-            "4. CHECK_STATUS: Asking about ticket status.\n"
+            "1. PARCEL_CHECK: User wants to check their parcels (e.g., 'เช็คพัสดุ', 'มีพัสดุไหม', 'ดูพัสดุ').\n"
+            "2. AFTER_HOURS: User wants to register after-hours pickup (e.g., 'รับนอกเวลา', 'ลงทะเบียนนอกเวลา').\n"
+            "3. CANCEL: User wants to cancel current operation (e.g., 'ยกเลิก', 'ไม่เอาแล้ว', 'พอแล้ว').\n"
+            "4. CHECK_STATUS: Asking about parcel status.\n"
             "5. GENERAL: General questions to the bot or about rules/info.\n"
             "6. OTHER: Greetings or unrelated.\n"
             "Return ONLY the category name."
@@ -800,8 +697,8 @@ def analyze_intent(text):
         # Safety normalization
         if "CANCEL" in intent_result: return "CANCEL"
         if "CHECK_STATUS" in intent_result: return "CHECK_STATUS"
-        if "COMPLAINT_START" in intent_result: return "COMPLAINT_START"
-        if "COMPLAINT_DETAIL" in intent_result: return "COMPLAINT_DETAIL"
+        if "PARCEL_CHECK" in intent_result: return "PARCEL_CHECK"
+        if "AFTER_HOURS" in intent_result: return "AFTER_HOURS"
         if "GENERAL" in intent_result: return "GENERAL"
         
         return "OTHER"
@@ -871,9 +768,6 @@ def get_or_create_user(user_id, platform="line", display_name=None, picture_url=
             "line_user_id": user_id,
             "first_name": None, "last_name": None, 
             "room_number": None, "phone_number": None,
-            "complaint_state": "normal",
-            "current_complaint_id": None,
-            "draft_desc": None,
             "chat_history": [],
             "display_name": display_name if display_name else "Unknown",
             "picture_url": picture_url,
@@ -969,16 +863,15 @@ def detect_cancel_intent_ai(text, current_state):
 Output Format (JSON):
 {{
   "intent": "CANCEL" | "NO",
-  "context": "complaint" | "parcel" | "none",
+  "context": "parcel" | "none",
   "confidence": 0.0-1.0
 }}
 
 Rules:
 1. INTENT = "CANCEL" ถ้าพบคำยกเลิก เช่น:
-   - "ยกเลิก", "cancel", "ออก", "exit", "พอ", "ไม่เอาแล้ว", "ไม่แจ้งแล้ว"
+   - "ยกเลิก", "cancel", "ออก", "exit", "พอ", "ไม่เอาแล้ว"
    - รวมคำพิมพ์ผิด: "ยกเลค", "ยกเลกิ", "แคนเซล", "คันเซล"
 2. ตรวจสอบบริบทจาก current_state:
-   - filing_desc, waiting_image -> complaint
    - selecting -> parcel
    - normal -> none
 3. confidence: ความมั่นใจ 0.0-1.0
@@ -1030,47 +923,6 @@ Rules:
             }
             return True, {"text": "คุณไม่ได้อยู่ในกระบวนการใดตอนนี้ค่ะ", "flex": flex_content}, True
         
-        elif context == "complaint":
-            # Cancelling complaint - use Gray theme
-            flex_content = {
-                "type": "bubble",
-                "header": {
-                    "type": "box",
-                    "layout": "vertical",
-                    "contents": [{
-                        "type": "text",
-                        "text": "❌ ยกเลิกเรียบร้อย",
-                        "weight": "bold",
-                        "color": "#FFFFFF",
-                        "size": "md"
-                    }],
-                    "backgroundColor": "#6C757D",
-                    "paddingAll": "20px"
-                },
-                "body": {
-                    "type": "box",
-                    "layout": "vertical",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "ยกเลิกการแจ้งร้องเรียนแล้วค่ะ",
-                            "weight": "bold",
-                            "size": "md",
-                            "color": "#6C757D"
-                        },
-                        {
-                            "type": "text",
-                            "text": "หากมีเรื่องให้ช่วยเรียกน้องบอทใหม่ได้เสมอนะคะ",
-                            "wrap": True,
-                            "color": "#666666",
-                            "size": "sm",
-                            "margin": "md"
-                        }
-                    ]
-                }
-            }
-            return True, {"text": "❌ ยกเลิกการแจ้งร้องเรียนเรียบร้อยค่ะ", "flex": flex_content}, True
-        
         elif context == "parcel":
             # Cancelling parcel selection
             return True, "❌ ยกเลิกการทำรายการเรียบร้อยค่ะ", False
@@ -1102,8 +954,6 @@ def analyze_number_input(text, user_state):
     """
     # ถ้าอยู่ในกระบวนการอยู่แล้ว ไม่ต้องถามยืนยัน
     if user_state.get('after_hours_state') == 'selecting':
-        return False, None
-    if user_state.get('complaint_state') in ['filing_desc', 'waiting_image']:
         return False, None
     if user_state.get('awaiting_number_confirmation'):
         return False, None
@@ -1420,12 +1270,7 @@ def process_text_logic(user, text):
     
     if is_cancel:
         # Clear states based on context
-        if state in ['filing_desc', 'waiting_image']:
-            users_col.update_one(
-                {"line_user_id": uid}, 
-                {"$set": {"complaint_state": "normal", "draft_desc": None}}
-            )
-        elif after_hours_state == 'selecting':
+        if after_hours_state == 'selecting':
             users_col.update_one(
                 {"line_user_id": uid},
                 {"$set": {
@@ -1535,31 +1380,6 @@ Rules:
     
     # ================= PRIORITY 4: ACTIVE PROCESS STATES =================
     # Strict process isolation - if in a state, ONLY handle that state
-    
-    # 4A. COMPLAINT PROCESS (filing_desc, waiting_image)
-    if state in ['filing_desc', 'waiting_image']:
-        # Already in complaint process - BLOCK all other intents
-        # Cancellation already handled above
-        
-        if state == 'filing_desc':
-            # Save description and ask for image
-            users_col.update_one(
-                {"line_user_id": uid}, 
-                {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
-            )
-            flex_card = create_complaint_ask_image_flex(text)
-            return {
-                "text": f"บันทึกเรื่อง '{text[:30]}...' แล้วค่ะ",
-                "flex": flex_card
-            }
-        
-        elif state == 'waiting_image':
-            # Waiting for image, remind user
-            flex_card = create_complaint_ask_image_flex(user.get('draft_desc', 'รายละเอียดที่บันทึกไว้'))
-            return {
-                "text": "📸 ยังรอรูปภาพประกอบอยู่นะคะ",
-                "flex": flex_card
-            }
     
     # 4B. PARCEL AFTER-HOURS SELECTION PROCESS
 
@@ -2036,31 +1856,6 @@ Rules:
             "flex": flex_content
         }
 
-    # ================= Intent Analysis =================
-    
-    # ตรวจสอบคำเริ่มต้นกระบวนการร้องเรียน (รวมคำพิมพ์ผิด)
-    complaint_start_keywords = [
-        "แจ้งร้องเรียน", "ร้องเรียน", "แจ้งเรื่อง", "แจ้งปัญหา", "เเจ้งร้องเรียน",
-        "แจ้งเรื่อง", "เเจ้งปัญหา", "เเจ้งปัญหา", "เเจ้ง", "แจ้ง", "มีปัญหา",
-        "มีเรื่อง", "ขอเเจ้ง", "ขอแจ้ง", "ต้องการร้องเรียน", "อยากร้องเรียน",
-        "อยากเเจ้ง", "อยากเเจ้ง", "ขอร้องเรียน", "ต้องการเเจ้ง", "ต้องการแจ้ง",
-        "เเจ่งร้องเรียน", "แจ้งร้องเรีน", "แจ้งร้องเรย", "แจ้งร้องเรี่ยน"
-    ]
-    
-    text_lower = text.strip().lower()
-    is_complaint_start = text_lower in [kw.lower() for kw in complaint_start_keywords]
-    
-    # ถ้าผู้ใช้พิมพ์คำว่าเริ่มต้นกระบวนการร้องเรียน
-    if is_complaint_start:
-        if state == 'normal':
-            users_col.update_one({"line_user_id": uid}, {"$set": {"complaint_state": "filing_desc"}})
-            # Return Flex Message card instead of plain text
-            flex_card = create_complaint_ask_details_flex()
-            return {
-                "text": "ได้เลยค่ะ บอตยินดีช่วยประสานงานให้นะคะ 📝",
-                "flex": flex_card
-            }
-    
     # ================= AI Processing =================
     
     # ดึง Intent และ Context พร้อมกันเพื่อลดเวลา (Parallel)
@@ -2085,14 +1880,7 @@ Rules:
     # AI-powered cancellation with context awareness
     if intent == "CANCEL":
         # Check context: are we in a process?
-        if state in ['filing_desc', 'waiting_image']:
-            # Cancel complaint process
-            users_col.update_one(
-                {"line_user_id": uid}, 
-                {"$set": {"complaint_state": "normal", "draft_desc": None}}
-            )
-            return "❌ ยกเลิกการแจ้งร้องเรียนเรียบร้อยค่ะ หากต้องการแจ้งเรื่องใหม่ ทักน้องบอตได้เสมอนะคะ"
-        elif after_hours_state == 'selecting':
+        if after_hours_state == 'selecting':
             # Cancel parcel selection
             users_col.update_one(
                 {"line_user_id": uid},
@@ -2107,52 +1895,9 @@ Rules:
             # Not in any process
             return (
                 "ขณะนี้คุณไม่ได้อยู่ในกระบวนการใดๆ ค่ะ \n"
-                "(ไม่ว่าจะเป็นการแจ้งร้องเรียนหรือลงทะเบียนรับพัสดุนอกเวลา)\n\n"
+                "(ลงทะเบียนรับพัสดุนอกเวลา)\n\n"
                 "หากต้องการความช่วยเหลือ สามารถพิมพ์คำถามได้เลยค่ะ 😊"
             )
-
-    # COMPLAINT Logic: จัดการตามความละเอียดของข้อความ
-    if intent in ["COMPLAINT_START", "COMPLAINT_DETAIL"]:
-        if state == 'normal':
-            if intent == "COMPLAINT_START":
-                users_col.update_one({"line_user_id": uid}, {"$set": {"complaint_state": "filing_desc"}})
-                flex_card = create_complaint_ask_details_flex()
-                return {
-                    "text": "รับทราบค่ะคุณลูกค้า บอตพร้อมช่วยดูแลนะคะ 📝",
-                    "flex": flex_card
-                }
-            else:
-                # COMPLAINT_DETAIL: มีข้อมูลแล้ว บันทึกและขอรูปทันที
-                users_col.update_one(
-                    {"line_user_id": uid}, 
-                    {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
-                )
-                # Return Flex Message showing saved description and asking for image
-                flex_card = create_complaint_ask_image_flex(text)
-                return {
-                    "text": f"รับทราบปัญหา '{text[:30]}...' ค่ะ",
-                    "flex": flex_card
-                }
-
-    if state == 'filing_desc':
-        users_col.update_one(
-            {"line_user_id": uid}, 
-            {"$set": {"complaint_state": "waiting_image", "draft_desc": text}}
-        )
-        # Return Flex Message card
-        flex_card = create_complaint_ask_image_flex(text)
-        return {
-            "text": f"บันทึกเรื่อง '{text[:30]}' แล้วค่ะ",
-            "flex": flex_card
-        }
-
-    if state == 'waiting_image':
-        # Return Flex Message reminder
-        flex_card = create_complaint_ask_image_flex(user.get('draft_desc', 'รายละเอียดที่บันทึกไว้'))
-        return {
-            "text": "📸 ยังรอรูปภาพประกอบอยู่นะคะ",
-            "flex": flex_card
-        }
 
     # ตรวจสอบ RAG Context ที่ดึงมาแบบ Parallel
     if context_future:
@@ -2225,171 +1970,6 @@ def handle_text_message(event):
         else:
              line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=reply_text)]))
 
-# ================= Handle Image Message =================
-
-@line_handler.add(MessageEvent, message=ImageMessageContent)
-def handle_image_message(event):
-    uid = event.source.user_id
-    with ApiClient(line_configuration) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        blob_client = MessagingApiBlob(api_client)
-        
-        user = users_col.find_one({"line_user_id": uid})
-        
-        if user.get('complaint_state') == 'waiting_image' and user.get('draft_desc'):
-            msg_content = blob_client.get_message_content(event.message.id)
-            
-            # Save temp file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tf:
-                tf.write(msg_content)
-                temp_path = tf.name
-            
-            try:
-                # 1. Upload to Cloudinary (เก็บรูปไว้ดูเอง)
-                up_res = cloudinary.uploader.upload(
-                    temp_path,
-                    folder="complaints",
-                    tags=["complaint", f"user:{uid}"]
-                )
-                img_url = up_res.get('secure_url')
-                user_desc = user.get('draft_desc')
-                
-                print(f"📸 เริ่มประมวลผลการแจ้งร้องเรียน:")
-                print(f"   ผู้ใช้: {user.get('first_name', 'Unknown')} (ห้อง {user.get('room_number', '-')})")
-                print(f"   คำอธิบาย: {user_desc}")
-                
-                # 2. วิเคราะห์ความสำคัญจากคำอธิบาย
-                desc_urgency = analyze_urgency_from_description(user_desc)
-                print(f"   ความสำคัญจากคำอธิบาย: {desc_urgency}")
-                
-                # 3. AI Analysis
-                ai_summary_text = user_desc 
-                ai_urgency = "Medium"  # default
-
-                try:
-                    print("🤖 อัพโหลดภาพไปยัง Gemini...")
-                    
-                    upload_file = client.files.upload(file=temp_path)
-                    
-                    # รอให้ไฟล์พร้อมใช้งาน
-                    while upload_file.state.name == "PROCESSING":
-                        time.sleep(1)
-                        upload_file = client.files.get(name=upload_file.name)
-
-                    # ปรับปรุง Vision Prompt ให้ละเอียดขึ้น
-                    vision_prompt = (
-                        f"คำอธิบายจากลูกบ้าน: '{user_desc}'\n\n"
-                        
-                        "📋 วิเคราะห์รูปภาพนี้ประกอบกับคำอธิบายข้างต้น:\n\n"
-                        
-                        "เกณฑ์ความสำคัญ:\n"
-                        "🔴 HIGH (ต้องแก้ไขภายในวันนี้):\n"
-                        "   • ไฟไหม้ ไฟฟ้าลัดวงจร ไฟช็อต\n"
-                        "   • ไฟดับทั้งหมด ไฟดับทั้งอาคาร ไฟดับพื้นที่กว้าง\n"
-                        "   • เสาไฟล้ม เสาไฟโค่น อุปกรณ์ไฟฟ้าหลักเสียหาย\n"
-                        "   • น้ำท่วมในห้อง ระบบประปาแตก\n"
-                        "   • แก๊สรั่ว กลิ่นแก๊ส\n"
-                        "   • ทางหนีไฟอุดตัน\n"
-                        "   • ประตูหน้าต่างเสียหายจนปิดล็อคไม่ได้\n\n"
-                        
-                        "🟡 MEDIUM (แก้ไขได้ภายใน 1-2 วัน):\n"
-                        "   • เครื่องปรับอากาศเสีย\n"
-                        "   • ระบบไฟฟ้าบางส่วนเสีย\n"
-                        "   • ประตูล็อคขัดข้อง\n"
-                        "   • ปั๊มน้ำไม่ทำงาน\n"
-                        "   • ส้วมตัน\n"
-                        "   • เครื่องทำน้ำร้อนเสีย\n\n"
-                        
-                        "🟢 LOW (แก้ไขได้ภายใน 3-5 วัน):\n"
-                        "   • สีผนังลอก\n"
-                        "   • ผนังร้าวเล็กน้อย\n"
-                        "   • ฝ้าเพดานมีจุดชื้น\n"
-                        "   • เครื่องใช้ไฟฟ้าขัดข้องเล็กน้อย\n"
-                        "   • ที่จับประตูหลวม\n\n"
-                        
-                        "หน้าที่:\n"
-                        "1. วิเคราะห์รูปภาพประกอบกับคำอธิบาย สรุปปัญหาเชิงเทคนิค\n"
-                        "2. วิเคราะห์ภาพรวมของรูปภาพ (สภาพแวดล้อม ความเสียหายรอบๆ)\n"
-                        "3. สรุปผลการวิเคราะห์ทั้งสองส่วนรวมกัน **อย่างกระชับ**\n\n"
-                        "Format ตอบ: 'Summary || Urgency || Detailed_Analysis'\n"
-                        "- Summary: สรุปปัญหาสั้นๆ (ไม่เกิน 80 ตัวอักษร)\n"
-                        "- Urgency: ประเมินความเร่งด่วน (High, Medium, Low) ตามเกณฑ์ด้านบนอย่างเคร่งครัด\n"
-                        "- Detailed_Analysis: แสดงผลการวิเคราะห์แบบกระชับ แบ่งเป็น 2 หัวข้อหลัก:\n"
-                        "  • วิเคราะห์ตามรายละเอียดและรูปภาพ: [เนื้อหากระชับ]\n"
-                        "  • วิเคราะห์ภาพรวมของรูปภาพ: [เนื้อหากระชับ]\n"
-                    )
-                    
-                    print("🤖 กำลังวิเคราะห์ด้วย gemini-3-flash-preview...")
-                    gemini_res = client.models.generate_content(
-                        model='gemini-3-flash-preview',
-                        contents=[
-                            types.Content(
-                                role="user",
-                                parts=[
-                                    types.Part.from_uri(
-                                        file_uri=upload_file.uri,
-                                        mime_type=upload_file.mime_type
-                                    ),
-                                    types.Part.from_text(text=vision_prompt)
-                                ]
-                            )
-                        ]
-                    )
-                    
-                    raw_result = gemini_res.text.strip()
-                    print(f"🤖 ผลลัพธ์จาก AI Vision: {raw_result}")
-                    
-                    if "||" in raw_result:
-                        parts = raw_result.split("||")
-                        if len(parts) >= 3:
-                            ai_summary_text = parts[0].strip()
-                            ai_urgency = parts[1].strip()
-                            detailed_analysis = parts[2].strip()
-                            
-                            # ผสาน Summary และ Detailed Analysis เพื่อแสดงในระบบ
-                            # ปรับปรุงรูปแบบการแสดงผลตามที่ต้องการ
-                            final_ai_summary = (
-                                f"{ai_summary_text}\n\n"
-                                f"🤖 วิเคราะห์เชิงลึก:\n"
-                                f"{detailed_analysis}"
-                            )
-                            print(f"🤖 วิเคราะห์ได้: Summary='{ai_summary_text}', Urgency='{ai_urgency}'")
-                        elif len(parts) == 2:
-                            ai_summary_text = parts[0].strip()
-                            ai_urgency = parts[1].strip()
-                            final_ai_summary = ai_summary_text
-                        else:
-                            final_ai_summary = raw_result
-                            ai_urgency = "Medium"
-                    else:
-                        final_ai_summary = raw_result
-                        ai_urgency = "Medium"
-                        print(f"🤖 ไม่พบรูปแบบที่ถูกต้อง ใช้ค่า default: Urgency='{ai_urgency}'")
-
-                except Exception as e:
-                    print(f"❌ Gemini Vision Error: {e}")
-                    # ถ้า Error ก็ใช้ข้อความเดิม
-                
-                # 4. ตัดสินใจขั้นสุดท้าย
-                final_urgency = determine_final_urgency(desc_urgency, ai_urgency, user_desc)
-                print(f"✅ ความสำคัญขั้นสุดท้าย: {final_urgency}")
-                
-                # 5. SAVE DB (บันทึกทุกอย่างลง DB)
-                new_complaint = {
-                    "line_user_id": uid,
-                    "room_number": user.get('room_number'),
-                    "description": user_desc,
-                    "image_url": img_url,
-                    "status": "pending",
-                    "ai_summary": final_ai_summary,
-                    "urgency_level": final_urgency,
-                    "timestamp": get_bkk_now(),
-                    "priority": final_urgency.lower(),  # แปลงเป็นตัวเล็กเพื่อใช้ใน DB
-                    "analysis_debug": {  # เก็บข้อมูล debug สำหรับตรวจสอบ
-                        "desc_urgency": desc_urgency,
-                        "vision_urgency": ai_urgency,
-                        "final_decision": final_urgency,
-                        "user_description": user_desc
                     }
                 }
                 
@@ -2521,12 +2101,6 @@ def get_dashboard_stats():
         with ThreadPoolExecutor() as executor:
             # Submit all queries
             f_users = executor.submit(users_col.count_documents, {})
-            f_total_complaints = executor.submit(complaints_col.count_documents, {})
-            f_resolved_complaints = executor.submit(complaints_col.count_documents, {"status": "resolved"})
-            f_pending_complaints = executor.submit(complaints_col.count_documents, {"status": "pending"})
-            f_high = executor.submit(complaints_col.count_documents, {"priority": "high", "status": "pending"})
-            f_medium = executor.submit(complaints_col.count_documents, {"priority": "medium", "status": "pending"})
-            f_low = executor.submit(complaints_col.count_documents, {"priority": "low", "status": "pending"})
             f_total_parcels = executor.submit(parcels_col.count_documents, {})
             f_picked_up = executor.submit(parcels_col.count_documents, {"status": "picked_up"})
             f_pending_parcels = executor.submit(parcels_col.count_documents, {"status": "pending"})
@@ -2534,12 +2108,6 @@ def get_dashboard_stats():
             # Get results (this will wait for the slowest query, but they run simultaneously)
             return jsonify({
                 "users": f_users.result(),
-                "total_complaints": f_total_complaints.result(),
-                "resolved_complaints": f_resolved_complaints.result(),
-                "pending_complaints": f_pending_complaints.result(),
-                "pending_high": f_high.result(),
-                "pending_medium": f_medium.result(),
-                "pending_low": f_low.result(),
                 "total_parcels": f_total_parcels.result(),
                 "picked_up_parcels": f_picked_up.result(),
                 "pending_parcels": f_pending_parcels.result()
@@ -2557,11 +2125,9 @@ def get_recent_activity():
     try:
         # Use ThreadPoolExecutor to run queries in parallel
         with ThreadPoolExecutor() as executor:
-            f_recent_parcels = executor.submit(lambda: list(parcels_col.find().sort("timestamp", -1).limit(3)))
-            f_recent_complaints = executor.submit(lambda: list(complaints_col.find().sort("timestamp", -1).limit(3)))
+            f_recent_parcels = executor.submit(lambda: list(parcels_col.find().sort("timestamp", -1).limit(5)))
             
             recent_parcels = f_recent_parcels.result()
-            recent_complaints = f_recent_complaints.result()
         
         activities = []
         
@@ -2571,23 +2137,6 @@ def get_recent_activity():
                 "message": f"พัสดุใหม่: ห้อง {parcel.get('room_number', '-')}",
                 "details": f"{parcel.get('transport', '-')} - {parcel.get('recipient_name', '-')}",
                 "timestamp": format_datetime(parcel.get('timestamp'))
-            })
-        
-        # [OPTIMIZATION] Batch fetch users for complaints in activity
-        complaint_user_ids = list(set(c.get("line_user_id") for c in recent_complaints if c.get("line_user_id")))
-        c_users_map = {}
-        if complaint_user_ids:
-            c_users_list = list(users_col.find({"line_user_id": {"$in": complaint_user_ids}}, {"line_user_id": 1, "display_name": 1}))
-            c_users_map = {u["line_user_id"]: u for u in c_users_list}
-        
-        for complaint in recent_complaints:
-            user_id = complaint.get("line_user_id")
-            user = c_users_map.get(user_id)
-            activities.append({
-                "type": "complaint",
-                "message": f"แจ้งร้องเรียน: ห้อง {complaint.get('room_number', '-')}",
-                "details": f"{complaint.get('description', '-')[:30]}...",
-                "timestamp": format_datetime(complaint.get('timestamp'))
             })
         
         # เรียงตามเวลา
@@ -2695,60 +2244,8 @@ def get_all_users():
 
 # ================= Complaints API =================
 
-@app.route('/api/complaints', methods=['GET'])
-@require_api_token
-def get_all_complaints():
-    try:
-        # Parameters
-        status_filter = request.args.get('status', 'pending')
-        sort_by = request.args.get('sort', 'priority:desc')  # priority:desc, time:desc, time:asc
-        search_q = request.args.get('q', '').strip()
-        
-        # Build Query
-        query = {}
-        if status_filter != 'all':
-            query['status'] = status_filter
-            
-        if search_q:
-            query["$or"] = [
-                {"room_number": {"$regex": search_q, "$options": "i"}},
-                {"description": {"$regex": search_q, "$options": "i"}},
-                {"ai_summary": {"$regex": search_q, "$options": "i"}}
-            ]
-            
-        items = list(complaints_col.find(query, {
-            "room_number": 1,
-            "description": 1,
-            "ai_summary": 1,
-            "status": 1,
-            "priority": 1,
-            "timestamp": 1,
-            "image_url": 1,
-            "line_user_id": 1,
-            "urgency_level": 1
-        }).limit(100))
-        
-        # Sorting Logic
-        def get_priority_score(priority):
-            priority_map = {
-                'high': 100,
-                'medium': 50,
-                'low': 10
-            }
-            return priority_map.get(priority.lower(), 0)
-        
-        # เรียงลำดับตามความสำคัญ (สูงสุดก่อน) และตามเวลา (ใหม่ก่อน)
-        if sort_by == 'priority:desc':
-            items.sort(key=lambda x: (
-                -get_priority_score(x.get('priority', 'medium')),  # ความสำคัญ (สูงมาก่อน)
-                -(x.get('timestamp', datetime.datetime.min).timestamp())  # ใหม่ก่อน
-            ))
-        elif sort_by == 'time:asc':
-            items.sort(key=lambda x: x.get('timestamp', datetime.datetime.min))
-        elif sort_by == 'time:desc':
-            items.sort(key=lambda x: x.get('timestamp', datetime.datetime.min), reverse=True)
-        else: # default priority
-            items.sort(key=lambda x: (
+# ================= Complaints API (REMOVED) =================
+# All complaint functionality has been removed.           items.sort(key=lambda x: (
                 -get_priority_score(x.get('priority', 'medium')),
                 -(x.get('timestamp', datetime.datetime.min).timestamp())
             ))
@@ -2954,87 +2451,8 @@ def search_parcels_optimized():
         print(f"Parcels search error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# ================= COMPLAINTS SEARCH ENDPOINT (OPTIMIZED) =================
-
-@app.route('/api/complaints/search', methods=['GET'])
-@require_api_token
-def search_complaints_optimized():
-    """ค้นหาร้องเรียนแบบ real-time (optimized)"""
-    try:
-        search_q = request.args.get('q', '').strip()
-        status_filter = request.args.get('status', 'pending')
-        
-        # Build Query
-        query = {}
-        if status_filter != 'all':
-            query['status'] = status_filter
-            
-        if search_q and len(search_q) >= 1:
-            # ค้นหาจากหลายฟิลด์
-            query["$or"] = [
-                {"room_number": {"$regex": search_q, "$options": "i"}},
-                {"description": {"$regex": search_q, "$options": "i"}},
-                {"ai_summary": {"$regex": search_q, "$options": "i"}},
-                {"priority": {"$regex": search_q, "$options": "i"}}
-            ]
-            
-        # ใช้ projection เพื่อเลือกเฉพาะฟิลด์ที่จำเป็น
-        items = list(complaints_col.find(query, {
-            "room_number": 1,
-            "description": 1,
-            "ai_summary": 1,
-            "status": 1,
-            "priority": 1,
-            "timestamp": 1,
-            "image_url": 1,
-            "line_user_id": 1,
-            "urgency_level": 1,
-            "_id": 1
-        }).sort("timestamp", -1).limit(100))
-        
-        # เรียงลำดับตามความสำคัญ (สูงสุดก่อน) และตามเวลา (ใหม่ก่อน)
-        def get_priority_score(priority):
-            priority_map = {
-                'high': 100,
-                'medium': 50,
-                'low': 10
-            }
-            return priority_map.get(priority.lower(), 0)
-        
-        items.sort(key=lambda x: (
-            -get_priority_score(x.get('priority', 'medium')),
-            -(x.get('timestamp', datetime.datetime.min).timestamp())
-        ))
-
-        # [OPTIMIZATION] Batch fetch users to avoids N+1 query
-        user_ids = list(set(c.get("line_user_id") for c in items if c.get("line_user_id")))
-        users_map = {}
-        if user_ids:
-            users_list = list(users_col.find({"line_user_id": {"$in": user_ids}}, {"line_user_id": 1, "display_name": 1}))
-            users_map = {u["line_user_id"]: u for u in users_list}
-
-        result = []
-        for c in items:
-            user_id = c.get("line_user_id")
-            user = users_map.get(user_id)
-            
-            result.append({
-                "id": str(c.get('_id')),
-                "room_number": c.get("room_number", "-"),
-                "description": c.get("description", "-"),
-                "summary": c.get("ai_summary", "-"),
-                "status": c.get("status", "pending"),
-                "priority": c.get("priority", "medium"),
-                "timestamp": format_datetime(c.get("timestamp")),
-                "image_url": c.get("image_url", ""),
-                "display_name": user.get("display_name", "-") if user else "-",
-                "urgency_level": c.get("urgency_level", "Medium")
-            })
-        return jsonify({"items": result})
-    except Exception as e:
-        print(f"Complaints search error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
+# ================= COMPLAINTS REMOVED =================
+# Complaint search endpoint removed - system no longer supports complaints
 
 def notify_user_platform_agnostic(user, message, image_url=None, update_history=True, flex_contents=None):
     """
@@ -3415,127 +2833,8 @@ def pickup_parcel():
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# ================= RESOLVE COMPLAINT (แก้ไขข้อความ) =================
 
-@app.route('/api/complaints/<complaint_id>/resolve', methods=['POST'])
-@require_api_token
-def resolve_complaint(complaint_id):
-    """ปิดงานร้องเรียนและส่ง LINE แจ้งเตือน"""
-    try:
-        # ✅ แก้ไข: Decode ชื่อแอดมินจาก Header
-        admin_name_header = request.headers.get('X-Admin-Name', 'Unknown Admin')
-        admin_name = urllib.parse.unquote(admin_name_header)
-        
-        # 1. ตรวจสอบ complaint_id
-        try:
-            obj_id = ObjectId(complaint_id)
-        except:
-            return jsonify({"status": "error", "message": "Invalid complaint ID"}), 400
-        
-        # 2. ค้นหารายการร้องเรียน
-        complaint = complaints_col.find_one({"_id": obj_id})
-        
-        if not complaint:
-            return jsonify({"status": "error", "message": "Complaint not found"}), 404
-        
-        # 3. อัพเดตสถานะ
-        resolved_note = request.form.get("note", "")
-        complaints_col.update_one(
-            {"_id": obj_id},
-            {"$set": {
-                "status": "resolved",
-                "resolved_at": datetime.datetime.now(),
-                "resolved_by": admin_name,
-                "resolved_note": resolved_note
-            }}
-        )
-        
-        # 4. บันทึก Audit Log
-        log_admin_action(
-            action="Resolve Complaint",
-            performed_by=admin_name,
-            target=f"Complaint ID: {complaint_id}, Room: {complaint.get('room_number', '-')}",
-            details=f"Description: {complaint.get('description', '')[:50]}..., Note: {resolved_note}"
-        )
-        
-        # 5. ฟังก์ชันย่อยสำหรับประมวลผลรูปภาพและส่งแจ้งเตือน (Async เพื่อความเร็ว)
-        def background_resolve_tasks(complaint_obj, admin_note, temp_image_path, user_obj):
-            try:
-                img_url = None
-                if temp_image_path and os.path.exists(temp_image_path):
-                    try:
-                        up_res = cloudinary.uploader.upload(
-                            temp_image_path,
-                            folder="complaints_resolved",
-                            tags=["complaint_resolved", f"complaint:{str(complaint_obj['_id'])}"]
-                        )
-                        img_url = up_res.get('secure_url')
-                        complaints_col.update_one(
-                            {"_id": complaint_obj["_id"]},
-                            {"$set": {"resolved_image_url": img_url}}
-                        )
-                        print(f"✅ Background Image Upload Success: {img_url}")
-                    except Exception as e:
-                        print(f"❌ Background Upload Error: {e}")
-                    finally:
-                        if os.path.exists(temp_image_path): os.remove(temp_image_path)
-                
-                # สร้างข้อความแจ้งเตือน
-                message = (
-                    f"✅ การร้องเรียนของคุณได้รับการแก้ไขแล้ว!\n\n"
-                    f"📌 เรื่อง: {complaint_obj.get('description', '')}\n"
-                    f"🏠 ห้อง: {complaint_obj.get('room_number', '-')}\n"
-                    f"📅 วันที่แจ้ง: {complaint_obj.get('timestamp', '').strftime('%d/%m/%Y') if complaint_obj.get('timestamp') else '-'}\n"
-                    f"✅ ดำเนินการเสร็จ: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
-                )
-                if admin_note:
-                    message += f"\n📝 หมายเหตุ: {admin_note}"
-                message += "\n\nขอบคุณที่แจ้งปัญหาค่ะ 🙏"
-                
-                # สร้าง Flex Message
-                flex_content = create_complaint_update_flex(
-                    status="resolved",
-                    description=complaint_obj.get('description', ''),
-                    room=complaint_obj.get('room_number', '-'),
-                    message=message,
-                    image_url=img_url
-                )
-                
-                # ส่งแจ้งเตือน (พหุแพลตฟอร์ม)
-                notify_user_platform_agnostic(user_obj, message, img_url, update_history=True, flex_contents=flex_content)
-                print(f"✅ Background Notification Sent to: {user_obj.get('line_user_id') if user_obj else 'Unknown'}")
-                
-            except Exception as e:
-                print(f"❌ Critical Error in background_resolve_tasks: {e}")
-                import traceback
-                traceback.print_exc()
-
-        # 6. ค้นหาผู้ใช้
-        user = users_col.find_one({"line_user_id": complaint.get("line_user_id")})
-        
-        # 7. จัดการรูปภาพใน Main Thread ป้องกัน context issues
-        temp_path = None
-        if 'image' in request.files and request.files['image'].filename != '':
-            image_file = request.files['image']
-            is_valid, _ = validate_image(image_file)
-            if is_valid:
-                suffix = f".{image_file.filename.rsplit('.', 1)[1].lower()}" if '.' in image_file.filename else '.jpg'
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
-                    image_file.save(tf.name)
-                    temp_path = tf.name
-        
-        # 8. [SPEED OPTIMIZATION] ทำงานส่วนที่เหลือในพื้นหลังทั้งหมด
-        executor.submit(background_resolve_tasks, complaint, resolved_note, temp_path, user)
-        
-        return jsonify({
-            "status": "success",
-            "message": "บันทึกสถานะเรียบร้อยแล้ว (กำลังส่งแจ้งเตือนในพื้นหลัง)"
-        })
-        
-    except Exception as e:
-        print(f"❌ Resolve Error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
+# Resolve Complaint endpoint removed - system no longer supports complaints
 
 # ================= AUDIT LOGS ENDPOINT =================
 
@@ -3578,56 +2877,7 @@ def get_audit_logs():
 
 # ================= EXPORT DATA ENDPOINTS =================
 
-@app.route('/api/admin/export/complaints', methods=['GET'])
-@require_api_token
-def export_complaints():
-    """Export complaints data to CSV"""
-    try:
-        # ดึงข้อมูล complaints ทั้งหมด
-        complaints = list(complaints_col.find())
-        
-        # สร้าง CSV ใน memory
-        output = io.StringIO()
-        writer = csv.writer(output)
-        
-        # เขียน header
-        writer.writerow([
-            'ID', 'ห้อง', 'คำอธิบาย', 'สรุปจาก AI', 'สถานะ', 
-            'ความสำคัญ', 'ระดับความเร่งด่วน', 'วันที่แจ้ง', 'วันที่แก้ไข',
-            'LINE User ID', 'รูปภาพ URL', 'หมายเหตุการแก้ไข'
-        ])
-        
-        # เขียนข้อมูล
-        for comp in complaints:
-            writer.writerow([
-                str(comp.get('_id', '')),
-                comp.get('room_number', ''),
-                comp.get('description', ''),
-                comp.get('ai_summary', ''),
-                comp.get('status', ''),
-                comp.get('priority', ''),
-                comp.get('urgency_level', ''),
-                comp.get('timestamp', '').strftime('%Y-%m-%d %H:%M:%S') if comp.get('timestamp') else '',
-                comp.get('resolved_at', '').strftime('%Y-%m-%d %H:%M:%S') if comp.get('resolved_at') else '',
-                comp.get('line_user_id', ''),
-                comp.get('image_url', ''),
-                comp.get('resolved_note', '')
-            ])
-        
-        # สร้าง response
-        output.seek(0)
-        return Response(
-            output.getvalue(),
-            mimetype="text/csv",
-            headers={
-                "Content-Disposition": f"attachment; filename=complaints_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                "Content-Type": "text/csv; charset=utf-8"
-            }
-        )
-        
-    except Exception as e:
-        print(f"Export Complaints Error: {e}")
-        return jsonify({"error": str(e)}), 500
+# export_complaints endpoint removed
 
 @app.route('/api/admin/export/parcels', methods=['GET'])
 @require_api_token
@@ -3856,36 +3106,7 @@ def api_cleanup_images():
 
 # ================= AUTO-CLEANUP OLD DATA =================
 
-def cleanup_old_resolved_complaints():
-    """
-    ลบร้องเรียนที่ status='resolved' และเก่ากว่า 90 วัน
-    """
-    try:
-        ninety_days_ago = datetime.datetime.now() - datetime.timedelta(days=90)
-        
-        # ค้นหาและลบ
-        result = complaints_col.delete_many({
-            "status": "resolved",
-            "timestamp": {"$lt": ninety_days_ago}
-        })
-        
-        deleted_count = result.deleted_count
-        print(f"🗑️  Deleted {deleted_count} old resolved complaints")
-        
-        # บันทึก audit log
-        if deleted_count > 0:
-            audit_logs_col.insert_one({
-                "action": "Auto Cleanup - Complaints",
-                "performed_by": "system",
-                "target": f"{deleted_count} complaints",
-                "details": f"Deleted {deleted_count} resolved complaints older than 90 days",
-                "timestamp": get_bkk_now()
-            })
-        
-        return deleted_count
-    except Exception as e:
-        print(f"❌ Cleanup complaints error: {e}")
-        return 0
+# cleanup_old_resolved_complaints removed - system no longer supports complaints
 
 def cleanup_old_picked_parcels():
     """
@@ -3968,17 +3189,16 @@ def cleanup_old_audit_logs():
 def api_cleanup_old_data():
     """
     API สำหรับลบข้อมูลเก่าอัตโนมัติ (ควรเรียกจาก cron job)
-    - ลบร้องเรียนที่ปิดงานแล้ว (resolved) มากกว่า 90 วัน
     - ลบพัสดุที่รับแล้ว (pickedup) มากกว่า 90 วัน
+    - ลบ audit logs ที่เก่ากว่า 90 วัน
     """
     try:
         print("\n🔄 Starting auto-cleanup process...")
         
-        complaints_deleted = cleanup_old_resolved_complaints()
         parcels_deleted = cleanup_old_picked_parcels()
         audit_logs_deleted = cleanup_old_audit_logs()
         
-        total_deleted = complaints_deleted + parcels_deleted + audit_logs_deleted
+        total_deleted = parcels_deleted + audit_logs_deleted
         
         print(f"✅ Cleanup completed: {total_deleted} items deleted\n")
         
@@ -3986,7 +3206,6 @@ def api_cleanup_old_data():
             "status": "success",
             "message": "Cleanup completed successfully",
             "deleted": {
-                "complaints": complaints_deleted,
                 "parcels": parcels_deleted,
                 "audit_logs": audit_logs_deleted,
                 "total": total_deleted
@@ -4308,30 +3527,6 @@ def process_web_complaint_image(user, image_path):
         traceback.print_exc()
         return "เกิดข้อผิดพลาดในการประมวลผลค่ะ โปรดลองอีกครั้ง"
 
-# ================= Debug API =================
-
-@app.route('/api/debug/analyze', methods=['POST'])
-@require_api_token
-def debug_analyze_urgency():
-    """API สำหรับทดสอบการวิเคราะห์ความสำคัญ"""
-    try:
-        data = request.json
-        user_desc = data.get('description', '')
-        
-        if not user_desc:
-            return jsonify({"error": "Description required"}), 400
-        
-        # วิเคราะห์จากคำอธิบาย
-        desc_urgency = analyze_urgency_from_description(user_desc)
-        
-        return jsonify({
-            "description": user_desc,
-            "desc_urgency": desc_urgency,
-            "analysis_rules": {
-                "high_keywords": ["ไฟไหม้", "ไฟฟ้าลัดวงจร", "น้ำท่วม", "แก๊สรั่ว"],
-                "medium_keywords": ["แอร์เสีย", "ไฟฟ้าเสีย", "ประตูเสีย"],
-                "low_keywords": ["สีลอก", "ผนังร้าว", "ฝ้าเพดาน"]
-            }
         })
         
     except Exception as e:
