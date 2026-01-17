@@ -3,9 +3,10 @@ from ..utils.db import parcels_col, users_col
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
-from ..utils.helpers import get_bkk_time
+from ..utils.helpers import get_bkk_time, token_required
 
 @dashboard_bp.route('/api/admin/dashboard/stats', methods=['GET'])
+@token_required
 def get_stats():
     try:
         total_parcels = parcels_col.count_documents({})

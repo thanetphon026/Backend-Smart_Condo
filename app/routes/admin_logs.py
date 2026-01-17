@@ -1,11 +1,13 @@
 from flask import Blueprint, request, jsonify, Response
 from ..utils.db import audit_logs_col, log_audit
+from ..utils.helpers import token_required
 import csv
 import io
 
 logs_bp = Blueprint('logs', __name__)
 
 @logs_bp.route('/api/admin/logs', methods=['GET'])
+@token_required
 def get_logs():
     log_type = request.args.get('type', 'admin') # admin or user
     limit = int(request.args.get('limit', 20))
@@ -25,6 +27,7 @@ def get_logs():
     return jsonify({"status": "success", "data": logs})
     
 @logs_bp.route('/api/admin/logs/export', methods=['GET'])
+@token_required
 def export_logs():
     log_type = request.args.get('type', 'admin')
     admin_name = request.headers.get('X-Admin-Name', 'Admin')

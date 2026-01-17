@@ -1,9 +1,11 @@
 from flask import Blueprint, jsonify
+from ..utils.helpers import token_required
 from ..utils.db import users_col
 
 users_bp = Blueprint('users', __name__)
 
 @users_bp.route('/api/admin/users', methods=['GET'])
+@token_required
 def get_users():
     users = list(users_col.find().limit(100))
     for u in users:

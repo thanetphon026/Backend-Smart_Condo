@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, Response
 from ..utils.db import parcels_col, users_col, log_audit
-from ..utils.helpers import get_bkk_time
+from ..utils.helpers import get_bkk_time, token_required
 from ..utils.cloudinary_utils import upload_image, validate_image
 from ..utils.ai import analyze_parcel_label
 from ..utils.line import send_message, create_block_card
@@ -21,6 +21,7 @@ def generate_pin():
             return pin
 
 @parcels_bp.route('/api/admin/parcels', methods=['GET'])
+@token_required
 def get_parcels():
     parcel_type = request.args.get('type', 'all') 
     limit = int(request.args.get('limit', 100))
@@ -57,6 +58,7 @@ def get_parcels():
     return jsonify({"status": "success", "data": parcels})
 
 @parcels_bp.route('/api/admin/parcels/confirm', methods=['POST'])
+@token_required
 def confirm_receive():
     data = request.json
     pin = data.get('pin')
@@ -94,6 +96,7 @@ def confirm_receive():
     return jsonify({"status": "error", "message": "Parcel not found or already received"}), 404
 
 @parcels_bp.route('/api/admin/parcels/export_outside', methods=['GET'])
+@token_required
 def export_outside():
     admin_name = request.headers.get('X-Admin-Name', 'Admin')
     
@@ -127,6 +130,7 @@ def export_outside():
     )
 
 @parcels_bp.route('/api/admin/parcels/scan', methods=['POST'])
+@token_required
 def scan_parcel():
     """
     Step 1: Just scan and return AI analysis. DO NOT SAVE TO DB.
@@ -265,6 +269,7 @@ def scan_parcel():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @parcels_bp.route('/api/admin/parcels', methods=['POST'])
+@token_required
 def create_parcel():
     """
     Step 2: Save to DB and Notify User.
