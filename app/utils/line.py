@@ -184,11 +184,10 @@ def create_new_parcel_notification(room_number, recipient_name, transport, track
     }
     return bubble
 
-def create_after_hours_summary_card(parcels_list):
+def create_premium_parcel_list(parcels_list, title="📦 รายการพัสดุทั้งหมด", header_color="#0066ff"):
     """
-    Header: ลงทะเบียนรับนอกเวลา
-    Stats Row: Total, In-Time, Outside
-    List: Numbered list with color-coded status
+    Premium Unified Parcel List Card.
+    Used for both 'Check Status' and 'Selection'.
     """
     total = len(parcels_list)
     outside = sum(1 for p in parcels_list if p.get('is_after_hours'))
@@ -200,9 +199,9 @@ def create_after_hours_summary_card(parcels_list):
             "type": "box",
             "layout": "vertical",
             "contents": [
-                {"type": "text", "text": "🌙 ลงทะเบียนรับนอกเวลา", "weight": "bold", "color": "#ffffff", "size": "lg"}
+                {"type": "text", "text": title, "weight": "bold", "color": "#ffffff", "size": "lg"}
             ],
-            "backgroundColor": "#6200ee",
+            "backgroundColor": header_color,
             "paddingAll": "15px"
         },
         "body": {
@@ -235,29 +234,30 @@ def create_after_hours_summary_card(parcels_list):
 
     list_box = {"type": "box", "layout": "vertical", "margin": "lg", "spacing": "md", "contents": []}
     
-    # Sort by timestamp (oldest first)
-    # parcels_list should be pre-sorted or we sort here if timestamp exists
-    
     for i, p in enumerate(parcels_list, 1):
-        status_label = "(นอกเวลา)" if p.get('is_after_hours') else "(ในเวลา)"
-        status_color = "#fd7e14" if p.get('is_after_hours') else "#28a745"
+        is_outside = p.get('is_after_hours')
+        status_label = "(นอกเวลา)" if is_outside else "(ในเวลา)"
+        status_color = "#fd7e14" if is_outside else "#28a745"
+        bg_color = "#fff8f3" if is_outside else "#f8fff9"
         
         item = {
             "type": "box",
             "layout": "vertical",
+            "backgroundColor": bg_color,
+            "paddingAll": "10px",
+            "cornerRadius": "md",
             "contents": [
-                {
-                    "type": "text", 
-                    "text": f"{i}. PIN: {p.get('pin','-')} | {p.get('transport','-')}", 
-                    "weight": "bold", "size": "sm", "wrap": True
-                },
                 {
                     "type": "box",
                     "layout": "horizontal",
                     "contents": [
-                        {"type": "text", "text": f"📦 {p.get('tracking_number','-')}", "size": "xs", "color": "#888888", "flex": 3},
-                        {"type": "text", "text": status_label, "size": "xs", "color": status_color, "flex": 2, "align": "end"}
+                        {"type": "text", "text": f"{i}. PIN: {p.get('pin','-')}", "weight": "bold", "size": "sm", "flex": 3},
+                        {"type": "text", "text": status_label, "size": "xs", "color": status_color, "flex": 2, "align": "end", "weight": "bold"}
                     ]
+                },
+                {
+                    "type": "text", "text": f"🚚 {p.get('transport','-')} | {p.get('tracking_number','-')}", 
+                    "size": "xs", "color": "#555555", "margin": "xs", "wrap": True
                 }
             ]
         }
@@ -265,16 +265,70 @@ def create_after_hours_summary_card(parcels_list):
     
     bubble["body"]["contents"].append(list_box)
     
+    # Contextual Footer
+    footer_contents = []
     if in_time > 0:
-        bubble["footer"] = {
+        footer_contents.append({"type": "text", "text": "💡 ต้องการรับพัสดุชิ้นไหนนอกเวลา", "size": "xs", "color": "#888888", "align": "center", "margin": "md"})
+        footer_contents.append({"type": "text", "text": "แจ้งลำดับพัสดุ หรือรหัส PIN ได้เลยค่ะ", "size": "xs", "color": "#888888", "align": "center"})
+    elif outside > 0:
+        footer_contents.append({"type": "text", "text": "🌙 พร้อมสำหรับการรับนอกเวลาแล้วค่ะ", "size": "xs", "color": "#fd7e14", "align": "center", "margin": "md"})
+        
+    if footer_contents:
+        bubble["footer"] = {"type": "box", "layout": "vertical", "contents": footer_contents, "paddingBottom": "10px"}
+    
+    return bubble
+
+def create_cancellation_confirmation_card(parcels_to_cancel):
+    """
+    Card to confirm after-hours cancellation.
+    """
+    p_names = [f"PIN: {p.get('pin')} ({p.get('transport')})" for p in parcels_to_cancel]
+    details = "\n".join(p_names)
+    pins = ",".join([str(p.get('pin')) for p in parcels_to_cancel])
+
+    return {
+        "type": "bubble",
+        "header": {
             "type": "box",
             "layout": "vertical",
             "contents": [
-                {"type": "text", "text": "พิมพ์ 'ลำดับพัสดุ' หรือ 'รหัส PIN' ที่ต้องการ", "size": "xs", "color": "#aaaaaa", "align": "center", "margin": "sm"}
+                {"type": "text", "text": "⚠️ ยืนยันการยกเลิก", "weight": "bold", "color": "#ffffff", "size": "lg"}
+            ],
+            "backgroundColor": "#ff9900",
+            "paddingAll": "15px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "คุณต้องการยกเลิกการนัดหมายรับพัสดุนอกเวลาสำหรับรายการดังต่อไปนี้ ใช่หรือไม่?", "wrap": True, "size": "sm"},
+                {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#fff4e5", "paddingAll": "10px", "cornerRadius": "md", "contents": [
+                    {"type": "text", "text": details, "size": "xs", "color": "#b45d00", "wrap": True}
+                ]},
+                {"type": "text", "text": "*พัสดุจะถูกย้ายกลับเข้าสู่ระบบรับในเวลาปกติ", "size": "xxs", "color": "#aaaaaa", "margin": "md"}
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "horizontal",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#ff9900",
+                    "action": {"type": "postback", "label": "ยืนยันยกเลิก", "data": f"action=cancel_after_hours_confirm&pins={pins}"},
+                    "height": "sm"
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "action": {"type": "message", "label": "รักษาสิทธิ์ไว้", "text": "ตกลง ไม่ยกเลิกแล้ว"},
+                    "height": "sm"
+                }
             ]
         }
-    
-    return bubble
+    }
 
 def create_pickup_complete_card(room_number, recipient_name, transport, tracking_number, total_remaining, image_url=None):
     """

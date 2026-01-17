@@ -157,10 +157,14 @@ def analyze_parcel_label(image_data):
           "room_number": "Unit/Room Number",
           "tracking_number": "Tracking Number",
           "transport": "Logistics Company",
-          "is_label": true
+          "is_label": true,
+          "reason_if_not": ""
         }
         
-        If not a label, set "is_label": false.
+        CRITICAL RULES:
+        1. "is_label" must be TRUE ONLY if you see a clear logistics label (e.g. Courier logo, Recipient name, Room number).
+        2. If the image is blurry, random, or not a parcel label, set "is_label": false and provide "reason_if_not" (Thai).
+        3. If it is a parcel but NO recipient name or room number is visible, set "is_label": false.
         """
         
         # New Google GenAI SDK (v1) expects specific structures or Part objects
@@ -279,8 +283,12 @@ def analyze_intent(text):
     """
     try:
         prompt = f"""
-        Classify the intent of this text into EXACTLY ONE of these categories:
-        [register_outside, check_parcel, pick_parcel, cancel, general]
+        [Intent Rules]
+        - 'register_outside': Requesting to pick up parcels after hours.
+        - 'cancel': EXPLICIT request to cancel, delete, or remove after-hours registration (e.g., "ยกเลิก", "ไม่เอาแล้ว", "ย้ายกลับ"). 
+        - 'pick_parcel': User mentions specific item numbers (1, 2, 3), ranges (1-2), names, or PINs to select.
+        - 'check_parcel': Asking "What parcels do I have?", "Check status".
+        - 'general': Anything else.
         
         Text: "{text}"
         
@@ -369,10 +377,11 @@ def generate_chat_response(user_text, user_context={}):
         print(f"Gen Chat Error: {e}")
         return "ขออภัยค่ะ น้องบอตกำลังประมวลผลข้อมูล โปรดรอสักครู่หรือลองใหม่ภายหลังค่ะ"
 
-def extract_selection_id(text, parcels):
+def extract_selection_ids(text, parcels):
     """
-    Given user text and a list of parcels, identify which one they picked.
-    Returns the PIN of the selected parcel or None.
+    Given user text and a list of parcels, identify which ones they picked.
+    Returns a LIST of PINs (strings) of the selected parcels or empty list.
+    Handles multiple selections, ranges, and mixed input.
     """
     try:
         # Pre-format parcels for AI
@@ -383,18 +392,28 @@ def extract_selection_id(text, parcels):
         info_str = "\n".join(parcel_info)
         
         prompt = f"""
-        User wants to select a parcel from this list to register for after-hours pickup:
+        User wants to select one or more parcels from this list:
         {info_str}
         
         User input: "{text}"
         
-        Identify which parcel they picked (by index number 1, 2, 3..., PIN, or Tracking).
-        Return ONLY the PIN of the selected parcel as a plain number. 
-        If not clearly found, return "None".
+        Task: Identify ALL parcels referenced by the user (by index numbers 1, 2, 3..., ranges 1-2, specific PIN codes, or Courier names).
+        
+        Output format: Return ONLY a valid JSON list of PIN strings.
+        Example: ["1234", "5678"]
+        If nothing identified, return [].
         """
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
-        pin_str = res.text.strip()
-        return pin_str if pin_str != "None" else None
-    except:
-        return None
+        
+        # Clean markdown
+        txt = res.text.strip()
+        if txt.startswith("```json"): txt = txt[7:]
+        if txt.endswith("```"): txt = txt[:-3]
+        
+        import json
+        selected_pins = json.loads(txt.strip())
+        return [str(p) for p in selected_pins] if isinstance(selected_pins, list) else []
+    except Exception as e:
+        print(f"Extraction Error: {e}")
+        return []
 
