@@ -11,6 +11,11 @@ def create_app():
     app.json = MongoJSONProvider(app)
     
     CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+    # Health check endpoint for monitoring/cron-jobs
+    @app.route('/healthz')
+    def health_check():
+        return {"status": "ok", "message": "Server is running"}, 200
     
     # Import Utils to ensure DB connection
     from .utils import db
