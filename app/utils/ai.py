@@ -274,38 +274,30 @@ def check_match(scanned_data, user_profile):
 
 def analyze_intent(text):
     """
-    Classify user text into:
-    - 'register_outside': Request to pick up after hours.
-    - 'check_parcel': Asking if they have parcels.
-    - 'pick_parcel': User is selecting a specific parcel from a list (by index, PIN, or tracking).
-    - 'cancel': Cancel something.
-    - 'general': General questions (RAG).
+    Classify user intent. Returns one of:
+    [register_outside, check_parcel, pick_parcel, cancel, general]
     """
     try:
         prompt = f"""
         [Intent Rules]
-        - 'register_outside': Requesting to pick up parcels after hours.
-        - 'cancel': EXPLICIT request to cancel, delete, or remove after-hours registration (e.g., "ยกเลิก", "ไม่เอาแล้ว", "ย้ายกลับ"). 
-        - 'pick_parcel': User mentions specific item numbers (1, 2, 3), ranges (1-2), names, or PINs to select.
-        - 'check_parcel': Asking "What parcels do I have?", "Check status".
-        - 'general': Anything else.
+        - 'register_outside': Requesting to register parcels for after-hours pickup (e.g., "ลงทะเบียน", "รับนอกเวลา").
+        - 'cancel': EXPLICIT request to cancel, delete, or remove after-hours registration (e.g., "ยกเลิกนอกเวลา", "ย้ายกลับ"). 
+        - 'pick_parcel': User specifies item numbers, ranges, or PINs (e.g., "1", "1-3", "ชิ้น 2", "4612", "รหัส 1234").
+        - 'check_parcel': Asking about parcel status (e.g., "เช็กพัสดุ", "มีพัสดุไหม").
+        - 'general': Anything else (questions, chitchat, etc.).
         
         Text: "{text}"
         
-        Rules:
-        - "ลงทะเบียนรับนอกเวลา", "รับของนอกเวลา", "ขอรับพัสดุนอกเวลา" -> register_outside
-        - "มีพัสดุไหม", "ของมายัง", "เช็คพัสดุ", "ตรวจสอบพัสดุ" -> check_parcel
-        - "เอาชิ้นที่ 1", "เลือก 2", "1", "1234" (PIN), "TH123" (Tracking) -> pick_parcel
-        - "ยกเลิก", "ไม่รับแล้ว", "ยกเลิกนอกเวลา" -> cancel
-        - Everything else -> general
+        IMPORTANT: If the text is ONLY numbers or a simple range (e.g., "1", "2-4", "1234"), classify as 'pick_parcel'.
         
-        Return ONLY the category name.
+        Return ONLY the intent word (no explanation).
         """
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
         intent = res.text.strip().lower()
         valid_intents = ['register_outside', 'check_parcel', 'pick_parcel', 'cancel', 'general']
         return intent if intent in valid_intents else 'general'
-    except:
+    except Exception as e:
+        print(f"Intent Error: {e}")
         return 'general'
 
 def generate_chat_response(user_text, user_context={}):
@@ -381,7 +373,7 @@ def extract_selection_ids(text, parcels):
     """
     Given user text and a list of parcels, identify which ones they picked.
     Returns a LIST of PINs (strings) of the selected parcels or empty list.
-    Handles multiple selections, ranges, and mixed input.
+    Handles: simple numbers, ranges, Thai words, and mixed input.
     """
     try:
         # Pre-format parcels for AI
@@ -392,22 +384,30 @@ def extract_selection_ids(text, parcels):
         info_str = "\n".join(parcel_info)
         
         prompt = f"""
-        User wants to select one or more parcels from this list:
+        User wants to select parcels from this list:
         {info_str}
         
         User input: "{text}"
         
-        Task: Identify ALL parcels referenced by the user (by index numbers 1, 2, 3..., ranges 1-2, specific PIN codes, or Courier names).
+        Task: Extract ALL parcel selections. Handle these formats:
+        - Simple numbers: "1" -> Index 1
+        - Multiple: "1 2" or "1, 2" or "1 และ 2" -> Index 1 and 2
+        - Ranges: "1-3" or "หนึ่งถึงสาม" -> Index 1, 2, 3
+        - PINs: "4612" or "รหัส 1234" -> Match by PIN
+        - Thai words: "ชิ้นแรก" -> Index 1, "ชิ้นสอง" -> Index 2, etc.
         
-        Output format: Return ONLY a valid JSON list of PIN strings.
+        Output format: Return ONLY a valid JSON array of PIN strings.
         Example: ["1234", "5678"]
-        If nothing identified, return [].
+        If nothing found, return []
+        
+        CRITICAL: For simple numbers like "1" or "2", interpret as INDEX numbers, not PIN codes.
         """
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
         
         # Clean markdown
         txt = res.text.strip()
         if txt.startswith("```json"): txt = txt[7:]
+        if txt.startswith("```"): txt = txt[3:]
         if txt.endswith("```"): txt = txt[:-3]
         
         import json

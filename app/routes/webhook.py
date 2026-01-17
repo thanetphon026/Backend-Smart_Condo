@@ -48,11 +48,9 @@ def handle_text_message(event):
     reply_token = event.reply_token
     text = event.message.text.strip()
     
-    # 1. Get/Create User (Implicit Registration)
+    # 1. Get/Create User
     user = users_col.find_one({"line_user_id": user_id})
     if not user:
-        # Ask for registration first? Assuming simplistic flow: create generic user or wait for register flow.
-        # But for 'Analyze Intent' to work, we need user context.
         user = {"line_user_id": user_id, "first_name": "Guest", "room_number": None}
 
     save_chat_history(user_id, 'user', text)
@@ -62,13 +60,36 @@ def handle_text_message(event):
     intent = analyze_intent(text)
     print(f"User: {user_id} | Intent: {intent} | Text: {text}")
 
-    # 3. Handle Intents
+    # 3. Context-aware handling for 'pick_parcel'
+    # If intent is pick_parcel, check if user has pending in-time parcels
+    if intent == 'pick_parcel':
+        room = user.get('room_number')
+        if room:
+            pending_count = parcels_col.count_documents({
+                "room_number": room,
+                "status": "pending",
+                "is_after_hours": False
+            })
+            
+            # If NO pending in-time parcels, ask for confirmation
+            if pending_count == 0:
+                card = create_block_card(
+                    title="ยืนยันการลงทะเบียน?",
+                    status="ต้องการลงทะเบียนรับนอกเวลาใช่หรือไม่?",
+                    details=f"คุณพิมพ์: '{text}'\n\nหากต้องการลงทะเบียนรับพัสดุนอกเวลา กรุณากดยืนยันด้านล่าง",
+                    confirm_action={"type": "message", "label": "ใช่ ต้องการลงทะเบียน", "text": "ลงทะเบียนรับนอกเวลา"},
+                    reject_action={"type": "message", "label": "ไม่ใช่", "text": "ขอบคุณ"},
+                    color="#0066ff"
+                )
+                reply_message(reply_token, flex_contents=card)
+                return
+
+    # 4. Handle Intents
     if intent == 'register_outside':
         handle_register_outside(user, user_id, reply_token)
         return
 
     elif intent == 'check_parcel':
-        # Show Parcel Status via Block Card
         handle_check_parcel(user, user_id, reply_token)
         return
 
@@ -80,7 +101,7 @@ def handle_text_message(event):
         handle_cancel_outside(user, user_id, reply_token)
         return
     
-    # 4. General -> RAG Response (Text Only)
+    # 5. General -> RAG Response
     response_text = generate_chat_response(text, user)
     reply_message(reply_token, text=response_text)
     save_chat_history(user_id, 'assistant', response_text)
@@ -354,7 +375,12 @@ def handle_postback(event):
             reply_message(reply_token, text="เกิดข้อผิดพลาด หรือพัสดุถูกรับไปแล้วค่ะ")
 
     elif parsed.get('action') == 'cancel_after_hours_confirm':
-        room = user.get('room_number') # We need to make sure user exists here
+        user = users_col.find_one({"line_user_id": user_id})
+        if not user:
+            reply_message(reply_token, text="ไม่พบข้อมูลผู้ใช้ค่ะ")
+            return
+            
+        room = user.get('room_number')
         pins_str = parsed.get('pins', '')
         pins = [int(p) for p in pins_str.split(',') if p]
         
@@ -370,7 +396,7 @@ def handle_postback(event):
                 color="#ff9900"
             )
             reply_message(reply_token, flex_contents=card)
-            room_name = f"ห้อง {room} - {user.get('first_name', 'Guest') if user else 'Guest'}"
+            room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
             log_audit("Cancel Outside", room_name, target="ยกเลิกนัดหมาย", details=f"PINs: {pins_str}")
         else:
             reply_message(reply_token, text="เกิดข้อผิดพลาดในการยกเลิกรายการค่ะ")
