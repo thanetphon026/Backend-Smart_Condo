@@ -16,7 +16,6 @@ def create_app():
 
     # Health check endpoint for monitoring/cron-jobs
     @app.route('/healthz')
-    @token_required
     def health_check():
         return {"status": "ok", "message": "Server is running"}, 200
     

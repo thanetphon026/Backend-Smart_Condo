@@ -323,7 +323,7 @@ def create_cancellation_confirmation_card(parcels_to_cancel):
                 {
                     "type": "button",
                     "style": "secondary",
-                    "action": {"type": "message", "label": "รักษาสิทธิ์ไว้", "text": "ตกลง ไม่ยกเลิกแล้ว"},
+                    "action": {"type": "message", "label": "รักษาสิทธิ์ไว้", "text": "ไม่ยกเลิกแล้ว"},
                     "height": "sm"
                 }
             ]
