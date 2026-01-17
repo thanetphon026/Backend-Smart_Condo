@@ -288,7 +288,7 @@ def create_parcel():
             "pin": pin,
             "status": "pending",
             "is_after_hours": False,
-            "timestamp": datetime.datetime.utcnow(),
+            "timestamp": get_bkk_time(),
             "created_by": admin_name
         }
         
@@ -309,8 +309,11 @@ def create_parcel():
         log_audit("Add Parcel", admin_name, target=f"Room {new_parcel['room_number']}", details=f"PIN: {pin}")
         
         new_parcel['_id'] = str(new_parcel['_id'])
+        if isinstance(new_parcel['timestamp'], datetime.datetime):
+            new_parcel['timestamp'] = new_parcel['timestamp'].isoformat()
+
         return jsonify({
-            "status": "saved", 
+            "status": "success", 
             "pin": pin,
             "data": new_parcel
         })
