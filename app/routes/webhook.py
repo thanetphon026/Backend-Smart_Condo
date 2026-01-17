@@ -1,9 +1,17 @@
 from flask import Blueprint, request, abort, current_app, jsonify
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, PostbackEvent
-from ..utils.line import line_handler, send_message, create_block_card
+from ..utils.line import (
+    line_handler, send_message, create_block_card, 
+    create_after_hours_summary_card, create_pickup_complete_card, 
+    create_status_card, create_verification_result_card
+)
+from ..utils.cloudinary_utils import upload_image
 from ..utils.db import users_col, parcels_col, log_audit, save_chat_history
-from ..utils.ai import generate_chat_response, analyze_parcel_label, check_match, analyze_intent
+from ..utils.ai import (
+    generate_chat_response, analyze_parcel_label, 
+    check_match, analyze_intent, extract_selection_id
+)
 from ..config import Config
 import datetime
 import requests
@@ -62,10 +70,11 @@ def handle_text_message(event):
         handle_check_parcel(user, user_id)
         return
 
+    elif intent == 'pick_parcel':
+        handle_pick_parcel(user, user_id, text)
+        return
+
     elif intent == 'cancel':
-        # Cancel logic?
-        # send_message(user_id, text="การยกเลิกต้องทำผ่านนิติบุคคลโดยตรงครับ")
-        # Or simplistic: cancel outside hours request
         handle_cancel_outside(user, user_id)
         return
     
@@ -94,31 +103,88 @@ def handle_register_outside(user, user_id):
          send_message(user_id, text="ไม่พบข้อมูลห้องของคุณในระบบ กรุณาติดต่อยืนยันตัวตนกับนิติบุคคล")
          return
 
-    # Update Pending Parcels
-    result = parcels_col.update_many(
-        {"room_number": room, "status": "pending", "is_after_hours": False},
-        {"$set": {"is_after_hours": True, "registered_at": datetime.datetime.utcnow()}}
-    )
-    
-    if result.modified_count > 0:
-        card = create_block_card(
+    # Find all currently pending (in-time only)
+    pending_in_time = list(parcels_col.find({
+        "room_number": room, 
+        "status": "pending", 
+        "is_after_hours": False
+    }).sort("timestamp", 1))
+
+    if not pending_in_time:
+        # Check if they have ANYTHING pending (maybe already registered)
+        all_pending = list(parcels_col.find({"room_number": room, "status": "pending"}).sort("timestamp", 1))
+        if all_pending:
+            # Show summary so they see what's registered
+            card = create_after_hours_summary_card(all_pending)
+            send_message(user_id, flex_contents=card)
+        else:
+            send_message(user_id, text="ไม่พบพัสดุรอรับสำหรับห้องของคุณครับ")
+        return
+
+    # If exactly 1 parcel -> Auto register
+    if len(pending_in_time) == 1:
+        p = pending_in_time[0]
+        parcels_col.update_one(
+            {"_id": p['_id']},
+            {"$set": {"is_after_hours": True, "registered_at": datetime.datetime.utcnow()}}
+        )
+        card = create_status_card(
             title="ลงทะเบียนสำเร็จ",
-            status=f"✅ {result.modified_count} รายการ",
-            details="เจ้าหน้าที่กำลังเตรียมพัสดุให้คุณ กรุณามารับที่จุดบริการนอกเวลา",
-            confirm_action={"type": "message", "label": "รับทราบ", "text": "รับทราบ"},
+            status_text=f"✅ พัสดุ {p.get('transport')} ({p.get('pin')})\nถูกย้ายลงทะเบียนรับนอกเวลาเรียบร้อยแล้วค่ะ",
             color="#06c755"
         )
         send_message(user_id, flex_contents=card)
         room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
-        log_audit("Register Outside", room_name, target="รอรับพัสดุ", details=f"พัสดุ {result.modified_count} ชิ้น")
+        log_audit("Register Outside", room_name, target="Auto Move", details=f"PIN: {p.get('pin')}")
     else:
-        # Check if already registered or no parcels
-        total_pending = parcels_col.count_documents({"room_number": room, "status": "pending"})
-        if total_pending > 0:
-             # Already registered?
-             send_message(user_id, text="พัสดุของคุณถูกลงทะเบียนรับนอกเวลาไปแล้วครับ")
-        else:
-             send_message(user_id, text="ไม่พบพัสดุรอรับสำหรับห้องของคุณครับ")
+        # More than 1 -> Show list and ask to pick
+        all_pending = list(parcels_col.find({"room_number": room, "status": "pending"}).sort("timestamp", 1))
+        card = create_after_hours_summary_card(all_pending)
+        send_message(user_id, flex_contents=card)
+
+def handle_pick_parcel(user, user_id, text):
+    """
+    Handle user selecting a parcel from the list.
+    """
+    room = user.get('room_number')
+    if not room: return
+
+    # Get only in-time pending parcels for selection
+    available = list(parcels_col.find({
+        "room_number": room, 
+        "status": "pending", 
+        "is_after_hours": False
+    }).sort("timestamp", 1))
+
+    if not available:
+        send_message(user_id, text="ไม่มีพัสดุในเวลาที่รอการลงทะเบียนนอกเวลาค่ะ")
+        return
+
+    # Use AI to find which PIN they meant
+    selected_pin = extract_selection_id(text, available)
+    
+    if not selected_pin:
+        send_message(user_id, text="น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาพิมพ์ลำดับ (1, 2, 3) หรือรหัส PIN 4 หลักค่ะ")
+        return
+
+    # Try to update
+    parcel = parcels_col.find_one_and_update(
+        {"room_number": room, "pin": int(selected_pin), "is_after_hours": False},
+        {"$set": {"is_after_hours": True, "registered_at": datetime.datetime.utcnow()}},
+        return_document=True
+    )
+
+    if parcel:
+        card = create_status_card(
+            title="ลงทะเบียนสำเร็จ",
+            status_text=f"✅ พัสดุ {parcel.get('transport')} (PIN: {selected_pin})\nลงทะเบียนรับนอกเวลาเรียบร้อยแล้ว",
+            color="#06c755"
+        )
+        send_message(user_id, flex_contents=card)
+        room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
+        log_audit("Register Outside", room_name, target="Select Parcel", details=f"PIN: {selected_pin}")
+    else:
+        send_message(user_id, text="ไม่พบพัสดุรหัสนี้ หรือพัสดุถูกลงทะเบียนไปแล้วค่ะ")
 
 def handle_check_parcel(user, user_id):
     room = user.get('room_number')
@@ -143,14 +209,14 @@ def handle_check_parcel(user, user_id):
     count_in_time = sum(1 for p in parcels if not p.get('is_after_hours'))
     count_outside = len(parcels) - count_in_time
     
-    details_str = f"📦 ปกติ: {count_in_time} ชิ้น\n🌙 นอกเวลา: {count_outside} ชิ้น"
+    details_str = f"📦 รอในเวลา: {count_in_time} ชิ้น\n🌙 รอนอกเวลา: {count_outside} ชิ้น"
     
     card = create_block_card(
             title="พัสดุรอรับ",
             status=f"รวม {len(parcels)} รายการ",
             details=details_str,
             confirm_action={"type": "message", "label": "ลงทะเบียนรับนอกเวลา", "text": "ลงทะเบียนรับนอกเวลา"} if count_in_time > 0 else None,
-            color="#007bff"
+            color="#0066ff"
     )
     send_message(user_id, flex_contents=card)
 
@@ -165,27 +231,59 @@ def handle_cancel_outside(user, user_id):
     )
     
     if result.modified_count > 0:
-         send_message(user_id, text=f"✅ ยกเลิกการรับนอกเวลาสำเร็จ {result.modified_count} รายการ")
+         card = create_status_card(
+             title="ยกเลิกสำเร็จ",
+             status_text=f"✅ ยกเลิกการรับนอกเวลาสำเร็จ {result.modified_count} รายการ\nพัสดุจะถูกย้ายกลับมาในระบบปกติค่ะ",
+             color="#ff9900"
+         )
+         send_message(user_id, flex_contents=card)
          room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
          log_audit("Cancel Outside", room_name, target="ยกเลิกนัดหมาย", details=f"พัสดุ {result.modified_count} ชิ้น")
     else:
-         send_message(user_id, text="ไม่พบรายการที่จะยกเลิกครับ")
+         send_message(user_id, text="ไม่พบรายการที่ลงทะเบียนนอกเวลาไว้ค่ะ")
 
 @line_handler.add(MessageEvent, message=ImageMessageContent)
 def handle_image_message(event):
     user_id = event.source.user_id
     message_id = event.message.id
+    now = get_bkk_time()
     
+    # 1. Time Check (Normal Hours: 08:30 - 17:00)
+    # We'll allow After-Hours scan only from 17:00 until 08:30 next day
+    if 8 <= now.hour < 17:
+        card = create_status_card(
+            title="นิติบุคคลกำลังเปิดทำการ",
+            status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเฉพาะนอกเวลาทำการ (หลัง 17:00 น.) เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลโดยตรงค่ะ",
+            color="#999999"
+        )
+        send_message(user_id, flex_contents=card)
+        return
+
     user = users_col.find_one({"line_user_id": user_id})
     if not user or not user.get('room_number'):
         send_message(user_id, text="กรุณาติดต่อยืนยันตัวตนกับนิติบุคคลก่อนใช้งานฟีเจอร์นี้ครับ")
         return
     
     users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}})
-    
     user_room = user.get('room_number')
 
-    # 1. Download Image
+    # 2. Check for 'Outside Hours' parcels that are PENDING.
+    pending_outside = list(parcels_col.find({
+        "room_number": user_room,
+        "status": "pending",
+        "is_after_hours": True
+    }))
+    
+    if not pending_outside:
+        card = create_status_card(
+            title="ไม่พบคิวพัสดุนอกเวลา",
+            status_text="❌ คุณยังไม่ได้ลงทะเบียนรับของนอกเวลา หรือไม่มีพัสดุรอรับที่เตรียมไว้ในจุดรับของด้วยตนเองค่ะ",
+            color="#ff3333"
+        )
+        send_message(user_id, flex_contents=card)
+        return
+
+    # 3. Download Image
     url = f"https://api-data.line.me/v2/bot/message/{message_id}/content"
     headers = {"Authorization": f"Bearer {Config.LINE_CHANNEL_ACCESS_TOKEN}"}
     r = requests.get(url, headers=headers)
@@ -196,59 +294,37 @@ def handle_image_message(event):
     
     image_bytes = r.content
 
-    # 2. Check if System is Closed for Outside Pickup?
-    # Actually User says: "If verify name/room match... show Confirm button... BUT if not registered outside... check pending"
-    # Logic:
-    # A. Check for 'Outside Hours' parcels that are PENDING.
-    # B. If found, allow matching.
-    # C. IF NO 'Outside Hours' parcels, user CANNOT pick up yourself? "ถ้าไม่ลงทะเบียนนอกเวลา...แจ้งเลยว่าไม่มีพัสดุ"
-    
-    pending_outside = list(parcels_col.find({
-        "room_number": user_room,
-        "status": "pending",
-        "is_after_hours": True
-    }))
-    
-    if not pending_outside:
-        # Fail immediately as per requirement
-        card = create_block_card(
-            title="ไม่พบพัสดุนอกเวลา",
-            status="❌ ไม่ได้ลงทะเบียน",
-            details="คุณยังไม่ได้ลงทะเบียนรับของนอกเวลา หรือไม่มีพัสดุคงค้าง",
-            color="#ff3333"
-        )
-        send_message(user_id, flex_contents=card)
-        return
-
-    # 3. AI Analyze
+    # 4. AI Analyze (Gemini Vision)
     label_data = analyze_parcel_label(image_bytes)
     
-    # 4. Match Logic
-    is_match, reason = check_match(label_data, user)
+    # 5. Robust Match Logic
+    match_result = check_match(label_data, user)
+    is_match = match_result['is_match']
+    reason = match_result['reason']
+    ocr = match_result['ocr_details']
     
+    # Upload image for proof and for display in the result card
+    image_url = upload_image(io.BytesIO(image_bytes))
+
+    # 6. Log to Audit (Detailed)
     room_name = f"ห้อง {user_room} - {user.get('first_name', 'Guest')}"
-    status_text = "สแกนสำเร็จ" if is_match else "สแกนไม่ผ่าน"
-    log_audit("User Scan", room_name, target=status_text, details=f"ผลลัพธ์: {reason}")
+    log_status = "Success" if is_match else "Failed"
+    log_audit(
+        action=f"Self Pickup Scan ({log_status})", 
+        performed_by=room_name, 
+        target=f"Room {ocr.get('room_number','-')}", 
+        details=f"OCR Name: {ocr.get('recipient_name','-')} | Courier: {ocr.get('transport','-')} | Match Score: {match_result.get('matched_fields', [])} | Image: {image_url}"
+    )
     
-    if is_match:
-        card = create_block_card(
-            title="ข้อมูลถูกต้อง",
-            status="✅ ยืนยันเจ้าของพัสดุ",
-            details=f"พัสดุรหัสห้อง {label_data.get('room_number','-')} ชื่อ {label_data.get('recipient_name','-')}\nตรงกับข้อมูลของคุณ",
-            confirm_action={"type": "postback", "label": "ยืนยันการรับของ", "data": f"action=confirm_self&room={user_room}"},
-            reject_action={"type": "message", "label": "ยกเลิก / ถ่ายใหม่", "text": "ยกเลิก"},
-            color="#06c755"
-        )
-        send_message(user_id, flex_contents=card, image_url=None) # Image URL optionally shown if we uploaded it
-    else:
-        card = create_block_card(
-            title="ผิดกล่อง / ไม่ใช่ของคุณ",
-            status="❌ ข้อมูลไม่ตรงกัน",
-            details=f"เหตุผล: {reason}\nกรุณาเก็บพัสดุไว้ที่เดิม แล้วตรวจสอบเลขห้องบนกล่องอีกครั้ง",
-            reject_action={"type": "message", "label": "รับทราบ / ถ่ายใหม่", "text": "รับทราบ"},
-            color="#ff3333"
-        )
-        send_message(user_id, flex_contents=card)
+    # 7. Send Verification Result Card
+    card = create_verification_result_card(
+        is_match=is_match,
+        reason=reason,
+        ocr_details=ocr,
+        image_url=image_url,
+        confirm_action={"type": "postback", "label": "ยืนยันการรับของ", "data": f"action=confirm_self&room={user_room}&verify_img={image_url}"} if is_match else None
+    )
+    send_message(user_id, flex_contents=card)
 
 @line_handler.add(PostbackEvent)
 def handle_postback(event):
@@ -261,6 +337,7 @@ def handle_postback(event):
     
     if parsed.get('action') == 'confirm_self':
         room = parsed.get('room')
+        verify_img = parsed.get('verify_img')
         
         # Double check intent/ai logic? already passed previous step.
         # Just update status.
@@ -269,19 +346,27 @@ def handle_postback(event):
             {"$set": {
                 "status": "received", 
                 "received_at": datetime.datetime.utcnow(),
-                "received_by": "self_pickup"
+                "received_by": "self_pickup",
+                "verification_image": verify_img
             }}
         )
         
         if result.modified_count > 0:
-            card = create_block_card(
-                title="รับพัสดุสำเร็จ",
-                status="✅ เรียบร้อยแล้ว",
-                details=f"คุณได้รับพัสดุจำนวน {result.modified_count} ชิ้นแล้ว",
-                color="#06c755"
+            user = users_col.find_one({"line_user_id": user_id})
+            # For self pickup notification, show details of the last item but use the NEW verification image
+            last_p = list(parcels_col.find({"room_number": room, "status": "received"}).sort("received_at", -1).limit(1))[0]
+            remaining = parcels_col.count_documents({"room_number": room, "status": "pending"})
+            
+            card = create_pickup_complete_card(
+                room_number=room,
+                recipient_name=last_p.get('recipient_name'),
+                transport=last_p.get('transport'),
+                tracking_number=last_p.get('tracking_number'),
+                total_remaining=remaining,
+                image_url=verify_img or last_p.get('image_url')
             )
             send_message(user_id, flex_contents=card)
-            room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
+            room_name = f"ห้อง {room} - {user.get('first_name', 'Guest') if user else 'Guest'}"
             log_audit("Self Pickup Success", room_name, target="รับพัสดุเองสำเร็จ", details=f"พัสดุดำเนินการแล้ว {result.modified_count} ชิ้น")
         else:
-            send_message(user_id, text="เกิดข้อผิดพลาด หรือพัสดุถูกรับไปแล้ว")
+            send_message(user_id, text="เกิดข้อผิดพลาด หรือพัสดุถูกรับไปแล้วค่ะ")

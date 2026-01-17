@@ -188,19 +188,33 @@ def analyze_parcel_label(image_data):
 def check_match(scanned_data, user_profile):
     """
     Robust comparison between scanned data and user profile.
-    Returns: (is_match: bool, reason: str)
+    Returns: {
+        "is_match": bool,
+        "reason": str,
+        "matched_fields": list,
+        "ocr_details": dict
+    }
     """
     if not scanned_data or not scanned_data.get('is_label'):
-        return False, "ไม่พบข้อมูลพัสดุจากรูปภาพ"
+        return {
+            "is_match": False, 
+            "reason": "ไม่พบข้อมูลพัสดุจากรูปภาพ", 
+            "matched_fields": [], 
+            "ocr_details": scanned_data or {}
+        }
     
     # Normalizers
     def normalize_room(room_str):
-        if not room_str or room_str == "N/A": return None
-        return str(room_str).strip().replace(" ", "").replace("ห้อง", "").replace("Room", "").replace("room", "")
+        if not room_str or room_str == "N/A": return ""
+        return str(room_str).strip().replace(" ", "").replace("ห้อง", "").replace("Room", "").replace("room", "").replace("/", "")
 
     def normalize_name(name_str):
-        if not name_str or name_str == "N/A": return None
-        return str(name_str).strip().replace("คุณ", "").replace("Mr.", "").replace("Ms.", "").replace("Mrs.", "").replace(" ", "")
+        if not name_str or name_str == "N/A": return ""
+        # Remove common titles and spaces
+        s = str(name_str).strip().lower()
+        for title in ["คุณ", "mr.", "ms.", "mrs.", "miss", "นาย", "นาง", "นางสาว"]:
+            s = s.replace(title, "")
+        return s.replace(" ", "")
 
     scanned_room = normalize_room(scanned_data.get('room_number'))
     user_room = normalize_room(user_profile.get('room_number'))
@@ -211,25 +225,47 @@ def check_match(scanned_data, user_profile):
     display_name = normalize_name(user_profile.get('display_name', ''))
     full_name = (first_name or '') + (last_name or '')
 
-    # 1. Room Match (Exact or Partial)
+    matched_fields = []
+    
+    # 1. Room Match
+    room_match = False
     if scanned_room and user_room:
         if scanned_room == user_room or scanned_room in user_room or user_room in scanned_room:
-            return True, f"ห้องตรงกัน ({scanned_room})"
+            room_match = True
+            matched_fields.append("เลขห้อง")
 
-    # 2. Name Match (Fuzzy)
+    # 2. Name Match
+    name_match = False
     if scanned_name:
-        if first_name and (scanned_name in first_name or first_name in scanned_name):
-            return True, "ชื่อตรงกัน (First Name)"
-        if last_name and (scanned_name in last_name or last_name in scanned_name):
-            return True, "นามสกุลตรงกัน (Last Name)"
-        if display_name and (scanned_name in display_name or display_name in scanned_name):
-            return True, "ชื่อไลน์ตรงกัน"
-        if full_name and (scanned_name in full_name or full_name in scanned_name):
-            return True, "ชื่อ-นามสกุลตรงกัน"
+        if (first_name and (scanned_name in first_name or first_name in scanned_name)) or \
+           (last_name and (scanned_name in last_name or last_name in scanned_name)) or \
+           (display_name and (scanned_name in display_name or display_name in scanned_name)) or \
+           (full_name and (scanned_name in full_name or full_name in scanned_name)):
+            name_match = True
+            matched_fields.append("ชื่อ-นามสกุล")
 
-    # Mismatch Detail
-    reason = f"OCR: {scanned_data.get('room_number')}/{scanned_data.get('recipient_name')} != User: {user_profile.get('room_number')}/{user_profile.get('first_name')}"
-    return False, reason
+    # Final Decision: BOTH must nominally match or be strongly indicated
+    # However, sometimes scanning misses one but gets the other perfectly.
+    # We require at least ONE strong match and the other not being a HARD mismatch.
+    
+    is_match = room_match and name_match
+    
+    if is_match:
+        reason = "ข้อมูลถูกต้อง ตรงกับฐานข้อมูล"
+    elif room_match:
+        reason = "พบเลขห้องที่ถูกต้อง แต่ชื่อผู้รับไม่ชัดเจน"
+        # We might allow if room is very certain? Requirement says check both.
+    elif name_match:
+        reason = "พบชื่อที่ถูกต้อง แต่เลขห้องไม่ตรง"
+    else:
+        reason = "ข้อมูลไม่ตรงกับบัญชีผู้ใช้งานนี้"
+
+    return {
+        "is_match": is_match,
+        "reason": reason,
+        "matched_fields": matched_fields,
+        "ocr_details": scanned_data
+    }
 
 
 def analyze_intent(text):
@@ -237,28 +273,29 @@ def analyze_intent(text):
     Classify user text into:
     - 'register_outside': Request to pick up after hours.
     - 'check_parcel': Asking if they have parcels.
-    - 'pickup_confirm': Trying to confirm receipt (via text).
+    - 'pick_parcel': User is selecting a specific parcel from a list (by index, PIN, or tracking).
     - 'cancel': Cancel something.
     - 'general': General questions (RAG).
     """
     try:
         prompt = f"""
         Classify the intent of this text into EXACTLY ONE of these categories:
-        [register_outside, check_parcel, cancel, general]
+        [register_outside, check_parcel, pick_parcel, cancel, general]
         
         Text: "{text}"
         
         Rules:
-        - "ลงทะเบียนรับนอกเวลา", "รับของนอกเวลา", "not in time" -> register_outside
-        - "มีพัสดุไหม", "ของมายัง", "เช็คพัสดุ" -> check_parcel
-        - "ยกเลิก", "ไม่รับแล้ว" -> cancel
+        - "ลงทะเบียนรับนอกเวลา", "รับของนอกเวลา", "ขอรับพัสดุนอกเวลา" -> register_outside
+        - "มีพัสดุไหม", "ของมายัง", "เช็คพัสดุ", "ตรวจสอบพัสดุ" -> check_parcel
+        - "เอาชิ้นที่ 1", "เลือก 2", "1", "1234" (PIN), "TH123" (Tracking) -> pick_parcel
+        - "ยกเลิก", "ไม่รับแล้ว", "ยกเลิกนอกเวลา" -> cancel
         - Everything else -> general
         
         Return ONLY the category name.
         """
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
         intent = res.text.strip().lower()
-        valid_intents = ['register_outside', 'check_parcel', 'cancel', 'general']
+        valid_intents = ['register_outside', 'check_parcel', 'pick_parcel', 'cancel', 'general']
         return intent if intent in valid_intents else 'general'
     except:
         return 'general'
@@ -331,4 +368,33 @@ def generate_chat_response(user_text, user_context={}):
     except Exception as e:
         print(f"Gen Chat Error: {e}")
         return "ขออภัยค่ะ น้องบอตกำลังประมวลผลข้อมูล โปรดรอสักครู่หรือลองใหม่ภายหลังค่ะ"
+
+def extract_selection_id(text, parcels):
+    """
+    Given user text and a list of parcels, identify which one they picked.
+    Returns the PIN of the selected parcel or None.
+    """
+    try:
+        # Pre-format parcels for AI
+        parcel_info = []
+        for i, p in enumerate(parcels, 1):
+            parcel_info.append(f"Index: {i}, PIN: {p.get('pin')}, Tracking: {p.get('tracking_number')}, Courier: {p.get('transport')}")
+        
+        info_str = "\n".join(parcel_info)
+        
+        prompt = f"""
+        User wants to select a parcel from this list to register for after-hours pickup:
+        {info_str}
+        
+        User input: "{text}"
+        
+        Identify which parcel they picked (by index number 1, 2, 3..., PIN, or Tracking).
+        Return ONLY the PIN of the selected parcel as a plain number. 
+        If not clearly found, return "None".
+        """
+        res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
+        pin_str = res.text.strip()
+        return pin_str if pin_str != "None" else None
+    except:
+        return None
 

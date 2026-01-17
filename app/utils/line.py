@@ -49,13 +49,7 @@ def create_block_card(title, status, details, image_url=None, confirm_action=Non
             "type": "box",
             "layout": "vertical",
             "contents": [
-                {
-                    "type": "text",
-                    "text": title,
-                    "weight": "bold",
-                    "color": "#ffffff",
-                    "size": "xl"
-                }
+                {"type": "text", "text": title, "weight": "bold", "color": "#ffffff", "size": "xl"}
             ],
             "backgroundColor": color,
             "paddingAll": "20px"
@@ -67,7 +61,6 @@ def create_block_card(title, status, details, image_url=None, confirm_action=Non
         }
     }
     
-    # Image
     if image_url:
         bubble["body"]["contents"].append({
             "type": "image",
@@ -78,7 +71,6 @@ def create_block_card(title, status, details, image_url=None, confirm_action=Non
             "action": {"type": "uri", "uri": image_url}
         })
     
-    # Details
     info_box = {
         "type": "box",
         "layout": "vertical",
@@ -91,18 +83,320 @@ def create_block_card(title, status, details, image_url=None, confirm_action=Non
     }
     bubble["body"]["contents"].append(info_box)
     
-    # Footer Buttons
+    footer = {"type": "box", "layout": "vertical", "spacing": "sm", "contents": []}
+    if confirm_action:
+        footer["contents"].append({"type": "button", "style": "primary", "color": color, "action": confirm_action, "height": "sm"})
+    if reject_action:
+        footer["contents"].append({"type": "button", "style": "secondary", "action": reject_action, "height": "sm"})
+    if footer["contents"]:
+        bubble["footer"] = footer
+        
+    return bubble
+
+def create_new_parcel_notification(room_number, recipient_name, transport, tracking_number, scan_time, total_pending, image_url=None):
+    """
+    Header: พัสดุใหม่
+    Body: Details + Image + Total Pending + Instruction
+    """
+    bubble = {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "📦 พัสดุมาใหม่", "weight": "bold", "color": "#ffffff", "size": "lg"}
+            ],
+            "backgroundColor": "#007bff",
+            "paddingAll": "15px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": []
+        }
+    }
+
+    if image_url:
+        bubble["body"]["contents"].append({
+            "type": "image",
+            "url": image_url,
+            "size": "full",
+            "aspectRatio": "20:13",
+            "aspectMode": "cover",
+            "margin": "md"
+        })
+
+    details_box = {
+        "type": "box",
+        "layout": "vertical",
+        "margin": "lg",
+        "spacing": "sm",
+        "contents": [
+            {"type": "text", "text": f"🏠 เลขห้อง: {room_number}", "weight": "bold", "size": "sm", "wrap": True},
+            {"type": "text", "text": f"👤 ชื่อผู้รับ: {recipient_name}", "size": "sm", "wrap": True},
+            {"type": "text", "text": f"🚚 บริษัทขนส่ง: {transport}", "size": "sm", "wrap": True},
+            {"type": "text", "text": f"📦 เลขพัสดุ: {tracking_number}", "size": "sm", "wrap": True},
+            {"type": "text", "text": f"⏰ เวลาที่บันทึก: {scan_time}", "size": "xs", "color": "#aaaaaa", "wrap": True},
+            {"type": "separator", "margin": "md"},
+            {"type": "text", "text": f"📊 พัสดุค้างทั้งหมด: {total_pending} ชิ้น", "weight": "bold", "size": "sm", "color": "#007bff", "margin": "md"},
+            {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#fff4e5", "paddingAll": "10px", "cornerRadius": "md", "contents": [
+                {"type": "text", "text": "🔔 ต้องการรับนอกเวลา?", "weight": "bold", "size": "xs", "color": "#b45d00"},
+                {"type": "text", "text": "ให้แจ้งภายใน 08:00-16:30 น. ของทุกวัน", "size": "xs", "color": "#b45d00", "wrap": True}
+            ]}
+        ]
+    }
+    bubble["body"]["contents"].append(details_box)
+    
+    bubble["footer"] = {
+        "type": "box",
+        "layout": "vertical",
+        "contents": [
+            {
+                "type": "button",
+                "style": "primary",
+                "color": "#007bff",
+                "action": {"type": "message", "label": "ลงทะเบียนรับนอกเวลา", "text": "ลงทะเบียนรับนอกเวลา"},
+                "height": "sm"
+            }
+        ]
+    }
+    return bubble
+
+def create_after_hours_summary_card(parcels_list):
+    """
+    Header: ลงทะเบียนรับนอกเวลา
+    Stats Row: Total, In-Time, Outside
+    List: Numbered list with color-coded status
+    """
+    total = len(parcels_list)
+    outside = sum(1 for p in parcels_list if p.get('is_after_hours'))
+    in_time = total - outside
+
+    bubble = {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "🌙 ลงทะเบียนรับนอกเวลา", "weight": "bold", "color": "#ffffff", "size": "lg"}
+            ],
+            "backgroundColor": "#6200ee",
+            "paddingAll": "15px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {"type": "box", "layout": "vertical", "contents": [
+                            {"type": "text", "text": "ทั้งหมด", "size": "xs", "color": "#aaaaaa", "align": "center"},
+                            {"type": "text", "text": str(total), "weight": "bold", "align": "center"}
+                        ]},
+                        {"type": "box", "layout": "vertical", "contents": [
+                            {"type": "text", "text": "ในเวลา", "size": "xs", "color": "#aaaaaa", "align": "center"},
+                            {"type": "text", "text": str(in_time), "weight": "bold", "align": "center", "color": "#28a745"}
+                        ]},
+                        {"type": "box", "layout": "vertical", "contents": [
+                            {"type": "text", "text": "นอกเวลา", "size": "xs", "color": "#aaaaaa", "align": "center"},
+                            {"type": "text", "text": str(outside), "weight": "bold", "align": "center", "color": "#fd7e14"}
+                        ]}
+                    ],
+                    "margin": "md"
+                },
+                {"type": "separator", "margin": "lg"}
+            ]
+        }
+    }
+
+    list_box = {"type": "box", "layout": "vertical", "margin": "lg", "spacing": "md", "contents": []}
+    
+    # Sort by timestamp (oldest first)
+    # parcels_list should be pre-sorted or we sort here if timestamp exists
+    
+    for i, p in enumerate(parcels_list, 1):
+        status_label = "(นอกเวลา)" if p.get('is_after_hours') else "(ในเวลา)"
+        status_color = "#fd7e14" if p.get('is_after_hours') else "#28a745"
+        
+        item = {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text", 
+                    "text": f"{i}. PIN: {p.get('pin','-')} | {p.get('transport','-')}", 
+                    "weight": "bold", "size": "sm", "wrap": True
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {"type": "text", "text": f"📦 {p.get('tracking_number','-')}", "size": "xs", "color": "#888888", "flex": 3},
+                        {"type": "text", "text": status_label, "size": "xs", "color": status_color, "flex": 2, "align": "end"}
+                    ]
+                }
+            ]
+        }
+        list_box["contents"].append(item)
+    
+    bubble["body"]["contents"].append(list_box)
+    
+    if in_time > 0:
+        bubble["footer"] = {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "พิมพ์ 'ลำดับพัสดุ' หรือ 'รหัส PIN' ที่ต้องการ", "size": "xs", "color": "#aaaaaa", "align": "center", "margin": "sm"}
+            ]
+        }
+    
+    return bubble
+
+def create_pickup_complete_card(room_number, recipient_name, transport, tracking_number, total_remaining, image_url=None):
+    """
+    Header: รับพัสดุเสร็จสิ้น
+    """
+    bubble = {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "✅ รับพัสดุเสร็จสิ้น", "weight": "bold", "color": "#ffffff", "size": "lg"}
+            ],
+            "backgroundColor": "#28a745",
+            "paddingAll": "15px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": []
+        }
+    }
+
+    if image_url:
+        bubble["body"]["contents"].append({
+            "type": "image",
+            "url": image_url,
+            "size": "full",
+            "aspectRatio": "20:13",
+            "aspectMode": "cover",
+            "margin": "md"
+        })
+
+    details_box = {
+        "type": "box",
+        "layout": "vertical",
+        "margin": "lg",
+        "spacing": "sm",
+        "contents": [
+            {"type": "text", "text": f"🏠 เลขห้อง: {room_number}", "weight": "bold", "size": "sm"},
+            {"type": "text", "text": f"👤 ชื่อผู้รับ: {recipient_name}", "size": "sm"},
+            {"type": "text", "text": f"🚚 ขนส่ง: {transport}", "size": "sm"},
+            {"type": "text", "text": f"📦 เลขพัสดุ: {tracking_number}", "size": "sm"},
+            {"type": "separator", "margin": "md"},
+            {"type": "text", "text": f"📊 พัสดุคงค้างปัจจุบัน: {total_remaining} ชิ้น", "weight": "bold", "size": "sm", "color": "#28a745", "margin": "md"},
+            {"type": "text", "text": "🙏 ขอบคุณที่ใช้บริการค่ะ", "size": "sm", "color": "#555555", "margin": "md", "align": "center"}
+        ]
+    }
+    bubble["body"]["contents"].append(details_box)
+    return bubble
+
+def create_status_card(title, status_text, color="#06c755"):
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": title, "weight": "bold", "size": "xl", "color": color, "align": "center"},
+                {"type": "separator", "margin": "lg"},
+                {"type": "text", "text": status_text, "margin": "lg", "wrap": True, "align": "center", "size": "md"}
+            ],
+            "paddingAll": "25px"
+        }
+    }
+def create_verification_result_card(is_match, reason, ocr_details, image_url, confirm_action=None):
+    """
+    Card to show AI Vision analysis result.
+    """
+    color = "#28a745" if is_match else "#dc3545"
+    title = "✅ ยืนยันพัสดุถูกต้อง" if is_match else "❌ พัสดุไม่ถูกต้อง"
+    
+    bubble = {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": title, "weight": "bold", "color": "#ffffff", "size": "lg"}
+            ],
+            "backgroundColor": color,
+            "paddingAll": "15px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "image",
+                    "url": image_url,
+                    "size": "full",
+                    "aspectRatio": "20:13",
+                    "aspectMode": "cover"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "lg",
+                    "spacing": "sm",
+                    "contents": [
+                        {"type": "text", "text": reason, "weight": "bold", "size": "md", "color": color, "wrap": True},
+                        {"type": "separator", "margin": "md"},
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "margin": "md",
+                            "spacing": "xs",
+                            "contents": [
+                                {"type": "text", "text": f"🏠 ห้องที่พบ: {ocr_details.get('room_number','-')}", "size": "sm"},
+                                {"type": "text", "text": f"👤 ชื่อผู้รับ: {ocr_details.get('recipient_name','-')}", "size": "sm"},
+                                {"type": "text", "text": f"🚚 ขนส่ง: {ocr_details.get('transport','-')}", "size": "sm"},
+                                {"type": "text", "text": f"📦 เลขพัสดุ: {ocr_details.get('tracking_number','-')}", "size": "xs", "color": "#888888"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    if not is_match:
+        warning_box = {
+            "type": "box",
+            "layout": "vertical",
+            "margin": "md",
+            "backgroundColor": "#fff5f5",
+            "paddingAll": "10px",
+            "cornerRadius": "md",
+            "contents": [
+                {"type": "text", "text": "⚠️ ไม่ใช่พัสดุของคุณ", "weight": "bold", "size": "xs", "color": "#dc3545"},
+                {"type": "text", "text": "กรุณาวางพัสดุไว้ที่เดิม และตรวจสอบเลขห้องอีกครั้งค่ะ", "size": "xs", "color": "#dc3545", "wrap": True}
+            ]
+        }
+        bubble["body"]["contents"].append(warning_box)
+
     footer = {
         "type": "box",
         "layout": "vertical",
         "spacing": "sm",
         "contents": []
     }
-    
-    if confirm_action:
-        # Check if disabled (handled by not adding action or making it a dull button)
-        # But Line Flex doesn't support 'disabled' attribute easily. 
-        # Usually we just don't show the button or show a grey button with no action.
+
+    if is_match and confirm_action:
         footer["contents"].append({
             "type": "button",
             "style": "primary",
@@ -110,16 +404,21 @@ def create_block_card(title, status, details, image_url=None, confirm_action=Non
             "action": confirm_action,
             "height": "sm"
         })
-        
-    if reject_action:
+    else:
+        # Disabled-look button for mismatch
         footer["contents"].append({
             "type": "button",
             "style": "secondary",
-            "action": reject_action,
-             "height": "sm"
+            "action": {"type": "message", "label": "ยืนยัน (ปิดใช้งาน)", "text": "ปุ่มนี้ถูกปิดเนื่องจากข้อมูลไม่ถูกต้อง"},
+            "height": "sm"
         })
-        
-    if footer["contents"]:
-        bubble["footer"] = footer
-        
+
+    footer["contents"].append({
+        "type": "button",
+        "style": "link",
+        "action": {"type": "message", "label": "ยกเลิก / ถ่ายใหม่", "text": "ยกเลิก"},
+        "height": "sm"
+    })
+    
+    bubble["footer"] = footer
     return bubble

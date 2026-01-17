@@ -3,7 +3,10 @@ from ..utils.db import parcels_col, users_col, log_audit
 from ..utils.helpers import get_bkk_time, token_required
 from ..utils.cloudinary_utils import upload_image, validate_image
 from ..utils.ai import analyze_parcel_label
-from ..utils.line import send_message, create_block_card
+from ..utils.line import (
+    send_message, create_block_card, 
+    create_new_parcel_notification, create_pickup_complete_card
+)
 import datetime
 import csv
 import io
@@ -81,13 +84,17 @@ def confirm_receive():
         # Notify User with Block Card
         user = users_col.find_one({"room_number": result.get('room_number')})
         if user:
-            card = create_block_card(
-                title="พัสดุถูกรับแล้ว",
-                status="✅ รับโดยเจ้าหน้าที่",
-                details=f"พัสดุ PIN {pin} ถูกรับเรียบร้อยแล้ว",
-                color="#06c755"
+            # Count remaining pending
+            remaining_count = parcels_col.count_documents({"room_number": result.get('room_number'), "status": "pending"})
+            
+            card = create_pickup_complete_card(
+                room_number=result.get('room_number'),
+                recipient_name=result.get('recipient_name'),
+                transport=result.get('transport'),
+                tracking_number=result.get('tracking_number'),
+                total_remaining=remaining_count,
+                image_url=result.get('image_url')
             )
-            # send_message logic supports flex
             send_message(user['line_user_id'], flex_contents=card)
             
         log_audit("Confirm Pickup", admin_name, target=f"Parcel {pin}", details=f"Room {result.get('room_number')}")
@@ -297,12 +304,19 @@ def create_parcel():
         # Notify User
         user = users_col.find_one({"room_number": new_parcel['room_number']})
         if user:
-             card = create_block_card(
-                title="พัสดุมาใหม่",
-                status=f"PIN: {pin}",
-                details="มีพัสดุมาใหม่ กรุณาติดต่อรับได้ที่นิติบุคคล",
-                image_url=new_parcel['image_url'],
-                color="#007bff"
+             # Count all pending for this room
+             total_pending = parcels_col.count_documents({"room_number": new_parcel['room_number'], "status": "pending"})
+             
+             formatted_time = new_parcel['timestamp'].strftime('%d/%m/%Y %H:%M') if isinstance(new_parcel['timestamp'], datetime.datetime) else str(new_parcel['timestamp'])
+
+             card = create_new_parcel_notification(
+                room_number=new_parcel['room_number'],
+                recipient_name=new_parcel['recipient_name'],
+                transport=new_parcel['transport'],
+                tracking_number=new_parcel['tracking_number'],
+                scan_time=formatted_time,
+                total_pending=total_pending,
+                image_url=new_parcel['image_url']
              )
              send_message(user['line_user_id'], flex_contents=card)
 
