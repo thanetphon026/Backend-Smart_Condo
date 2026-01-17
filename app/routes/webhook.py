@@ -60,19 +60,37 @@ def handle_text_message(event):
     intent = analyze_intent(text)
     print(f"User: {user_id} | Intent: {intent} | Text: {text}")
 
-    # 3. Context-aware handling for 'pick_parcel'
-    # If intent is pick_parcel, check if user has pending in-time parcels
+    # 3. Context-aware handling for 'pick_parcel' (number inputs)
     if intent == 'pick_parcel':
         room = user.get('room_number')
         if room:
-            pending_count = parcels_col.count_documents({
-                "room_number": room,
-                "status": "pending",
-                "is_after_hours": False
-            })
+            # Check interaction context from user doc
+            context = user.get('context_action') # e.g., 'cancel_select', 'register_select'
             
-            # If NO pending in-time parcels, ask for confirmation
-            if pending_count == 0:
+            # Priority 1: Explicit flow state
+            if context == 'cancel_select':
+                handle_cancel_select_parcel(user, user_id, text, reply_token)
+                return
+            
+            # Priority 2: Smart routing based on current parcel presence
+            has_pending_in_time = parcels_col.count_documents({
+                "room_number": room, "status": "pending", "is_after_hours": False
+            }) > 0
+            
+            has_after_hours = parcels_col.count_documents({
+                "room_number": room, "status": "pending", "is_after_hours": True
+            }) > 0
+            
+            if has_pending_in_time:
+                # If they have normal parcels, assume they want to register them
+                handle_pick_parcel(user, user_id, text, reply_token)
+                return
+            elif has_after_hours:
+                # No in-time parcels but has after-hours -> assume cancellation selection
+                handle_cancel_select_parcel(user, user_id, text, reply_token)
+                return
+            else:
+                # No parcels at all, ask confirmation before assuming anything
                 card = create_block_card(
                     title="ยืนยันการลงทะเบียน?",
                     status="ต้องการลงทะเบียนรับนอกเวลาใช่หรือไม่?",
@@ -83,9 +101,18 @@ def handle_text_message(event):
                 )
                 reply_message(reply_token, flex_contents=card)
                 return
+        
+        # Fallback if no room or other issues
+        handle_pick_parcel(user, user_id, text, reply_token)
+        return
 
-    # 4. Handle Intents
+    # Clear context when explicit new intent is detected
+    if intent in ['register_outside', 'cancel', 'check_parcel']:
+        users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": None}})
+
+    # 4. Handle Specific Intents
     if intent == 'register_outside':
+        users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": "register_select"}})
         handle_register_outside(user, user_id, reply_token)
         return
 
@@ -93,15 +120,11 @@ def handle_text_message(event):
         handle_check_parcel(user, user_id, reply_token)
         return
 
-    elif intent == 'pick_parcel':
-        handle_pick_parcel(user, user_id, text, reply_token)
-        return
-
     elif intent == 'cancel':
-        handle_cancel_outside(user, user_id, reply_token)
+        handle_cancel_outside(user, user_id, reply_token, text)
         return
     
-    # 5. General -> RAG Response
+    # 5. General -> AI Chat
     response_text = generate_chat_response(text, user)
     reply_message(reply_token, text=response_text)
     save_chat_history(user_id, 'assistant', response_text)
@@ -230,18 +253,80 @@ def handle_check_parcel(user, user_id, reply_token):
     card = create_premium_parcel_list(parcels, title="📦 รายการพัสดุรอรับ", header_color="#0066ff")
     reply_message(reply_token, flex_contents=card)
 
-def handle_cancel_outside(user, user_id, reply_token):
+def handle_cancel_outside(user, user_id, reply_token, user_text=""):
+    """
+    Smart cancellation handler:
+    - 1 parcel: Show confirmation immediately
+    - Multiple parcels: Show selection list, wait for user to pick
+    - "ยกเลิกทั้งหมด": Show confirmation for all
+    """
     room = user.get('room_number')
     if not room: return
     
-    # NEW Safe flow: Ask for confirmation first
     to_cancel = list(parcels_col.find({"room_number": room, "status": "pending", "is_after_hours": True}))
     
     if not to_cancel:
         reply_message(reply_token, text="ไม่พบรายการที่ลงทะเบียนนอกเวลาไว้ค่ะ")
         return
+    
+    # Check if user said "ทั้งหมด" (all)
+    cancel_all = "ทั้งหมด" in user_text or "ทั้งหมด" in user_text.lower()
+    
+    if len(to_cancel) == 1:
+        # Single parcel: Show confirmation immediately
+        users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": None}})
+        card = create_cancellation_confirmation_card(to_cancel)
+        reply_message(reply_token, flex_contents=card)
+    elif cancel_all:
+        # Explicit "cancel all": Show confirmation for all
+        users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": None}})
+        card = create_cancellation_confirmation_card(to_cancel)
+        reply_message(reply_token, flex_contents=card)
+    else:
+        # Multiple parcels: Show selection list
+        users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": "cancel_select"}})
+        card = create_premium_parcel_list(
+            to_cancel, 
+            title="⚠️ เลือกพัสดุที่ต้องการยกเลิก", 
+            header_color="#ff9900"
+        )
+        reply_message(reply_token, flex_contents=card)
+        # Note: User will type selection, which triggers handle_cancel_select_parcel
 
-    card = create_cancellation_confirmation_card(to_cancel)
+def handle_cancel_select_parcel(user, user_id, text, reply_token):
+    """
+    Handle when user selects specific parcels to cancel from the list.
+    """
+    room = user.get('room_number')
+    if not room: return
+    
+    available = list(parcels_col.find({
+        "room_number": room,
+        "status": "pending",
+        "is_after_hours": True
+    }).sort("timestamp", 1))
+    
+    if not available:
+        reply_message(reply_token, text="ไม่พบรายการที่ลงทะเบียนนอกเวลาค่ะ")
+        return
+    
+    # Use extraction to find selected PINs
+    selected_pins = extract_selection_ids(text, available)
+    
+    if not selected_pins:
+        reply_message(reply_token, text="น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาระบุลำดับหรือรหัส PIN ที่ต้องการยกเลิกค่ะ")
+        return
+    
+    # Get the selected parcels
+    selected_parcels = [p for p in available if str(p.get('pin')) in selected_pins]
+    
+    if not selected_parcels:
+        reply_message(reply_token, text="ไม่พบพัสดุที่คุณเลือกค่ะ")
+        return
+    
+    # Clear context and show confirmation
+    users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": None}})
+    card = create_cancellation_confirmation_card(selected_parcels)
     reply_message(reply_token, flex_contents=card)
 
 @line_handler.add(MessageEvent, message=ImageMessageContent)

@@ -373,61 +373,99 @@ def generate_chat_response(user_text, user_context={}):
 
 def extract_selection_ids(text, parcels):
     """
-    Extract parcel selections using smart digit interpretation:
-    - "1-3" = range (indexes 1,2,3)
-    - "123" (1-4 digits) = separate digits (indexes 1,2,3)
-    - "12345" (5+ digits) = PIN code
-    - Thai words with AI support: "หนึ่ง", "สอง", "ชิ้นหนึ่งถึงสาม", typos like "หนึง่"
+    Comprehensive parcel selection extraction supporting:
+    1. Pure numbers: "1 2 3" or "1"
+    2. Comma-separated: "1,2,3" or "1, 2, 3"
+    3. Ranges: "1-2", "2-4", "หนึ่งถึงสาม"
+    4. Thai words: "ชิ้นหนึ่ง", "ชิ้นสอง"
+    5. Mixed: "ชิ้น1และสอง", "ชิ้นสองและ3"
+    6. With typos: corrections handled by AI
+    7. PIN+Index: "ชิ้น1และรหัส65489", "รหัส45689และชิ้น3"
     """
     try:
         import re
         
+        print(f"🔍 extract_selection_ids called with text: '{text}'")
+        
         # Pre-format parcels for reference
         parcel_info = []
+        parcel_by_index = {}
+        parcel_by_pin = {}
+        
         for i, p in enumerate(parcels, 1):
-            parcel_info.append(f"Index: {i}, PIN: {p.get('pin')}, Tracking: {p.get('tracking_number')}, Courier: {p.get('transport')}")
+            pin = str(p.get('pin'))
+            parcel_info.append(f"Index: {i}, PIN: {pin}, Tracking: {p.get('tracking_number')}, Courier: {p.get('transport')}")
+            parcel_by_index[i] = pin
+            parcel_by_pin[pin] = p
         
         text_clean = text.strip()
+        selected_pins = []
         
-        # ONLY use regex for PURE digit inputs (no Thai characters)
         # Check if contains any Thai characters
         has_thai = bool(re.search(r'[\u0E00-\u0E7F]', text_clean))
         
+        # Strategy 1: Pure number handling (ONLY if NO Thai text)
         if not has_thai:
-            # Pure number handling (no Thai text)
+            print("📊 Using regex for pure number input")
             
-            # Check if it's a range (e.g., "1-3", "1-4")
+            # Handle ranges: "1-3", "2-4"
             range_match = re.match(r'^(\d+)\s*-\s*(\d+)$', text_clean)
             if range_match:
                 start_idx = int(range_match.group(1))
                 end_idx = int(range_match.group(2))
-                selected_pins = []
                 for idx in range(start_idx, end_idx + 1):
-                    if 1 <= idx <= len(parcels):
-                        selected_pins.append(str(parcels[idx - 1].get('pin')))
+                    if idx in parcel_by_index:
+                        selected_pins.append(parcel_by_index[idx])
+                print(f"✅ Range detected: {selected_pins}")
                 return selected_pins
             
-            # Check if it's ALL digits (no spaces, no Thai)
-            digit_only_match = re.match(r'^\d+$', text_clean)
-            if digit_only_match:
+            # Handle comma-separated: "1,2,3" or "1, 2, 3"
+            if ',' in text_clean:
+                parts = re.split(r'[,\s]+', text_clean)
+                for part in parts:
+                    if part.isdigit():
+                        idx = int(part)
+                        if idx in parcel_by_index:
+                            selected_pins.append(parcel_by_index[idx])
+                print(f"✅ Comma-separated detected: {selected_pins}")
+                return selected_pins if selected_pins else []
+            
+            # Handle space-separated: "1 2 3"
+            if ' ' in text_clean:
+                parts = text_clean.split()
+                for part in parts:
+                    if part.isdigit():
+                        num = int(part)
+                        # If it's a small number (1-9), treat as index
+                        if 1 <= num <= len(parcels):
+                            if num in parcel_by_index:
+                                selected_pins.append(parcel_by_index[num])
+                if selected_pins:
+                    print(f"✅ Space-separated detected: {selected_pins}")
+                    return selected_pins
+            
+            # Handle pure digits (no spaces): "123" or "1" or "12345"
+            if text_clean.isdigit():
                 digits = text_clean
                 # Rule: 5+ digits = PIN, 1-4 digits = separate indexes
                 if len(digits) >= 5:
-                    # Treat as PIN code
-                    for p in parcels:
-                        if str(p.get('pin')) == digits:
-                            return [digits]
-                    return []  # PIN not found
+                    # Treat as PIN
+                    if digits in parcel_by_pin:
+                        print(f"✅ PIN detected: {digits}")
+                        return [digits]
+                    print(f"⚠️ PIN {digits} not found")
+                    return []
                 else:
-                    # Treat each digit as a separate index
-                    selected_pins = []
+                    # Treat each digit as index: "123" -> [1,2,3]
                     for digit_char in digits:
                         idx = int(digit_char)
-                        if 1 <= idx <= len(parcels):
-                            selected_pins.append(str(parcels[idx - 1].get('pin')))
-                    return selected_pins
+                        if idx in parcel_by_index:
+                            selected_pins.append(parcel_by_index[idx])
+                    print(f"✅ Sequential digits detected: {selected_pins}")
+                    return selected_pins if selected_pins else []
         
-        # Use AI for Thai words, mixed inputs, or typos
+        # Strategy 2: Use AI for Thai text, mixed inputs, or complex cases
+        print("🤖 Using AI for complex input")
         info_str = "\n".join(parcel_info)
         
         prompt = f"""
@@ -436,40 +474,65 @@ def extract_selection_ids(text, parcels):
         
         User input: "{text}"
         
-        Task: Extract ALL parcel selections. Handle these formats:
-        - Thai numbers: "หนึ่ง" -> 1, "สอง" -> 2, "สาม" -> 3, "สี่" -> 4, etc.
-        - Range in Thai: "หนึ่งถึงสาม" or "ชิ้นหนึ่งถึงสาม" -> Indexes 1, 2, 3
-        - Multiple: "ชิ้นหนึ่งและสอง" -> Indexes 1 and 2
-        - TYPO CORRECTION: "หนึง่" -> 1, "สอว" -> 2, "สาาม" -> 3, etc.
-        - Mixed: "ชิ้น 1 และหนึ่ง" -> Index 1 (deduplicate)
-        - Courier/Tracking references
+        TASK: Extract ALL selected parcels and return their PIN codes.
         
-        CRITICAL: 
-        - Correct Thai spelling mistakes automatically
-        - "หนึ่ง" = 1, "สอง" = 2, "สาม" = 3, "สี่" = 4, "ห้า" = 5, etc.
-        - Return PINs of matched indexes, NOT the index numbers themselves
+        HANDLE THESE FORMATS:
+        1. Pure numbers: "1" -> Index 1, "1 2 3" -> Indexes 1,2,3
+        2. Comma-separated: "1,2,3" or "1, 2, 3" -> Indexes 1,2,3
+        3. Ranges: "1-2" or "2-4" -> Indexes in range
+        4. Thai numbers: "หนึ่ง"=1, "สอง"=2, "สาม"=3, "สี่"=4, "ห้า"=5
+        5. Thai ranges: "หนึ่งถึงสาม" or "ชิ้นหนึ่งถึงสาม" -> Indexes 1,2,3
+        6. Mixed: "ชิ้น1และสอง" -> Indexes 1,2
+        7. CORRECT TYPOS: "หนึง่"->1, "สอว"->2, "ชิ้นสองเเละ3"->"2,3"
+        8. PIN codes: If text contains 5+ consecutive digits, treat as PIN
+        9. PIN+Index mix: "ชิ้น1และรหัส65489" -> Index 1 + PIN 65489
         
-        Output: Return ONLY a valid JSON array of PIN strings.
-        Example: ["1234", "5678"]
-        If nothing found, return []
+        CRITICAL RULES:
+        - Return the actual PIN codes from the list, NOT index numbers
+        - For index N, find the PIN at that position
+        - Be flexible with spacing and Thai spelling errors
+        - If nothing matches, return empty array
+        
+        OUTPUT FORMAT: Return ONLY a valid JSON array of PIN strings.
+        Examples: 
+        - ["1234"] for single item
+        - ["1234", "5678", "9012"] for multiple items
+        - [] if nothing found
+        
+        DO NOT include any explanation, ONLY the JSON array.
         """
+        
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
         
         # Clean markdown
         txt = res.text.strip()
+        print(f"🤖 AI Response: {txt}")
+        
         if txt.startswith("```json"): txt = txt[7:]
         if txt.startswith("```"): txt = txt[3:]
         if txt.endswith("```"): txt = txt[:-3]
         txt = txt.strip()
         
-        # Handle empty response
-        if not txt or txt == "None":
+        # Handle empty or invalid responses
+        if not txt or txt.lower() == "none" or txt == "null":
+            print("⚠️ AI returned empty response")
             return []
         
         import json
         selected_pins = json.loads(txt)
-        return [str(p) for p in selected_pins] if isinstance(selected_pins, list) else []
+        
+        if isinstance(selected_pins, list):
+            result = [str(p) for p in selected_pins]
+            print(f"✅ AI extraction successful: {result}")
+            return result
+        else:
+            print(f"⚠️ AI returned non-list: {selected_pins}")
+            return []
+            
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON Parse Error: {e}, Response was: {txt if 'txt' in locals() else 'N/A'}")
+        return []
     except Exception as e:
-        print(f"Extraction Error: {e}")
+        print(f"❌ Extraction Error: {e}")
         return []
 
