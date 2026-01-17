@@ -134,11 +134,9 @@ def handle_register_outside(user, user_id, reply_token):
     cutoff = now.replace(hour=16, minute=30, second=0, microsecond=0)
     
     if now > cutoff:
-        # Late
-        card = create_block_card(
+        card = create_status_card(
             title="หมดเวลาลงทะเบียน",
-            status="⛔ ระบบปิดรับ 16:30 น.",
-            details="กรุณาติดต่อรับพัสดุในเวลาทำการ หรือลงทะเบียนใหม่ในวันพรุ่งนี้",
+            status_text="⛔ ระบบปิดรับลงทะเบียนหลังเวลา 16:30 น. ค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลโดยตรง หรือลองใหม่วันพรุ่งนี้ค่ะ",
             color="#ff3333"
         )
         reply_message(reply_token, flex_contents=card)
@@ -203,21 +201,23 @@ def handle_pick_parcel(user, user_id, text, reply_token):
     selected_pins = extract_selection_ids(text, available)
     
     if not selected_pins:
-        reply_message(reply_token, text="น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาพิมพ์ลำดับ (1, 2, 3) หรือรหัส PIN 4 หลักค่ะ")
+        reply_message(reply_token, text="น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาพิมพ์ลำดับ (1, 2, 3) หรือรหัส PIN 4-5 หลักค่ะ")
         return
 
+    # Filter based on selected PINs (robust string comparison)
+    selected_parcels = [p for p in available if str(p.get('pin')) in selected_pins]
+    
     updated_count = 0
     updated_details = []
     
-    for pin in selected_pins:
-        parcel = parcels_col.find_one_and_update(
-            {"room_number": room, "pin": int(pin), "is_after_hours": False},
-            {"$set": {"is_after_hours": True, "registered_at": datetime.datetime.utcnow()}},
-            return_document=True
+    for p in selected_parcels:
+        res = parcels_col.update_one(
+            {"_id": p['_id'], "status": "pending", "is_after_hours": False},
+            {"$set": {"is_after_hours": True, "registered_at": datetime.datetime.utcnow()}}
         )
-        if parcel:
+        if res.modified_count > 0:
             updated_count += 1
-            updated_details.append(f"{parcel.get('transport')} ({pin})")
+            updated_details.append(f"{p.get('transport')} ({p.get('pin')})")
 
     if updated_count > 0:
         card = create_status_card(
@@ -229,7 +229,7 @@ def handle_pick_parcel(user, user_id, text, reply_token):
         room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
         log_audit("Register Outside", room_name, target="Select Parcel", details=f"PINs: {', '.join(selected_pins)}")
     else:
-        reply_message(reply_token, text="ไม่พบพัสดุรหัสที่คุณระบุ หรือพัสดุถูกลงทะเบียนไปแล้วค่ะ")
+        reply_message(reply_token, text="ไม่พบพัสดุที่คุณระบุ หรือพัสดุถูกลงทะเบียนไปแล้วค่ะ")
 
 def handle_check_parcel(user, user_id, reply_token):
     room = user.get('room_number')
@@ -256,10 +256,19 @@ def handle_check_parcel(user, user_id, reply_token):
 def handle_cancel_outside(user, user_id, reply_token, user_text=""):
     """
     Smart cancellation handler:
-    - 1 parcel: Show confirmation immediately
-    - Multiple parcels: Show selection list, wait for user to pick
-    - "ยกเลิกทั้งหมด": Show confirmation for all
+    - Only allowed during office hours 08:00 - 16:30
     """
+    now = get_bkk_time()
+    # Check if outside 08:00 - 16:30
+    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
+        card = create_status_card(
+            title="ไม่อยู่ในเวลาให้บริการ",
+            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
+            color="#ff9900"
+        )
+        reply_message(reply_token, flex_contents=card)
+        return
+
     room = user.get('room_number')
     if not room: return
     
@@ -336,10 +345,11 @@ def handle_image_message(event):
     message_id = event.message.id
     now = get_bkk_time()
     
+    # Allowed only 17:00 - 08:00 (Blocking 08:00 - 16:59)
     if 8 <= now.hour < 17:
         card = create_status_card(
             title="นิติบุคคลกำลังเปิดทำการ",
-            status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเฉพาะนอกเวลาทำการ (หลัง 17:00 น.) เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลโดยตรงค่ะ",
+            status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเฉพาะหลังเวลา 17:00 น. จนถึง 08:00 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลโดยตรงค่ะ",
             color="#999999"
         )
         reply_message(reply_token, flex_contents=card)
@@ -467,10 +477,16 @@ def handle_postback(event):
             
         room = user.get('room_number')
         pins_str = parsed.get('pins', '')
-        pins = [int(p) for p in pins_str.split(',') if p]
-        
+        # Support both int and str PINs for robustness
+        pin_list = []
+        for p in pins_str.split(','):
+            if not p: continue
+            pin_list.append(p)      # string version
+            try: pin_list.append(int(p)) # integer version
+            except: pass
+
         result = parcels_col.update_many(
-            {"room_number": room, "pin": {"$in": pins}, "status": "pending", "is_after_hours": True},
+            {"room_number": str(room), "pin": {"$in": pin_list}, "status": "pending", "is_after_hours": True},
             {"$set": {"is_after_hours": False, "registered_at": None}}
         )
         
