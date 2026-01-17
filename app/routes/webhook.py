@@ -131,12 +131,12 @@ def handle_text_message(event):
 
 def handle_register_outside(user, user_id, reply_token):
     now = get_bkk_time()
-    cutoff = now.replace(hour=16, minute=30, second=0, microsecond=0)
     
-    if now > cutoff:
+    # Allowed ONLY 08:00 - 16:30
+    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
         card = create_status_card(
             title="หมดเวลาลงทะเบียน",
-            status_text="⛔ ระบบปิดรับลงทะเบียนหลังเวลา 16:30 น. ค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลโดยตรง หรือลองใหม่วันพรุ่งนี้ค่ะ",
+            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
         reply_message(reply_token, flex_contents=card)
@@ -195,6 +195,17 @@ def handle_pick_parcel(user, user_id, text, reply_token):
 
     if not available:
         reply_message(reply_token, text="ไม่มีพัสดุในเวลาที่รอการลงทะเบียนนอกเวลาค่ะ")
+        return
+
+    # Allowed ONLY 08:00 - 16:30
+    now = get_bkk_time()
+    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
+        card = create_status_card(
+            title="หมดเวลาลงทะเบียน",
+            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
+            color="#ff3333"
+        )
+        reply_message(reply_token, flex_contents=card)
         return
 
     # Multi-selection support
@@ -306,6 +317,17 @@ def handle_cancel_select_parcel(user, user_id, text, reply_token):
     """
     Handle when user selects specific parcels to cancel from the list.
     """
+    # Allowed ONLY 08:00 - 16:30
+    now = get_bkk_time()
+    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
+        card = create_status_card(
+            title="ไม่อยู่ในเวลาให้บริการ",
+            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
+            color="#ff9900"
+        )
+        reply_message(reply_token, flex_contents=card)
+        return
+
     room = user.get('room_number')
     if not room: return
     
@@ -436,7 +458,13 @@ def handle_postback(event):
     import urllib.parse
     parsed = dict(urllib.parse.parse_qsl(data))
     
-    if parsed.get('action') == 'confirm_self':
+    action = parsed.get('action')
+    
+    if action == 'verify_retry':
+        reply_message(reply_token, text="ยกเลิกการสแกนเรียบร้อยแล้วค่ะ คุณสามารถเลือกทำรายการอื่นหรือถ่ายรูปใหม่อีกครั้งได้ทันทีค่ะ")
+        return
+
+    if action == 'confirm_self':
         room = parsed.get('room')
         verify_img = parsed.get('verify_img')
         

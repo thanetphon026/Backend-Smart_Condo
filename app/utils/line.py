@@ -492,7 +492,7 @@ def create_verification_result_card(is_match, reason, ocr_details, image_url, co
     footer["contents"].append({
         "type": "button",
         "style": "link",
-        "action": {"type": "message", "label": "ยกเลิก / ถ่ายใหม่", "text": "ยกเลิก"},
+        "action": {"type": "postback", "label": "ยกเลิก / ถ่ายใหม่", "data": "action=verify_retry"},
         "height": "sm"
     })
     
