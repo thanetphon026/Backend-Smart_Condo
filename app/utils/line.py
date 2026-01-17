@@ -9,33 +9,55 @@ line_configuration = Configuration(access_token=Config.LINE_CHANNEL_ACCESS_TOKEN
 line_handler = WebhookHandler(Config.LINE_CHANNEL_SECRET)
 
 def send_message(user_id, text=None, flex_contents=None, image_url=None):
+    """
+    Sends a PUSH message. Use this for notifications (Admin scan).
+    Counts towards monthly 'Push Message' quota.
+    """
     try:
         with ApiClient(line_configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
-            messages = []
-            
-            if flex_contents:
-                try:
-                    messages.append(FlexMessage(
-                        alt_text="การแจ้งเตือนพัสดุ",
-                        contents=FlexContainer.from_dict(flex_contents)
-                    ))
-                except Exception as e:
-                    print(f"Flex Error: {e}")
-                    messages.append(TextMessage(text=text or "เกิดข้อผิดพลาดในการแสดงผล"))
-            
-            elif text:
-                messages.append(TextMessage(text=text))
-                
-            if image_url:
-                messages.append(ImageMessage(original_content_url=image_url, preview_image_url=image_url))
-                
+            messages = _format_messages(text, flex_contents, image_url)
             if messages:
                 line_bot_api.push_message(PushMessageRequest(to=user_id, messages=messages))
                 return True
     except Exception as e:
-        print(f"Line Send Error: {e}")
+        print(f"Line Push Error: {e}")
         return False
+
+def reply_message(reply_token, text=None, flex_contents=None, image_url=None):
+    """
+    Sends a REPLY message. Use this for Webhook responses (Chat).
+    FREE/Unlimited (Doesn't count towards Push quota).
+    """
+    try:
+        if not reply_token: return False
+        with ApiClient(line_configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            messages = _format_messages(text, flex_contents, image_url)
+            if messages:
+                line_bot_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=messages))
+                return True
+    except Exception as e:
+        print(f"Line Reply Error: {e}")
+        return False
+
+def _format_messages(text, flex_contents, image_url):
+    messages = []
+    if flex_contents:
+        try:
+            messages.append(FlexMessage(
+                alt_text="การแจ้งเตือนพัสดุ",
+                contents=FlexContainer.from_dict(flex_contents)
+            ))
+        except Exception as e:
+            print(f"Flex Formatting Error: {e}")
+            messages.append(TextMessage(text=text or "ข้อมูลแสดงผลผิดพลาด"))
+    elif text:
+        messages.append(TextMessage(text=text))
+        
+    if image_url:
+        messages.append(ImageMessage(original_content_url=image_url, preview_image_url=image_url))
+    return messages
 
 # Flex Templates
 def create_block_card(title, status, details, image_url=None, confirm_action=None, reject_action=None, color="#1DB446"):
