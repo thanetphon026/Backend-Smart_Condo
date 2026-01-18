@@ -5,13 +5,14 @@ from ..utils.line import (
     line_handler, send_message, reply_message, create_block_card, 
     create_premium_parcel_list, create_pickup_complete_card, 
     create_status_card, create_verification_result_card,
-    create_cancellation_confirmation_card
+    create_cancellation_confirmation_card, create_registration_confirmation_card
 )
 from ..utils.cloudinary_utils import upload_image
 from ..utils.db import users_col, parcels_col, log_audit, save_chat_history
 from ..utils.ai import (
     generate_chat_response, analyze_parcel_label, 
-    check_match, analyze_intent, extract_selection_ids
+    check_match, analyze_intent, extract_selection_ids,
+    extract_intent_and_selection
 )
 from ..config import Config
 import datetime
@@ -56,11 +57,20 @@ def handle_text_message(event):
     save_chat_history(user_id, 'user', text)
     users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}})
     
-    # 2. Analyze Intent
-    intent = analyze_intent(text)
-    print(f"User: {user_id} | Intent: {intent} | Text: {text}")
+    # 2. Extract Intent AND Selection (combined parsing)
+    intent, embedded_selection = extract_intent_and_selection(text)
+    print(f"User: {user_id} | Intent: {intent} | Selection: {embedded_selection} | Text: {text}")
 
-    # 3. Context-aware handling for 'pick_parcel' (number inputs)
+    # 3. Handle combined intent+selection (e.g., "ขอรับนอกเวลา45632")
+    if embedded_selection and intent in ['register_outside', 'cancel']:
+        # User provided selection upfront, route directly to processing
+        if intent == 'register_outside':
+            handle_pick_parcel(user, user_id, embedded_selection, reply_token)
+        elif intent == 'cancel':
+            handle_cancel_select_parcel(user, user_id, embedded_selection, reply_token)
+        return
+
+    # 4. Context-aware handling for 'pick_parcel' (number inputs)
     if intent == 'pick_parcel':
         room = user.get('room_number')
         if room:
@@ -106,11 +116,11 @@ def handle_text_message(event):
         handle_pick_parcel(user, user_id, text, reply_token)
         return
 
-    # Clear context when explicit new intent is detected
+    # 5. Clear context when explicit new intent is detected
     if intent in ['register_outside', 'cancel', 'check_parcel']:
         users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": None}})
 
-    # 4. Handle Specific Intents
+    # 6. Handle Specific Intents
     if intent == 'register_outside':
         users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": "register_select"}})
         handle_register_outside(user, user_id, reply_token)
@@ -124,7 +134,7 @@ def handle_text_message(event):
         handle_cancel_outside(user, user_id, reply_token, text)
         return
     
-    # 5. General -> AI Chat
+    # 7. General -> AI Chat
     response_text = generate_chat_response(text, user)
     reply_message(reply_token, text=response_text)
     save_chat_history(user_id, 'assistant', response_text)
@@ -164,22 +174,12 @@ def handle_register_outside(user, user_id, reply_token):
         return
 
     if len(pending_in_time) == 1:
-        p = pending_in_time[0]
-        parcels_col.update_one(
-            {"_id": p['_id']},
-            {"$set": {"is_after_hours": True, "registered_at": datetime.datetime.utcnow()}}
-        )
-        card = create_status_card(
-            title="ลงทะเบียนสำเร็จ",
-            status_text=f"✅ พัสดุ {p.get('transport')} ({p.get('pin')})\nถูกย้ายลงทะเบียนรับนอกเวลาเรียบร้อยแล้วค่ะ",
-            color="#06c755"
-        )
+        # Single parcel: Show confirmation card
+        card = create_registration_confirmation_card(pending_in_time)
         reply_message(reply_token, flex_contents=card)
-        room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
-        log_audit("Register Outside", room_name, target="Auto Move", details=f"PIN: {p.get('pin')}")
     else:
+        # Multiple parcels: Show selection list
         all_pending = list(parcels_col.find({"room_number": room, "status": "pending"}).sort("timestamp", 1))
-        # More than 1 -> Use the premium list with the Purple header
         card = create_premium_parcel_list(all_pending, title="🌙 เลือกพัสดุที่ต้องการรับ", header_color="#6200ee")
         reply_message(reply_token, flex_contents=card)
 
@@ -463,6 +463,55 @@ def handle_postback(event):
     if action == 'verify_retry':
         reply_message(reply_token, text="ยกเลิกการสแกนเรียบร้อยแล้วค่ะ คุณสามารถเลือกทำรายการอื่นหรือถ่ายรูปใหม่อีกครั้งได้ทันทีค่ะ")
         return
+    
+    if action == 'button_disabled':
+        reply_message(reply_token, text="ปุ่มนี้ไม่สามารถใช้งานได้ในสถานการณ์นี้ค่ะ กรุณาใช้ปุ่มอื่นหรือติดต่อเจ้าหน้าที่ค่ะ")
+        return
+    
+    if action == 'register_after_hours_confirm':
+        # Check if card is stale (> 5 minutes old)
+        card_ts = parsed.get('ts')
+        if card_ts:
+            try:
+                import time
+                age_seconds = time.time() - int(card_ts)
+                if age_seconds > 300:  # 5 minutes
+                    reply_message(reply_token, text="บล็อกการ์ดนี้หมดอายุแล้วค่ะ กรุณาใช้บล็อกการ์ดล่าสุดหรือส่งคำสั่งใหม่ค่ะ")
+                    return
+            except:
+                pass  # If timestamp parsing fails, allow action
+        
+        user = users_col.find_one({"line_user_id": user_id})
+        if not user:
+            reply_message(reply_token, text="ไม่พบข้อมูลผู้ใช้ค่ะ")
+            return
+            
+        room = user.get('room_number')
+        pins_str = parsed.get('pins', '')
+        pin_list = []
+        for p in pins_str.split(','):
+            if not p: continue
+            pin_list.append(p)
+            try: pin_list.append(int(p))
+            except: pass
+
+        result = parcels_col.update_many(
+            {"room_number": str(room), "pin": {"$in": pin_list}, "status": "pending", "is_after_hours": False},
+            {"$set": {"is_after_hours": True, "registered_at": datetime.datetime.utcnow()}}
+        )
+        
+        if result.modified_count > 0:
+            card = create_status_card(
+                title="ลงทะเบียนสำเร็จ",
+                status_text=f"✅ ลงทะเบียนรับนอกเวลา {result.modified_count} รายการสำเร็จ\n\nพัสดุพร้อมรับที่จุดรับของนอกเวลาแล้วค่ะ",
+                color="#06c755"
+            )
+            reply_message(reply_token, flex_contents=card)
+            room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
+            log_audit("Register Outside", room_name, target="Confirm", details=f"PINs: {pins_str}")
+        else:
+            reply_message(reply_token, text="ไม่สามารถลงทะเบียนได้ กรุณาลองใหม่อีกครั้งค่ะ")
+        return
 
     if action == 'confirm_self':
         room = parsed.get('room')
@@ -496,8 +545,21 @@ def handle_postback(event):
             log_audit("Self Pickup Success", room_name, target="รับพัสดุเองสำเร็จ", details=f"พัสดุดำเนินการแล้ว {result.modified_count} ชิ้น")
         else:
             reply_message(reply_token, text="เกิดข้อผิดพลาด หรือพัสดุถูกรับไปแล้วค่ะ")
+        return
 
-    elif parsed.get('action') == 'cancel_after_hours_confirm':
+    if action == 'cancel_after_hours_confirm':
+        # Check if card is stale (> 5 minutes old)
+        card_ts = parsed.get('ts')
+        if card_ts:
+            try:
+                import time
+                age_seconds = time.time() - int(card_ts)
+                if age_seconds > 300:  # 5 minutes
+                    reply_message(reply_token, text="บล็อกการ์ดนี้หมดอายุแล้วค่ะ กรุณาใช้บล็อกการ์ดล่าสุดหรือส่งคำสั่งใหม่ค่ะ")
+                    return
+            except:
+                pass  # If timestamp parsing fails, allow action
+        
         user = users_col.find_one({"line_user_id": user_id})
         if not user:
             reply_message(reply_token, text="ไม่พบข้อมูลผู้ใช้ค่ะ")
@@ -529,3 +591,4 @@ def handle_postback(event):
             log_audit("Cancel Outside", room_name, target="ยกเลิกนัดหมาย", details=f"PINs: {pins_str}")
         else:
             reply_message(reply_token, text="เกิดข้อผิดพลาดในการยกเลิกรายการค่ะ")
+        return

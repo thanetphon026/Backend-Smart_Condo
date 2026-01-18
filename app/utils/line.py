@@ -282,6 +282,8 @@ def create_cancellation_confirmation_card(parcels_to_cancel):
     """
     Card to confirm after-hours cancellation.
     """
+    import datetime
+    timestamp = int(datetime.datetime.utcnow().timestamp())
     p_names = [f"PIN: {p.get('pin')} ({p.get('transport')})" for p in parcels_to_cancel]
     details = "\n".join(p_names)
     pins = ",".join([str(p.get('pin')) for p in parcels_to_cancel])
@@ -317,13 +319,67 @@ def create_cancellation_confirmation_card(parcels_to_cancel):
                     "type": "button",
                     "style": "primary",
                     "color": "#ff9900",
-                    "action": {"type": "postback", "label": "ยืนยันยกเลิก", "data": f"action=cancel_after_hours_confirm&pins={pins}"},
+                    "action": {"type": "postback", "label": "ยืนยันยกเลิก", "data": f"action=cancel_after_hours_confirm&pins={pins}&ts={timestamp}"},
                     "height": "sm"
                 },
                 {
                     "type": "button",
                     "style": "secondary",
                     "action": {"type": "message", "label": "รักษาสิทธิ์ไว้", "text": "ไม่ยกเลิกแล้ว"},
+                    "height": "sm"
+                }
+            ]
+        }
+    }
+
+def create_registration_confirmation_card(parcels_to_register):
+    """
+    Card to confirm after-hours registration.
+    """
+    import datetime
+    timestamp = int(datetime.datetime.utcnow().timestamp())
+    p_names = [f"PIN: {p.get('pin')} ({p.get('transport')})" for p in parcels_to_register]
+    details = "\n".join(p_names)
+    pins = ",".join([str(p.get('pin')) for p in parcels_to_register])
+
+    return {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "🌙 ยืนยันการลงทะเบียน", "weight": "bold", "color": "#ffffff", "size": "lg"}
+            ],
+            "backgroundColor": "#6200ee",
+            "paddingAll": "15px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "คุณต้องการลงทะเบียนรับพัสดุนอกเวลาสำหรับรายการดังต่อไปนี้ ใช่หรือไม่?", "wrap": True, "size": "sm"},
+                {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#f3e5f5", "paddingAll": "10px", "cornerRadius": "md", "contents": [
+                    {"type": "text", "text": details, "size": "xs", "color": "#4a148c", "wrap": True}
+                ]},
+                {"type": "text", "text": "*พัสดุจะพร้อมรับที่จุดรับของนอกเวลา", "size": "xxs", "color": "#aaaaaa", "margin": "md"}
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "horizontal",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#6200ee",
+                    "action": {"type": "postback", "label": "ยืนยันลงทะเบียน", "data": f"action=register_after_hours_confirm&pins={pins}&ts={timestamp}"},
+                    "height": "sm"
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "action": {"type": "message", "label": "ยกเลิก", "text": "ไม่ลงทะเบียนแล้ว"},
                     "height": "sm"
                 }
             ]
@@ -460,7 +516,7 @@ def create_verification_result_card(is_match, reason, ocr_details, image_url, co
             "cornerRadius": "md",
             "contents": [
                 {"type": "text", "text": "⚠️ ไม่ใช่พัสดุของคุณ", "weight": "bold", "size": "xs", "color": "#dc3545"},
-                {"type": "text", "text": "กรุณาวางพัสดุไว้ที่เดิม และตรวจสอบเลขห้องอีกครั้งค่ะ", "size": "xs", "color": "#dc3545", "wrap": True}
+                {"type": "text", "text": "กรุณาวางพัสดุไว้ที่เดิม\n\nหรือตรวจสอบเลขห้องอีกครั้งค่ะ", "size": "xs", "color": "#dc3545", "wrap": True, "margin": "xs"}
             ]
         }
         bubble["body"]["contents"].append(warning_box)
@@ -485,7 +541,7 @@ def create_verification_result_card(is_match, reason, ocr_details, image_url, co
         footer["contents"].append({
             "type": "button",
             "style": "secondary",
-            "action": {"type": "message", "label": "ยืนยัน (ปิดใช้งาน)", "text": "ปุ่มนี้ถูกปิดเนื่องจากข้อมูลไม่ถูกต้อง"},
+            "action": {"type": "postback", "label": "ยืนยัน (ปิดใช้งาน)", "data": "action=button_disabled"},
             "height": "sm"
         })
 

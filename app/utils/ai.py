@@ -274,33 +274,82 @@ def check_match(scanned_data, user_profile):
     }
 
 
-def analyze_intent(text):
+
+
+def extract_intent_and_selection(text):
     """
-    Classify user intent. Returns one of:
-    [register_outside, check_parcel, pick_parcel, cancel, general]
+    Extract both intent and embedded selection from user input.
+    Returns: (intent, selection_text)
+    
+    Examples:
+    - "ขอรับนอกเวลา45632" -> ('register_outside', '45632')
+    - "ยกเลิก ชิ้น1" -> ('cancel', 'ชิ้น1')  
+    - "ลงทะเบียน" -> ('register_outside', None)
+    - "1-3" -> ('pick_parcel', '1-3')
     """
     try:
-        prompt = f"""
-        [Intent Rules]
-        - 'register_outside': Requesting to register parcels for after-hours pickup (e.g., "ลงทะเบียน", "รับนอกเวลา").
-        - 'cancel': EXPLICIT request to cancel, delete, or remove after-hours registration (e.g., "ยกเลิกนอกเวลา", "ย้ายกลับ"). 
-        - 'pick_parcel': User specifies item numbers, ranges, or PINs (e.g., "1", "1-3", "ชิ้น 2", "4612", "รหัส 1234").
-        - 'check_parcel': Asking about parcel status (e.g., "เช็กพัสดุ", "มีพัสดุไหม").
-        - 'general': Anything else (questions, chitchat, etc.).
-        
-        Text: "{text}"
-        
-        IMPORTANT: If the text is ONLY numbers or a simple range (e.g., "1", "2-4", "1234"), classify as 'pick_parcel'.
-        
-        Return ONLY the intent word (no explanation).
-        """
+        prompt = f"""Analyze Thai text to extract BOTH the intent and any embedded selection (numbers/PINs).
+
+[Intent Rules]
+- 'register_outside': Register for after-hours (ลงทะเบียน, รับนอกเวลา, ขอรับนอกเวลา)
+- 'cancel': Cancel registration (ยกเลิก, ย้ายกลับ, ยกเลิกนอกเวลา)
+- 'pick_parcel': ONLY numbers/ranges (1, 1-3, ชิ้น2, รหัส1234)
+- 'check_parcel': Check status (เช็ก, ดูพัสดุ, มีพัสดุไหม)
+- 'general': Everything else
+
+Text: "{text}"
+
+If text contains BOTH intent AND selection (e.g., "ขอรับนอกเวลา45632", "ยกเลิกชิ้น1"), extract BOTH.
+If ONLY intent (e.g., "ลงทะเบียน"), selection is null.
+If ONLY selection (e.g., "45632", "ชิ้น1"), intent is 'pick_parcel'.
+
+Return JSON format ONLY:
+{{"intent": "register_outside|cancel|pick_parcel|check_parcel|general", "selection": "extracted_number_or_null"}}"""
+
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
-        intent = res.text.strip().lower()
+        import json
+        result = json.loads(res.text.strip().replace('```json', '').replace('```', '').strip())
+        
+        intent = result.get('intent', 'general').lower()
+        selection = result.get('selection')
+        
+        # Normalize null values
+        if selection in ['null', 'None', '', 'none']:
+            selection = None
+            
         valid_intents = ['register_outside', 'check_parcel', 'pick_parcel', 'cancel', 'general']
-        return intent if intent in valid_intents else 'general'
+        if intent not in valid_intents:
+            intent = 'general'
+            
+        print(f"🔍 Intent: {intent}, Selection: {selection}")
+        return (intent, selection)
+        
     except Exception as e:
-        print(f"Intent Error: {e}")
-        return 'general'
+        print(f"Intent Extraction Error: {e}")
+        # Fallback: try simple pattern matching
+        import re
+        text_lower = text.lower()
+        
+        # Check for numbers
+        numbers = re.findall(r'\d+', text)
+        
+        if 'ลงทะเบียน' in text or 'รับนอกเวลา' in text or 'ขอรับนอก' in text:
+            return ('register_outside', numbers[0] if numbers else None)
+        elif 'ยกเลิก' in text:
+            return ('cancel', numbers[0] if numbers else None)
+        elif 'เช็ก' in text or 'ดูพัสดุ' in text:
+            return ('check_parcel', None)
+        elif numbers:
+            return ('pick_parcel', numbers[0])
+        else:
+            return ('general', None)
+
+def analyze_intent(text):
+    """
+    Legacy compatibility wrapper - extracts only intent.
+    """
+    intent, _ = extract_intent_and_selection(text)
+    return intent
 
 def generate_chat_response(user_text, user_context={}):
     """
