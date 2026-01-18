@@ -599,7 +599,7 @@ def create_welcome_card(display_name=None, is_returning=False, user_info=None):
                     {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#f0fff4", "paddingAll": "12px", "cornerRadius": "8px", "contents": [
                         {"type": "text", "text": f"🏠 ห้อง: {user_info.get('room_number', '-')}", "size": "sm", "color": "#333333"},
                         {"type": "text", "text": f"👤 ชื่อ: {user_info.get('first_name', '')} {user_info.get('last_name', '')}", "size": "sm", "color": "#333333", "margin": "xs"},
-                        {"type": "text", "text": f"📱 เบอร์: {user_info.get('phone', '-')}", "size": "sm", "color": "#333333", "margin": "xs"}
+                        {"type": "text", "text": f"📱 เบอร์: {user_info.get('phone_number') or user_info.get('phone') or '-'}", "size": "sm", "color": "#333333", "margin": "xs"}
                     ]},
                     {"type": "text", "text": "พร้อมใช้งานแล้วค่ะ! พิมพ์ถามน้องบอตได้เลย 😊", "size": "xs", "color": "#888888", "margin": "lg", "wrap": True}
                 ]

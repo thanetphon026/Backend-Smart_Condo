@@ -164,7 +164,14 @@ def handle_text_message(event):
     users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}}, upsert=True)
     
     # 2. Check for USER REGISTRATION command (always allow this)
-    if text.startswith('ลงทะเบียน') or text.lower().startswith('register') or text.startswith('สมัคร'):
+    # Priority Fix: unexpected trigger from "ลงทะเบียนรับนอกเวลา"
+    is_registration_cmd = (
+        (text.startswith('ลงทะเบียน') and 'รับนอกเวลา' not in text) or 
+        text.lower().startswith('register') or 
+        text.startswith('สมัคร')
+    )
+    
+    if is_registration_cmd:
         # Parse registration data
         reg_data = parse_user_registration(text)
         
@@ -172,6 +179,19 @@ def handle_text_message(event):
             room_number, first_name, last_name, phone = reg_data
             full_name = f"{first_name} {last_name}".strip()
             
+            # Check for duplicates (Security)
+            existing_room = users_col.find_one({"room_number": room_number})
+            existing_phone = users_col.find_one({"phone_number": phone})
+            
+            # Allow re-registration for SAME user, but block if taken by others
+            if existing_room and existing_room['line_user_id'] != user_id:
+                reply_message(reply_token, text=f"⚠️ ไม่สามารถลงทะเบียนได้\n\nห้อง {room_number} มีผู้ลงทะเบียนในระบบแล้วค่ะ หากมีข้อผิดพลาดกรุณาติดต่อนิติบุคคล")
+                return
+                
+            if existing_phone and existing_phone['line_user_id'] != user_id:
+                reply_message(reply_token, text=f"⚠️ ไม่สามารถลงทะเบียนได้\n\nเบอร์โทร {phone} มีผู้ใช้งานในระบบแล้วค่ะ")
+                return
+
             # Update user record
             users_col.update_one(
                 {"line_user_id": user_id},
@@ -179,7 +199,7 @@ def handle_text_message(event):
                     "room_number": room_number,
                     "first_name": first_name,
                     "last_name": last_name,
-                    "phone": phone,
+                    "phone_number": phone,
                     "registered_at": datetime.datetime.utcnow()
                 }},
                 upsert=True
