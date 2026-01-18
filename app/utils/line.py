@@ -145,7 +145,11 @@ def create_new_parcel_notification(room_number, recipient_name, transport, track
             "size": "full",
             "aspectRatio": "20:13",
             "aspectMode": "cover",
-            "margin": "md"
+            "margin": "md",
+            "action": {
+                "type": "uri",
+                "uri": image_url
+            }
         })
 
     details_box = {
@@ -415,7 +419,11 @@ def create_pickup_complete_card(room_number, recipient_name, transport, tracking
             "size": "full",
             "aspectRatio": "20:13",
             "aspectMode": "cover",
-            "margin": "md"
+            "margin": "md",
+            "action": {
+                "type": "uri",
+                "uri": image_url
+            }
         })
 
     details_box = {
@@ -478,7 +486,11 @@ def create_verification_result_card(is_match, reason, ocr_details, image_url, co
                     "url": image_url,
                     "size": "full",
                     "aspectRatio": "20:13",
-                    "aspectMode": "cover"
+                    "aspectMode": "cover",
+                    "action": {
+                        "type": "uri",
+                        "uri": image_url
+                    }
                 },
                 {
                     "type": "box",
@@ -554,3 +566,136 @@ def create_verification_result_card(is_match, reason, ocr_details, image_url, co
     
     bubble["footer"] = footer
     return bubble
+
+
+def create_welcome_card(display_name=None, is_returning=False, user_info=None):
+    """
+    Welcome card for new users or returning users (after unblock).
+    """
+    if is_returning and user_info:
+        # Returning user - show their info
+        title = "🎉 ยินดีต้อนรับกลับ!"
+        color = "#06c755"
+        greeting = f"สวัสดีค่ะ คุณ{display_name or user_info.get('first_name', 'ลูกบ้าน')}!"
+        
+        bubble = {
+            "type": "bubble",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {"type": "text", "text": title, "weight": "bold", "color": "#ffffff", "size": "lg"}
+                ],
+                "backgroundColor": color,
+                "paddingAll": "15px"
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {"type": "text", "text": greeting, "weight": "bold", "size": "md", "wrap": True},
+                    {"type": "separator", "margin": "md"},
+                    {"type": "text", "text": "📋 ข้อมูลของคุณในระบบ:", "weight": "bold", "size": "sm", "margin": "lg", "color": "#555555"},
+                    {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#f0fff4", "paddingAll": "12px", "cornerRadius": "8px", "contents": [
+                        {"type": "text", "text": f"🏠 ห้อง: {user_info.get('room_number', '-')}", "size": "sm", "color": "#333"},
+                        {"type": "text", "text": f"👤 ชื่อ: {user_info.get('first_name', '')} {user_info.get('last_name', '')}", "size": "sm", "color": "#333", "margin": "xs"},
+                        {"type": "text", "text": f"📱 เบอร์: {user_info.get('phone', '-')}", "size": "sm", "color": "#333", "margin": "xs"}
+                    ]},
+                    {"type": "text", "text": "พร้อมใช้งานแล้วค่ะ! พิมพ์ถามน้องบอตได้เลย 😊", "size": "xs", "color": "#888", "margin": "lg", "wrap": True}
+                ]
+            }
+        }
+        return bubble
+    else:
+        # New user - prompt registration
+        return create_registration_required_card(display_name)
+
+
+def create_registration_required_card(display_name=None):
+    """
+    Card shown when user needs to register.
+    """
+    greeting = f"สวัสดีค่ะ คุณ{display_name}! 👋" if display_name else "สวัสดีค่ะ! 👋"
+    
+    bubble = {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "📝 กรุณาลงทะเบียน", "weight": "bold", "color": "#ffffff", "size": "lg"}
+            ],
+            "backgroundColor": "#6200ee",
+            "paddingAll": "15px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": greeting, "weight": "bold", "size": "md", "wrap": True},
+                {"type": "text", "text": "ยินดีต้อนรับสู่ระบบแชทบอตนิติ ลุมพินีพาร์ค เพชรเกษม98 🏢", "size": "sm", "color": "#555", "margin": "md", "wrap": True},
+                {"type": "separator", "margin": "lg"},
+                {"type": "text", "text": "⚠️ คุณยังไม่ได้ลงทะเบียนในระบบ", "weight": "bold", "size": "sm", "color": "#ff6600", "margin": "lg"},
+                {"type": "text", "text": "กรุณาลงทะเบียนก่อนเพื่อใช้งานระบบค่ะ", "size": "sm", "color": "#555", "margin": "sm", "wrap": True},
+                {"type": "box", "layout": "vertical", "margin": "lg", "backgroundColor": "#f3e5f5", "paddingAll": "12px", "cornerRadius": "8px", "contents": [
+                    {"type": "text", "text": "📌 วิธีลงทะเบียน:", "weight": "bold", "size": "sm", "color": "#6200ee"},
+                    {"type": "text", "text": "พิมพ์ตามรูปแบบนี้:", "size": "xs", "color": "#666", "margin": "sm"},
+                    {"type": "text", "text": "ลงทะเบียน [เลขห้อง] [ชื่อ-สกุล] [เบอร์โทร]", "weight": "bold", "size": "sm", "color": "#4a148c", "margin": "sm", "wrap": True}
+                ]},
+                {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#e3f2fd", "paddingAll": "10px", "cornerRadius": "8px", "contents": [
+                    {"type": "text", "text": "💡 ตัวอย่าง:", "weight": "bold", "size": "xs", "color": "#0066ff"},
+                    {"type": "text", "text": "ลงทะเบียน 1234 สมชาย ใจดี 0812345678", "size": "xs", "color": "#333", "margin": "xs", "wrap": True}
+                ]}
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "📞 หากมีปัญหา ติดต่อนิติบุคคล", "size": "xxs", "color": "#aaa", "align": "center"}
+            ],
+            "paddingAll": "10px"
+        }
+    }
+    return bubble
+
+
+def create_user_registration_success_card(room_number, full_name, phone):
+    """
+    Card shown after successful user registration.
+    """
+    bubble = {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "✅ ลงทะเบียนสำเร็จ!", "weight": "bold", "color": "#ffffff", "size": "lg"}
+            ],
+            "backgroundColor": "#06c755",
+            "paddingAll": "15px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": f"ยินดีต้อนรับ คุณ{full_name}! 🎉", "weight": "bold", "size": "md", "wrap": True},
+                {"type": "separator", "margin": "md"},
+                {"type": "box", "layout": "vertical", "margin": "lg", "backgroundColor": "#f0fff4", "paddingAll": "12px", "cornerRadius": "8px", "contents": [
+                    {"type": "text", "text": "📋 ข้อมูลที่ลงทะเบียน:", "weight": "bold", "size": "sm", "color": "#06c755"},
+                    {"type": "text", "text": f"🏠 ห้อง: {room_number}", "size": "sm", "color": "#333", "margin": "sm"},
+                    {"type": "text", "text": f"👤 ชื่อ: {full_name}", "size": "sm", "color": "#333", "margin": "xs"},
+                    {"type": "text", "text": f"📱 เบอร์: {phone}", "size": "sm", "color": "#333", "margin": "xs"}
+                ]},
+                {"type": "text", "text": "คุณสามารถใช้งานระบบได้แล้วค่ะ!", "size": "sm", "color": "#555", "margin": "lg", "wrap": True},
+                {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#fff8e1", "paddingAll": "10px", "cornerRadius": "8px", "contents": [
+                    {"type": "text", "text": "💡 ทดลองใช้งาน:", "weight": "bold", "size": "xs", "color": "#ff8f00"},
+                    {"type": "text", "text": "• พิมพ์ \"เช็คพัสดุ\" เช็คสถานะพัสดุ", "size": "xs", "color": "#333", "margin": "xs"},
+                    {"type": "text", "text": "• พิมพ์ \"ลงทะเบียนรับนอกเวลา\" นัดรับพัสดุ", "size": "xs", "color": "#333", "margin": "xs"},
+                    {"type": "text", "text": "• หรือถามคำถามเกี่ยวกับคอนโดได้เลย!", "size": "xs", "color": "#333", "margin": "xs"}
+                ]}
+            ]
+        }
+    }
+    return bubble
+

@@ -1,11 +1,12 @@
 from flask import Blueprint, request, abort, current_app, jsonify
 from linebot.v3.exceptions import InvalidSignatureError
-from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, PostbackEvent
+from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, PostbackEvent, FollowEvent
 from ..utils.line import (
     line_handler, send_message, reply_message, create_block_card, 
     create_premium_parcel_list, create_pickup_complete_card, 
     create_status_card, create_verification_result_card,
-    create_cancellation_confirmation_card, create_registration_confirmation_card
+    create_cancellation_confirmation_card, create_registration_confirmation_card,
+    create_welcome_card, create_registration_required_card, create_user_registration_success_card
 )
 from ..utils.cloudinary_utils import upload_image
 from ..utils.db import users_col, parcels_col, log_audit, save_chat_history
@@ -43,6 +44,111 @@ def callback():
         abort(400)
     return 'OK'
 
+# FollowEvent Handler - When user adds bot or unblocks
+@line_handler.add(FollowEvent)
+def handle_follow(event):
+    user_id = event.source.user_id
+    reply_token = event.reply_token
+    
+    # Try to get user display name from LINE profile
+    display_name = None
+    try:
+        from linebot.v3.messaging import Configuration, ApiClient, MessagingApi
+        config = Configuration(access_token=Config.LINE_CHANNEL_ACCESS_TOKEN)
+        with ApiClient(config) as api_client:
+            line_api = MessagingApi(api_client)
+            profile = line_api.get_profile(user_id)
+            display_name = profile.display_name
+    except Exception as e:
+        print(f"Failed to get LINE profile: {e}")
+    
+    # Check if user exists in database
+    user = users_col.find_one({"line_user_id": user_id})
+    
+    if user and user.get('room_number'):
+        # Returning user (was blocked, now unblocked)
+        card = create_welcome_card(
+            display_name=display_name,
+            is_returning=True,
+            user_info=user
+        )
+        reply_message(reply_token, flex_contents=card)
+        log_audit("User Unblocked", f"ห้อง {user.get('room_number')} - {user.get('first_name', 'Guest')}", target="Follow Event")
+    else:
+        # New user - show registration prompt
+        card = create_welcome_card(display_name=display_name, is_returning=False)
+        reply_message(reply_token, flex_contents=card)
+        
+        # Create user record if not exists
+        if not user:
+            users_col.insert_one({
+                "line_user_id": user_id,
+                "display_name": display_name,
+                "first_name": None,
+                "last_name": None,
+                "room_number": None,
+                "phone": None,
+                "created_at": datetime.datetime.utcnow()
+            })
+        log_audit("New User Follow", display_name or user_id, target="Follow Event")
+
+# Helper function to parse user registration command
+def parse_user_registration(text):
+    """
+    Parse user registration command.
+    Format: ลงทะเบียน [เลขห้อง] [ชื่อ-สกุล] [เบอร์โทร]
+    Example: ลงทะเบียน 1234 สมชาย ใจดี 0812345678
+    Returns: (room_number, first_name, last_name, phone) or None
+    """
+    import re
+    
+    # Remove "ลงทะเบียน" keyword
+    text = text.strip()
+    patterns = ['ลงทะเบียน', 'register', 'สมัคร']
+    for p in patterns:
+        text = text.replace(p, '').strip()
+    
+    if not text:
+        return None
+    
+    # Try to extract: room, name(s), phone
+    parts = text.split()
+    
+    if len(parts) < 3:
+        return None
+    
+    # Find phone number (10-11 digits)
+    phone = None
+    phone_idx = -1
+    for i, part in enumerate(parts):
+        clean_part = re.sub(r'[^\d]', '', part)
+        if len(clean_part) >= 10:
+            phone = clean_part
+            phone_idx = i
+            break
+    
+    if not phone:
+        return None
+    
+    # Room number is typically first
+    room_number = parts[0]
+    
+    # Name is between room and phone
+    if phone_idx > 1:
+        name_parts = parts[1:phone_idx]
+        if len(name_parts) >= 2:
+            first_name = name_parts[0]
+            last_name = ' '.join(name_parts[1:])
+        else:
+            first_name = ' '.join(name_parts)
+            last_name = ''
+    else:
+        first_name = parts[1] if len(parts) > 1 else ''
+        last_name = ''
+    
+    return (room_number, first_name, last_name, phone)
+
+
 @line_handler.add(MessageEvent, message=TextMessageContent)
 def handle_text_message(event):
     user_id = event.source.user_id
@@ -55,13 +161,53 @@ def handle_text_message(event):
         user = {"line_user_id": user_id, "first_name": "Guest", "room_number": None}
 
     save_chat_history(user_id, 'user', text)
-    users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}})
+    users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}}, upsert=True)
     
-    # 2. Extract Intent AND Selection (combined parsing)
+    # 2. Check for USER REGISTRATION command (always allow this)
+    if text.startswith('ลงทะเบียน') or text.lower().startswith('register') or text.startswith('สมัคร'):
+        # Parse registration data
+        reg_data = parse_user_registration(text)
+        
+        if reg_data:
+            room_number, first_name, last_name, phone = reg_data
+            full_name = f"{first_name} {last_name}".strip()
+            
+            # Update user record
+            users_col.update_one(
+                {"line_user_id": user_id},
+                {"$set": {
+                    "room_number": room_number,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "phone": phone,
+                    "registered_at": datetime.datetime.utcnow()
+                }},
+                upsert=True
+            )
+            
+            # Send success card
+            card = create_user_registration_success_card(room_number, full_name, phone)
+            reply_message(reply_token, flex_contents=card)
+            log_audit("User Registration", f"ห้อง {room_number} - {full_name}", target="New Registration", details=f"Phone: {phone}")
+            return
+        else:
+            # Invalid format - show how to register
+            card = create_registration_required_card(user.get('display_name'))
+            reply_message(reply_token, flex_contents=card)
+            return
+    
+    # 3. Check if user is registered (has room_number)
+    if not user.get('room_number'):
+        # Not registered - prompt to register
+        card = create_registration_required_card(user.get('display_name'))
+        reply_message(reply_token, flex_contents=card)
+        return
+    
+    # 4. Extract Intent AND Selection (combined parsing)
     intent, embedded_selection = extract_intent_and_selection(text)
     print(f"User: {user_id} | Intent: {intent} | Selection: {embedded_selection} | Text: {text}")
 
-    # 3. Handle combined intent+selection (e.g., "ขอรับนอกเวลา45632")
+    # 5. Handle combined intent+selection (e.g., "ขอรับนอกเวลา45632")
     if embedded_selection and intent in ['register_outside', 'cancel']:
         # User provided selection upfront, route directly to processing
         if intent == 'register_outside':
@@ -70,7 +216,7 @@ def handle_text_message(event):
             handle_cancel_select_parcel(user, user_id, embedded_selection, reply_token)
         return
 
-    # 4. Context-aware handling for 'pick_parcel' (number inputs)
+    # 6. Context-aware handling for 'pick_parcel' (number inputs)
     if intent == 'pick_parcel':
         room = user.get('room_number')
         if room:
@@ -116,11 +262,11 @@ def handle_text_message(event):
         handle_pick_parcel(user, user_id, text, reply_token)
         return
 
-    # 5. Clear context when explicit new intent is detected
+    # 7. Clear context when explicit new intent is detected
     if intent in ['register_outside', 'cancel', 'check_parcel']:
         users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": None}})
 
-    # 6. Handle Specific Intents
+    # 8. Handle Specific Intents
     if intent == 'register_outside':
         users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": "register_select"}})
         handle_register_outside(user, user_id, reply_token)
@@ -134,7 +280,7 @@ def handle_text_message(event):
         handle_cancel_outside(user, user_id, reply_token, text)
         return
     
-    # 7. General -> AI Chat
+    # 9. General -> AI Chat
     response_text = generate_chat_response(text, user)
     reply_message(reply_token, text=response_text)
     save_chat_history(user_id, 'assistant', response_text)
@@ -439,12 +585,15 @@ def handle_image_message(event):
         details=f"OCR Name: {ocr.get('recipient_name','-')} | Courier: {ocr.get('transport','-')} | Match Score: {match_result.get('matched_fields', [])} | Image: {image_url}"
     )
     
+    import time
+    timestamp = int(time.time())
+    
     card = create_verification_result_card(
         is_match=is_match,
         reason=reason,
         ocr_details=ocr,
         image_url=image_url,
-        confirm_action={"type": "postback", "label": "ยืนยันการรับของ", "data": f"action=confirm_self&room={user_room}&verify_img={image_url}"} if is_match else None
+        confirm_action={"type": "postback", "label": "ยืนยันการรับของ", "data": f"action=confirm_self&room={user_room}&verify_img={image_url}&ts={timestamp}"} if is_match else None
     )
     reply_message(reply_token, flex_contents=card)
 
@@ -454,12 +603,11 @@ def handle_postback(event):
     reply_token = event.reply_token
     data = event.postback.data
     users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}})
-    
-    import urllib.parse
-    parsed = dict(urllib.parse.parse_qsl(data))
-    
+    # Parse query string
+    from urllib.parse import parse_qs
+    parsed = {k: v[0] for k, v in parse_qs(data).items()}
     action = parsed.get('action')
-    
+
     if action == 'verify_retry':
         reply_message(reply_token, text="ยกเลิกการสแกนเรียบร้อยแล้วค่ะ คุณสามารถเลือกทำรายการอื่นหรือถ่ายรูปใหม่อีกครั้งได้ทันทีค่ะ")
         return
@@ -495,6 +643,16 @@ def handle_postback(event):
             try: pin_list.append(int(p))
             except: pass
 
+        # Status-based Idempotency Check: See if any are already registered
+        already_done = parcels_col.count_documents({
+            "room_number": str(room), "pin": {"$in": pin_list}, "status": "pending", "is_after_hours": True
+        })
+        total_in_request = len(pins_str.split(','))
+        
+        if already_done >= total_in_request and total_in_request > 0:
+            reply_message(reply_token, text="รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏")
+            return
+
         result = parcels_col.update_many(
             {"room_number": str(room), "pin": {"$in": pin_list}, "status": "pending", "is_after_hours": False},
             {"$set": {"is_after_hours": True, "registered_at": datetime.datetime.utcnow()}}
@@ -514,9 +672,30 @@ def handle_postback(event):
         return
 
     if action == 'confirm_self':
+        # Check if card is stale (> 5 minutes old)
+        card_ts = parsed.get('ts')
+        if card_ts:
+            try:
+                import time
+                age_seconds = time.time() - int(card_ts)
+                if age_seconds > 300:  # 5 minutes
+                    reply_message(reply_token, text="บล็อกการ์ดนี้หมดอายุแล้วค่ะ กรุณาใช้บล็อกการ์ดล่าสุดหรือส่งคำสั่งใหม่ค่ะ")
+                    return
+            except:
+                pass  # If timestamp parsing fails, allow action
+
         room = parsed.get('room')
         verify_img = parsed.get('verify_img')
         
+        # Status-based Idempotency Check: See if any are still pending
+        still_pending = parcels_col.count_documents({
+            "room_number": room, "status": "pending", "is_after_hours": True
+        })
+        
+        if still_pending == 0:
+            reply_message(reply_token, text="รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏")
+            return
+
         result = parcels_col.update_many(
             {"room_number": room, "status": "pending", "is_after_hours": True},
             {"$set": {
@@ -574,6 +753,15 @@ def handle_postback(event):
             pin_list.append(p)      # string version
             try: pin_list.append(int(p)) # integer version
             except: pass
+
+        # Status-based Idempotency Check: See if any are still registered
+        still_registered = parcels_col.count_documents({
+            "room_number": str(room), "pin": {"$in": pin_list}, "status": "pending", "is_after_hours": True
+        })
+        
+        if still_registered == 0:
+            reply_message(reply_token, text="รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏")
+            return
 
         result = parcels_col.update_many(
             {"room_number": str(room), "pin": {"$in": pin_list}, "status": "pending", "is_after_hours": True},
