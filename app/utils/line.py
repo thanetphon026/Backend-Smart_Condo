@@ -597,11 +597,11 @@ def create_welcome_card(display_name=None, is_returning=False, user_info=None):
                     {"type": "separator", "margin": "md"},
                     {"type": "text", "text": "📋 ข้อมูลของคุณในระบบ:", "weight": "bold", "size": "sm", "margin": "lg", "color": "#555555"},
                     {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#f0fff4", "paddingAll": "12px", "cornerRadius": "8px", "contents": [
-                        {"type": "text", "text": f"🏠 ห้อง: {user_info.get('room_number', '-')}", "size": "sm", "color": "#333"},
-                        {"type": "text", "text": f"👤 ชื่อ: {user_info.get('first_name', '')} {user_info.get('last_name', '')}", "size": "sm", "color": "#333", "margin": "xs"},
-                        {"type": "text", "text": f"📱 เบอร์: {user_info.get('phone', '-')}", "size": "sm", "color": "#333", "margin": "xs"}
+                        {"type": "text", "text": f"🏠 ห้อง: {user_info.get('room_number', '-')}", "size": "sm", "color": "#333333"},
+                        {"type": "text", "text": f"👤 ชื่อ: {user_info.get('first_name', '')} {user_info.get('last_name', '')}", "size": "sm", "color": "#333333", "margin": "xs"},
+                        {"type": "text", "text": f"📱 เบอร์: {user_info.get('phone', '-')}", "size": "sm", "color": "#333333", "margin": "xs"}
                     ]},
-                    {"type": "text", "text": "พร้อมใช้งานแล้วค่ะ! พิมพ์ถามน้องบอตได้เลย 😊", "size": "xs", "color": "#888", "margin": "lg", "wrap": True}
+                    {"type": "text", "text": "พร้อมใช้งานแล้วค่ะ! พิมพ์ถามน้องบอตได้เลย 😊", "size": "xs", "color": "#888888", "margin": "lg", "wrap": True}
                 ]
             }
         }
@@ -633,18 +633,18 @@ def create_registration_required_card(display_name=None):
             "layout": "vertical",
             "contents": [
                 {"type": "text", "text": greeting, "weight": "bold", "size": "md", "wrap": True},
-                {"type": "text", "text": "ยินดีต้อนรับสู่ระบบแชทบอตนิติ ลุมพินีพาร์ค เพชรเกษม98 🏢", "size": "sm", "color": "#555", "margin": "md", "wrap": True},
+                {"type": "text", "text": "ยินดีต้อนรับสู่ระบบแชทบอตนิติ ลุมพินีพาร์ค เพชรเกษม98 🏢", "size": "sm", "color": "#555555", "margin": "md", "wrap": True},
                 {"type": "separator", "margin": "lg"},
                 {"type": "text", "text": "⚠️ คุณยังไม่ได้ลงทะเบียนในระบบ", "weight": "bold", "size": "sm", "color": "#ff6600", "margin": "lg"},
-                {"type": "text", "text": "กรุณาลงทะเบียนก่อนเพื่อใช้งานระบบค่ะ", "size": "sm", "color": "#555", "margin": "sm", "wrap": True},
+                {"type": "text", "text": "กรุณาลงทะเบียนก่อนเพื่อใช้งานระบบค่ะ", "size": "sm", "color": "#555555", "margin": "sm", "wrap": True},
                 {"type": "box", "layout": "vertical", "margin": "lg", "backgroundColor": "#f3e5f5", "paddingAll": "12px", "cornerRadius": "8px", "contents": [
                     {"type": "text", "text": "📌 วิธีลงทะเบียน:", "weight": "bold", "size": "sm", "color": "#6200ee"},
-                    {"type": "text", "text": "พิมพ์ตามรูปแบบนี้:", "size": "xs", "color": "#666", "margin": "sm"},
+                    {"type": "text", "text": "พิมพ์ตามรูปแบบนี้:", "size": "xs", "color": "#666666", "margin": "sm"},
                     {"type": "text", "text": "ลงทะเบียน [เลขห้อง] [ชื่อ-สกุล] [เบอร์โทร]", "weight": "bold", "size": "sm", "color": "#4a148c", "margin": "sm", "wrap": True}
                 ]},
                 {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#e3f2fd", "paddingAll": "10px", "cornerRadius": "8px", "contents": [
                     {"type": "text", "text": "💡 ตัวอย่าง:", "weight": "bold", "size": "xs", "color": "#0066ff"},
-                    {"type": "text", "text": "ลงทะเบียน 1234 สมชาย ใจดี 0812345678", "size": "xs", "color": "#333", "margin": "xs", "wrap": True}
+                    {"type": "text", "text": "ลงทะเบียน 1234 สมชาย ใจดี 0812345678", "size": "xs", "color": "#333333", "margin": "xs", "wrap": True}
                 ]}
             ]
         },
@@ -652,7 +652,7 @@ def create_registration_required_card(display_name=None):
             "type": "box",
             "layout": "vertical",
             "contents": [
-                {"type": "text", "text": "📞 หากมีปัญหา ติดต่อนิติบุคคล", "size": "xxs", "color": "#aaa", "align": "center"}
+                {"type": "text", "text": "📞 หากมีปัญหา ติดต่อนิติบุคคล", "size": "xxs", "color": "#aaaaaa", "align": "center"}
             ],
             "paddingAll": "10px"
         }
@@ -683,16 +683,16 @@ def create_user_registration_success_card(room_number, full_name, phone):
                 {"type": "separator", "margin": "md"},
                 {"type": "box", "layout": "vertical", "margin": "lg", "backgroundColor": "#f0fff4", "paddingAll": "12px", "cornerRadius": "8px", "contents": [
                     {"type": "text", "text": "📋 ข้อมูลที่ลงทะเบียน:", "weight": "bold", "size": "sm", "color": "#06c755"},
-                    {"type": "text", "text": f"🏠 ห้อง: {room_number}", "size": "sm", "color": "#333", "margin": "sm"},
-                    {"type": "text", "text": f"👤 ชื่อ: {full_name}", "size": "sm", "color": "#333", "margin": "xs"},
-                    {"type": "text", "text": f"📱 เบอร์: {phone}", "size": "sm", "color": "#333", "margin": "xs"}
+                    {"type": "text", "text": f"🏠 ห้อง: {room_number}", "size": "sm", "color": "#333333", "margin": "sm"},
+                    {"type": "text", "text": f"👤 ชื่อ: {full_name}", "size": "sm", "color": "#333333", "margin": "xs"},
+                    {"type": "text", "text": f"📱 เบอร์: {phone}", "size": "sm", "color": "#333333", "margin": "xs"}
                 ]},
-                {"type": "text", "text": "คุณสามารถใช้งานระบบได้แล้วค่ะ!", "size": "sm", "color": "#555", "margin": "lg", "wrap": True},
+                {"type": "text", "text": "คุณสามารถใช้งานระบบได้แล้วค่ะ!", "size": "sm", "color": "#555555", "margin": "lg", "wrap": True},
                 {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#fff8e1", "paddingAll": "10px", "cornerRadius": "8px", "contents": [
                     {"type": "text", "text": "💡 ทดลองใช้งาน:", "weight": "bold", "size": "xs", "color": "#ff8f00"},
-                    {"type": "text", "text": "• พิมพ์ \"เช็คพัสดุ\" เช็คสถานะพัสดุ", "size": "xs", "color": "#333", "margin": "xs"},
-                    {"type": "text", "text": "• พิมพ์ \"ลงทะเบียนรับนอกเวลา\" นัดรับพัสดุ", "size": "xs", "color": "#333", "margin": "xs"},
-                    {"type": "text", "text": "• หรือถามคำถามเกี่ยวกับคอนโดได้เลย!", "size": "xs", "color": "#333", "margin": "xs"}
+                    {"type": "text", "text": "• พิมพ์ \"เช็คพัสดุ\" เช็คสถานะพัสดุ", "size": "xs", "color": "#333333", "margin": "xs"},
+                    {"type": "text", "text": "• พิมพ์ \"ลงทะเบียนรับนอกเวลา\" นัดรับพัสดุ", "size": "xs", "color": "#333333", "margin": "xs"},
+                    {"type": "text", "text": "• หรือถามคำถามเกี่ยวกับคอนโดได้เลย!", "size": "xs", "color": "#333333", "margin": "xs"}
                 ]}
             ]
         }
