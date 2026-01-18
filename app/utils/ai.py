@@ -6,7 +6,7 @@ import re
 import datetime
 
 client = genai.Client(api_key=Config.GEMINI_API_KEY)
-MODEL_NAME = 'gemini-2.0-flash'
+MODEL_NAME = 'gemini-3-flash-preview'
 
 CHAT_SYSTEM_PROMPT = """
 You are "Nong Bot Niti", a highly intelligent and polite Condo Assistant.
