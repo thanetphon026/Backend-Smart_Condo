@@ -6,7 +6,8 @@ from ..utils.line import (
     create_premium_parcel_list, create_pickup_complete_card, 
     create_status_card, create_verification_result_card,
     create_cancellation_confirmation_card, create_registration_confirmation_card,
-    create_welcome_card, create_registration_required_card, create_user_registration_success_card
+    create_welcome_card, create_registration_required_card, create_user_registration_success_card,
+    create_image_error_card
 )
 from ..utils.cloudinary_utils import upload_image
 from ..utils.db import users_col, parcels_col, log_audit, save_chat_history
@@ -271,8 +272,8 @@ def handle_text_message(event):
                     title="ยืนยันการลงทะเบียน?",
                     status="ต้องการลงทะเบียนรับนอกเวลาใช่หรือไม่?",
                     details=f"คุณพิมพ์: '{text}'\n\nหากต้องการลงทะเบียนรับพัสดุนอกเวลา กรุณากดยืนยันด้านล่าง",
-                    confirm_action={"type": "message", "label": "ใช่ ต้องการลงทะเบียน", "text": "ลงทะเบียนรับนอกเวลา"},
-                    reject_action={"type": "message", "label": "ไม่ใช่", "text": "ขอบคุณ"},
+                    confirm_action={"type": "postback", "label": "ใช่ ต้องการลงทะเบียน", "data": "action=register_outside_trigger"},
+                    reject_action={"type": "postback", "label": "ไม่ใช่", "data": "action=register_abort"},
                     color="#0066ff"
                 )
                 reply_message(reply_token, flex_contents=card)
@@ -575,13 +576,25 @@ def handle_image_message(event):
         return
     
     image_bytes = r.content
+    
+    # Check file extension from Content-Type if possible
+    content_type = r.headers.get('Content-Type', '')
+    ext = content_type.split('/')[-1].lower() if '/' in content_type else 'jpeg'
+    
+    ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
+    if ext not in ALLOWED_EXTENSIONS and 'image' in content_type:
+        card = create_image_error_card(
+            reason="นามสกุลไฟล์ไม่ถูกต้อง",
+            detail=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ"
+        )
+        reply_message(reply_token, flex_contents=card)
+        return
 
     # Check file size (10MB limit)
     if len(image_bytes) > 10 * 1024 * 1024:
-        card = create_status_card(
-            title="ไฟล์ขนาดใหญ่เกินไป",
-            status_text="❌ รูปภาพต้องมีขนาดไม่เกิน 10MB ค่ะ\n\nกรุณาลดขนาดรูปภาพหรือถ่ายใหม่แล้วลองอีกครั้งค่ะ",
-            color="#ff3333"
+        card = create_image_error_card(
+            reason="ไฟล์ขนาดใหญ่เกินไป",
+            detail=f"รูปภาพมีขนาด {len(image_bytes)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
         )
         reply_message(reply_token, flex_contents=card)
         return
@@ -809,4 +822,15 @@ def handle_postback(event):
             log_audit("Cancel Outside", room_name, target="ยกเลิกนัดหมาย", details=f"PINs: {pins_str}")
         else:
             reply_message(reply_token, text="เกิดข้อผิดพลาดในการยกเลิกรายการค่ะ")
+        return
+
+    if action == 'register_outside_trigger':
+        user = users_col.find_one({"line_user_id": user_id})
+        if user:
+            users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": "register_select"}})
+            handle_register_outside(user, user_id, reply_token)
+        return
+
+    if action == 'cancel_abort' or action == 'register_abort':
+        reply_message(reply_token, text="รับทราบค่ะ ยกเลิกรายการให้เรียบร้อยแล้วค่ะ 😊")
         return

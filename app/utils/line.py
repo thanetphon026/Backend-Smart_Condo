@@ -181,7 +181,7 @@ def create_new_parcel_notification(room_number, recipient_name, transport, track
                 "type": "button",
                 "style": "primary",
                 "color": "#007bff",
-                "action": {"type": "message", "label": "ลงทะเบียนรับนอกเวลา", "text": "ลงทะเบียนรับนอกเวลา"},
+                "action": {"type": "postback", "label": "ลงทะเบียนรับนอกเวลา", "data": "action=register_outside_trigger"},
                 "height": "sm"
             }
         ]
@@ -329,7 +329,7 @@ def create_cancellation_confirmation_card(parcels_to_cancel):
                 {
                     "type": "button",
                     "style": "secondary",
-                    "action": {"type": "message", "label": "รักษาสิทธิ์ไว้", "text": "ไม่ยกเลิกแล้ว"},
+                    "action": {"type": "postback", "label": "รักษาสิทธิ์ไว้", "data": "action=cancel_abort"},
                     "height": "sm"
                 }
             ]
@@ -383,7 +383,7 @@ def create_registration_confirmation_card(parcels_to_register):
                 {
                     "type": "button",
                     "style": "secondary",
-                    "action": {"type": "message", "label": "ยกเลิก", "text": "ไม่ลงทะเบียนแล้ว"},
+                    "action": {"type": "postback", "label": "ยกเลิก", "data": "action=register_abort"},
                     "height": "sm"
                 }
             ]
@@ -459,6 +459,38 @@ def create_status_card(title, status_text, color="#06c755"):
             "paddingAll": "25px"
         }
     }
+
+def create_image_error_card(reason, detail):
+    """
+    Warning card for image validation errors (size/extension).
+    """
+    return {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "❌ ไม่สามารถส่งรูปได้", "weight": "bold", "color": "#ffffff", "size": "lg"}
+            ],
+            "backgroundColor": "#ff3333",
+            "paddingAll": "15px"
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": reason, "weight": "bold", "size": "md", "color": "#ff3333", "wrap": True},
+                {"type": "separator", "margin": "md"},
+                {"type": "box", "layout": "vertical", "margin": "md", "spacing": "xs", "contents": [
+                    {"type": "text", "text": f"📋 รายละเอียด: {detail}", "size": "sm", "wrap": True},
+                    {"type": "text", "text": "✅ สิ่งที่คุณต้องทำ:", "weight": "bold", "size": "xs", "color": "#555555", "margin": "md"},
+                    {"type": "text", "text": "• ขนาดไฟล์ต้องไม่เกิน 10 MB", "size": "xs", "color": "#555555"},
+                    {"type": "text", "text": "• นามสกุลที่รองรับ: png, jpg, jpeg, heic, heif", "size": "xs", "color": "#555555"}
+                ]}
+            ]
+        }
+    }
+
 def create_verification_result_card(is_match, reason, ocr_details, image_url, confirm_action=None):
     """
     Card to show AI Vision analysis result.
@@ -528,7 +560,7 @@ def create_verification_result_card(is_match, reason, ocr_details, image_url, co
             "cornerRadius": "md",
             "contents": [
                 {"type": "text", "text": "⚠️ ไม่ใช่พัสดุของคุณ", "weight": "bold", "size": "xs", "color": "#dc3545"},
-                {"type": "text", "text": "กรุณาวางพัสดุไว้ที่เดิม\n\nหรือตรวจสอบเลขห้องอีกครั้งค่ะ", "size": "xs", "color": "#dc3545", "wrap": True, "margin": "xs"}
+                {"type": "text", "text": "กรุณาวางพัสดุไว้ที่เดิม\nหรือตรวจสอบเลขห้องอีกครั้งค่ะ", "size": "xs", "color": "#dc3545", "wrap": True, "margin": "xs"}
             ]
         }
         bubble["body"]["contents"].append(warning_box)

@@ -12,7 +12,8 @@ from ..utils.line import (
     create_block_card, create_premium_parcel_list, create_pickup_complete_card,
     create_status_card, create_verification_result_card,
     create_cancellation_confirmation_card, create_registration_confirmation_card,
-    create_registration_required_card, create_user_registration_success_card
+    create_registration_required_card, create_user_registration_success_card,
+    create_image_error_card
 )
 from ..utils.cloudinary_utils import upload_image
 from ..utils.helpers import get_bkk_time, token_required
@@ -545,23 +546,31 @@ def handle_image_web(user, user_id, image_base64, image_type):
         )
         return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
     
-    # Decode base64 image
+    # Decode base64 image and check size/type
     try:
+        # Check image type
+        ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
+        if image_type.lower() not in ALLOWED_EXTENSIONS:
+            card = create_image_error_card(
+                reason="นามสกุลไฟล์ไม่ถูกต้อง",
+                detail=f"ระบบไม่รองรับไฟล์ {image_type} ค่ะ"
+            )
+            return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+
         image_bytes = base64.b64decode(image_base64)
         
         # Check file size (10MB limit)
         if len(image_bytes) > 10 * 1024 * 1024:
-            card = create_status_card(
-                title="ไฟล์ขนาดใหญ่เกินไป",
-                status_text="❌ รูปภาพต้องมีขนาดไม่เกิน 10MB ค่ะ\n\nกรุณาลดขนาดรูปภาพหรือถ่ายใหม่แล้วลองอีกครั้งค่ะ",
-                color="#ff3333"
+            card = create_image_error_card(
+                reason="ไฟล์ขนาดใหญ่เกินไป",
+                detail=f"รูปภาพมีขนาด {len(image_bytes)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
             )
             return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
             
     except Exception as e:
         return jsonify({
             "status": "error",
-            "reply": "เกิดข้อผิดพลาดในการประมวลผลรูปภาพ",
+            "reply": f"เกิดข้อผิดพลาดในการประมวลผลรูปภาพ: {str(e)}",
             "timestamp": datetime.datetime.utcnow().isoformat()
         })
     
@@ -780,6 +789,16 @@ def handle_postback_web(user, user_id, postback_data):
                 "timestamp": datetime.datetime.utcnow().isoformat()
             })
     
+    if action == 'register_outside_trigger':
+        return handle_register_outside_web(user, user_id)
+
+    if action == 'cancel_abort' or action == 'register_abort':
+        return jsonify({
+            "status": "success",
+            "reply": "รับทราบค่ะ ยกเลิกรายการให้เรียบร้อยแล้วค่ะ 😊",
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        })
+
     # Unknown action
     return jsonify({
         "status": "success",
