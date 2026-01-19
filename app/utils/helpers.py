@@ -22,6 +22,10 @@ def token_required(f):
         # Check Custom header
         if not token and 'X-API-Token' in request.headers:
             token = request.headers['X-API-Token']
+            
+        # Check Query String (for Export URLs)
+        if not token:
+            token = request.args.get('token')
 
         if not token or token != Config.API_TOKEN:
             return jsonify({

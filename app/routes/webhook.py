@@ -720,6 +720,14 @@ def handle_postback(event):
 
     if action == 'verify_retry':
         reply_message(reply_token, text="ยกเลิกการสแกนเรียบร้อยแล้วค่ะ คุณสามารถเลือกทำรายการอื่นหรือถ่ายรูปใหม่อีกครั้งได้ทันทีค่ะ")
+        user = users_col.find_one({"line_user_id": user_id})
+        room_name = f"ห้อง {user.get('room_number') if user else '-'} - {user.get('first_name', 'Guest') if user else 'Guest'}"
+        log_audit(
+            action="Self Pickup Cancel", 
+            performed_by=room_name, 
+            target="ยกเลิกการสแกน", 
+            details="ผู้ใช้กดยกเลิก/ถ่ายใหม่"
+        )
         return
     
     if action == 'button_disabled':
