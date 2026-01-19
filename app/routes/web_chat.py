@@ -548,6 +548,16 @@ def handle_image_web(user, user_id, image_base64, image_type):
     # Decode base64 image
     try:
         image_bytes = base64.b64decode(image_base64)
+        
+        # Check file size (10MB limit)
+        if len(image_bytes) > 10 * 1024 * 1024:
+            card = create_status_card(
+                title="ไฟล์ขนาดใหญ่เกินไป",
+                status_text="❌ รูปภาพต้องมีขนาดไม่เกิน 10MB ค่ะ\n\nกรุณาลดขนาดรูปภาพหรือถ่ายใหม่แล้วลองอีกครั้งค่ะ",
+                color="#ff3333"
+            )
+            return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+            
     except Exception as e:
         return jsonify({
             "status": "error",

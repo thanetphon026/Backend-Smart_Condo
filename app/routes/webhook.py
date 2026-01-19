@@ -576,6 +576,16 @@ def handle_image_message(event):
     
     image_bytes = r.content
 
+    # Check file size (10MB limit)
+    if len(image_bytes) > 10 * 1024 * 1024:
+        card = create_status_card(
+            title="ไฟล์ขนาดใหญ่เกินไป",
+            status_text="❌ รูปภาพต้องมีขนาดไม่เกิน 10MB ค่ะ\n\nกรุณาลดขนาดรูปภาพหรือถ่ายใหม่แล้วลองอีกครั้งค่ะ",
+            color="#ff3333"
+        )
+        reply_message(reply_token, flex_contents=card)
+        return
+
     # 4. Strict AI Analyze (Check if it's a label first)
     label_data = analyze_parcel_label(image_bytes)
     
