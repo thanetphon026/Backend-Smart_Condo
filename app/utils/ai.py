@@ -154,16 +154,19 @@ def retrieve_knowledge(query, limit=5):
         except Exception as e:
             pass
             
-        # Merge Text Results
+        # Merge Text Results (Prioritize appending them)
         for r in text_results:
             rid = str(r['_id'])
             if rid not in seen_ids:
                 r['_id'] = rid
                 r['source'] = 'text'
+                # Insert at position 1 (second place) to mix with top vector result
+                # or just append. Appending is fine if we return enough results.
                 results.append(r)
-                
-        # 4. Fuzzy Fallback (if total results are still low)
-        if len(results) < 2:
+                seen_ids.add(rid)
+        
+        # 4. Fuzzy Fallback (only if total results are low)
+        if len(results) < limit: # Only fallback to fuzzy if we really need more
             import re
             regex_queries = []
             for kw in keywords:
@@ -183,7 +186,9 @@ def retrieve_knowledge(query, limit=5):
                         results.append(f)
                         seen_ids.add(rid)
 
-        return results[:limit]
+        # Truncate at a reasonable size for LLM context (Gemini Flash can handle more than 5)
+        # We allow up to 10 results to ensure both Vector and Text matches are included.
+        return results[:10]
     except Exception as e:
         print(f"❌ RAG Error: {e}")
         return []
