@@ -573,8 +573,9 @@ def handle_image_message(event):
                     reason="ไฟล์ขนาดใหญ่เกินไป",
                     detail=f"รูปภาพมีขนาด {int(content_length)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
                 )
-                if not reply_message(reply_token, flex_contents=card):
-                    reply_message(reply_token, text="ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ (ไม่สามารถแสดงผลการ์ดได้)")
+                if not reply_message(reply_token, flex_contents=card, text="⚠️ ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ"):
+                     # Fallback if Flex fails
+                     reply_message(reply_token, text="ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ (ไม่สามารถแสดงผลการ์ดได้)")
                 return
 
             # Check Content-Type
@@ -587,7 +588,7 @@ def handle_image_message(event):
                     reason="นามสกุลไฟล์ไม่ถูกต้อง",
                     detail=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ"
                 )
-                if not reply_message(reply_token, flex_contents=card):
+                if not reply_message(reply_token, flex_contents=card, text=f"⚠️ นามสกุลไฟล์ {ext} ไม่ถูกต้อง"):
                     reply_message(reply_token, text=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ")
                 return
 
@@ -599,7 +600,7 @@ def handle_image_message(event):
                         reason="ไฟล์ขนาดใหญ่เกินไป",
                         detail=f"รูปภาพมีขนาดเกิน 10MB ค่ะ"
                     )
-                    if not reply_message(reply_token, flex_contents=card):
+                    if not reply_message(reply_token, flex_contents=card, text="⚠️ ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ"):
                         reply_message(reply_token, text="ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ")
                     return
         
@@ -725,6 +726,11 @@ def handle_postback(event):
         reply_message(reply_token, text="ปุ่มนี้ไม่สามารถใช้งานได้ในสถานการณ์นี้ค่ะ กรุณาใช้ปุ่มอื่นหรือติดต่อเจ้าหน้าที่ค่ะ")
         return
     
+    if action == 'acknowledge_error':
+        # Just acknowledge without sending user text
+        reply_message(reply_token, text="รับทราบค่ะ หากต้องการส่งรูปใหม่สามารถส่งได้ทันทีเลยนะคะ")
+        return
+
     if action == 'register_after_hours_confirm':
         # Check if card is stale (> 5 minutes old)
         card_ts = parsed.get('ts')

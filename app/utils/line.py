@@ -52,7 +52,8 @@ def _format_messages(text, flex_contents, image_url):
         except Exception as e:
             print(f"Flex Formatting Error: {e}")
             messages.append(TextMessage(text=text or "ข้อมูลแสดงผลผิดพลาด"))
-    elif text:
+            
+    if text:
         messages.append(TextMessage(text=text))
         
     if image_url:
@@ -559,9 +560,9 @@ def create_image_error_card(reason, detail):
                 {
                     "type": "button",
                     "action": {
-                        "type": "message",
+                        "type": "postback",
                         "label": "รับทราบ",
-                        "text": "รับทราบ"
+                        "data": "action=acknowledge_error"
                     },
                     "style": "secondary",
                     "height": "sm"
