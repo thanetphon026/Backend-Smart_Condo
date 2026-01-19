@@ -552,37 +552,59 @@ def handle_image_message(event):
     reply_token = event.reply_token
     message_id = event.message.id
     
-    # 1. PRIORITY: Download and Validate Image FIRST
+    # 1. PRIORITY: Download and Validate Image (STREAMING)
     url = f"https://api-data.line.me/v2/bot/message/{message_id}/content"
     headers = {"Authorization": f"Bearer {Config.LINE_CHANNEL_ACCESS_TOKEN}"}
-    r = requests.get(url, headers=headers)
     
-    if r.status_code != 200:
-        reply_message(reply_token, text="เกิดข้อผิดพลาดในการโหลดรูปภาพ")
-        return
-    
-    image_bytes = r.content
-    
-    # Check file extension from Content-Type
-    content_type = r.headers.get('Content-Type', '')
-    ext = content_type.split('/')[-1].lower() if '/' in content_type else 'jpeg'
-    
-    ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
-    if ext not in ALLOWED_EXTENSIONS and 'image' in content_type:
-        card = create_image_error_card(
-            reason="นามสกุลไฟล์ไม่ถูกต้อง",
-            detail=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ"
-        )
-        reply_message(reply_token, flex_contents=card)
-        return
+    # Use stream=True to check headers first
+    try:
+        r = requests.get(url, headers=headers, stream=True)
+        if r.status_code != 200:
+            reply_message(reply_token, text="เกิดข้อผิดพลาดในการโหลดรูปภาพ")
+            return
+            
+        # Check Content-Length header first
+        content_length = r.headers.get('Content-Length')
+        MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+        
+        if content_length and int(content_length) > MAX_SIZE:
+             card = create_image_error_card(
+                reason="ไฟล์ขนาดใหญ่เกินไป",
+                detail=f"รูปภาพมีขนาด {int(content_length)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
+            )
+             reply_message(reply_token, flex_contents=card)
+             return
 
-    # Check file size (10MB limit)
-    if len(image_bytes) > 10 * 1024 * 1024:
-        card = create_image_error_card(
-            reason="ไฟล์ขนาดใหญ่เกินไป",
-            detail=f"รูปภาพมีขนาด {len(image_bytes)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
-        )
-        reply_message(reply_token, flex_contents=card)
+        # Check Content-Type header
+        content_type = r.headers.get('Content-Type', '')
+        ext = content_type.split('/')[-1].lower() if '/' in content_type else 'jpeg'
+        ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
+        
+        if ext not in ALLOWED_EXTENSIONS and 'image' in content_type:
+            card = create_image_error_card(
+                reason="นามสกุลไฟล์ไม่ถูกต้อง",
+                detail=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ"
+            )
+            reply_message(reply_token, flex_contents=card)
+            return
+
+        # Download chunks and enforce strict limit
+        image_bytes = bytearray()
+        for chunk in r.iter_content(chunk_size=4096):
+            image_bytes.extend(chunk)
+            if len(image_bytes) > MAX_SIZE:
+                card = create_image_error_card(
+                    reason="ไฟล์ขนาดใหญ่เกินไป",
+                    detail=f"รูปภาพมีขนาดเกิน 10MB ค่ะ"
+                )
+                reply_message(reply_token, flex_contents=card)
+                return
+                
+        image_bytes = bytes(image_bytes)
+        
+    except Exception as e:
+        print(f"Image Download Error: {e}")
+        reply_message(reply_token, text="เกิดข้อผิดพลาดในการดาวน์โหลดรูปภาพ")
         return
 
     # 2. Check Time Restrictions (Self-Pickup Scan: 18:00 - 08:30)
@@ -623,37 +645,59 @@ def handle_image_message(event):
         reply_message(reply_token, flex_contents=card)
         return
 
-    url = f"https://api-data.line.me/v2/bot/message/{message_id}/content"
-    headers = {"Authorization": f"Bearer {Config.LINE_CHANNEL_ACCESS_TOKEN}"}
-    r = requests.get(url, headers=headers)
-    
-    if r.status_code != 200:
-        reply_message(reply_token, text="เกิดข้อผิดพลาดในการโหลดรูปภาพ")
-        return
-    
-    image_bytes = r.content
-    
-    # Check file extension from Content-Type if possible
-    content_type = r.headers.get('Content-Type', '')
-    ext = content_type.split('/')[-1].lower() if '/' in content_type else 'jpeg'
-    
-    ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
-    if ext not in ALLOWED_EXTENSIONS and 'image' in content_type:
-        card = create_image_error_card(
-            reason="นามสกุลไฟล์ไม่ถูกต้อง",
-            detail=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ"
-        )
-        reply_message(reply_token, flex_contents=card)
-        return
+    # Use stream=True for checking self-pickup verify image too
+    try:
+        url = f"https://api-data.line.me/v2/bot/message/{message_id}/content"
+        headers = {"Authorization": f"Bearer {Config.LINE_CHANNEL_ACCESS_TOKEN}"}
+        r = requests.get(url, headers=headers, stream=True)
+        
+        if r.status_code != 200:
+            reply_message(reply_token, text="เกิดข้อผิดพลาดในการโหลดรูปภาพ")
+            return
+            
+        # Check Content-Length first
+        content_length = r.headers.get('Content-Length')
+        MAX_SIZE = 10 * 1024 * 1024
+        
+        if content_length and int(content_length) > MAX_SIZE:
+             card = create_image_error_card(
+                reason="ไฟล์ขนาดใหญ่เกินไป",
+                detail=f"รูปภาพมีขนาด {int(content_length)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
+            )
+             reply_message(reply_token, flex_contents=card)
+             return
+        
+        # Check type
+        content_type = r.headers.get('Content-Type', '')
+        ext = content_type.split('/')[-1].lower() if '/' in content_type else 'jpeg'
+        ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
+        
+        if ext not in ALLOWED_EXTENSIONS and 'image' in content_type:
+            card = create_image_error_card(
+                reason="นามสกุลไฟล์ไม่ถูกต้อง",
+                detail=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ"
+            )
+            reply_message(reply_token, flex_contents=card)
+            return
 
-    # Check file size (10MB limit)
-    if len(image_bytes) > 10 * 1024 * 1024:
-        card = create_image_error_card(
-            reason="ไฟล์ขนาดใหญ่เกินไป",
-            detail=f"รูปภาพมีขนาด {len(image_bytes)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
-        )
-        reply_message(reply_token, flex_contents=card)
-        return
+        # Download chunks
+        image_bytes = bytearray()
+        for chunk in r.iter_content(chunk_size=4096):
+            image_bytes.extend(chunk)
+            if len(image_bytes) > MAX_SIZE:
+                 card = create_image_error_card(
+                    reason="ไฟล์ขนาดใหญ่เกินไป",
+                    detail=f"รูปภาพมีขนาดเกิน 10MB ค่ะ"
+                )
+                 reply_message(reply_token, flex_contents=card)
+                 return
+                 
+        image_bytes = bytes(image_bytes)
+
+    except Exception as e:
+         print(f"Image Download Error (Pickup): {e}")
+         reply_message(reply_token, text="เกิดข้อผิดพลาดในการโหลดรูปภาพ")
+         return
 
     # 4. Strict AI Analyze (Check if it's a label first)
     label_data = analyze_parcel_label(image_bytes)

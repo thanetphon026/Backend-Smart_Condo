@@ -463,31 +463,111 @@ def create_status_card(title, status_text, color="#06c755"):
 def create_image_error_card(reason, detail):
     """
     Warning card for image validation errors (size/extension).
+    Premium Design: Red Alert Style
     """
     return {
         "type": "bubble",
         "header": {
             "type": "box",
-            "layout": "vertical",
+            "layout": "horizontal",
             "contents": [
-                {"type": "text", "text": "❌ ไม่สามารถส่งรูปได้", "weight": "bold", "color": "#ffffff", "size": "lg"}
+                {
+                    "type": "text",
+                    "text": "⚠️ ไฟล์ไม่ถูกต้อง",
+                    "weight": "bold",
+                    "color": "#FFFFFF",
+                    "size": "lg",
+                    "flex": 1
+                }
             ],
-            "backgroundColor": "#ff3333",
+            "backgroundColor": "#FF3333",
             "paddingAll": "15px"
         },
         "body": {
             "type": "box",
             "layout": "vertical",
             "contents": [
-                {"type": "text", "text": reason, "weight": "bold", "size": "md", "color": "#ff3333", "wrap": True},
-                {"type": "separator", "margin": "md"},
-                {"type": "box", "layout": "vertical", "margin": "md", "spacing": "xs", "contents": [
-                    {"type": "text", "text": f"📋 รายละเอียด: {detail}", "size": "sm", "wrap": True},
-                    {"type": "text", "text": "✅ สิ่งที่คุณต้องทำ:", "weight": "bold", "size": "xs", "color": "#555555", "margin": "md"},
-                    {"type": "text", "text": "• ขนาดไฟล์ต้องไม่เกิน 10 MB", "size": "xs", "color": "#555555"},
-                    {"type": "text", "text": "• นามสกุลที่รองรับ: png, jpg, jpeg, heic, heif", "size": "xs", "color": "#555555"}
-                ]}
+                {
+                    "type": "text",
+                    "text": reason,
+                    "weight": "bold",
+                    "size": "xl",
+                    "color": "#FF3333",
+                    "align": "center",
+                    "wrap": True,
+                    "margin": "md"
+                },
+                {
+                    "type": "separator",
+                    "margin": "lg"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "lg",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": detail,
+                            "size": "sm",
+                            "color": "#333333",
+                            "wrap": True,
+                            "align": "center"
+                        }
+                    ],
+                    "backgroundColor": "#FFF5F5",
+                    "cornerRadius": "8px",
+                    "paddingAll": "12px"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "lg",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "✅ ข้อกำหนด:",
+                            "weight": "bold",
+                            "size": "sm",
+                            "color": "#555555"
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": "•", "size": "sm", "color": "#999999", "flex": 0, "margin": "sm"},
+                                {"type": "text", "text": "ขนาดไฟล์ต้องไม่เกิน 10 MB", "size": "sm", "color": "#666666", "flex": 1, "margin": "sm"}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": "•", "size": "sm", "color": "#999999", "flex": 0, "margin": "sm"},
+                                {"type": "text", "text": "นามสกุล: png, jpg, jpeg, heic", "size": "sm", "color": "#666666", "flex": 1, "margin": "sm"}
+                            ]
+                        }
+                    ]
+                }
             ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "button",
+                    "action": {
+                        "type": "message",
+                        "label": "รับทราบ",
+                        "text": "รับทราบ"
+                    },
+                    "style": "secondary",
+                    "height": "sm"
+                }
+            ],
+            "paddingAll": "10px"
         }
     }
 

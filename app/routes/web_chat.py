@@ -550,9 +550,20 @@ def handle_image_web(user, user_id, image_base64, image_type):
             )
             return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
 
+        # Check Base64 Size Estimation (Approximate)
+        # Base64 is ~1.33x larger than binary. 10MB binary ~= 13.3MB Base64.
+        # We can check len(image_base64) directly to be fast.
+        MAX_B64_SIZE = 14 * 1024 * 1024 # ~10.5 MB binary safety margin
+        if len(image_base64) > MAX_B64_SIZE:
+             card = create_image_error_card(
+                reason="ไฟล์ขนาดใหญ่เกินไป",
+                detail=f"รูปภาพมีขนาดเกิน 10MB ค่ะ"
+            )
+             return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+
         image_bytes = base64.b64decode(image_base64)
         
-        # Check file size (10MB limit)
+        # Check Actual Binary Size (10MB limit)
         if len(image_bytes) > 10 * 1024 * 1024:
             card = create_image_error_card(
                 reason="ไฟล์ขนาดใหญ่เกินไป",
