@@ -57,6 +57,8 @@ Infer intent even from misspellings:
 - "จอดรถ"/"ที่จอด" → จอดรถ ที่จอดรถ ลานจอด
 - "ฟิตเนส"/"สระน้ำ"/"ส่วนกลาง" → สิ่งอำนวยความสะดวก ฟิตเนส ออกกำลังกาย สระว่ายน้ำ
 
+User Input: "{corrected_text}"
+
 Return ONLY keywords (space-separated):"""
         
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
