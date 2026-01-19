@@ -14,11 +14,18 @@ def get_logs():
     
     query = {}
     if log_type == 'user':
-        # Sync with webhook.py and admin_parcels actions
-        query['action'] = {"$in": ["Register Outside", "User Scan", "Self Pickup Success", "Cancel Outside"]}
+        # User Actions: Self Pickup Scan (Success/Failed)
+        # Note: "Self Pickup Scan (Success)" and "Self Pickup Scan (Failed)" are the audit action names used in webhook.py
+        # Also include "User Scan" if that was used previously, but user authorized "Self Pickup Scan".
+        # webhook.py uses: "Self Pickup Scan (Success)" and "Self Pickup Scan (Failed)"
+        query['action'] = {"$in": ["Self Pickup Scan (Success)", "Self Pickup Scan (Failed)"]}
     else:
-        # Admin Actions
-        query['action'] = {"$nin": ["Register Outside", "User Scan", "Self Pickup Success", "Cancel Outside"]}
+        # Admin Actions: Login, Logout, Scan Parcel (In System), Pickup Parcel (In Time)
+        # Scan Parcel (In System) -> "Scan Parcel" (from admin_parcels.py)
+        # Pickup Parcel (In Time) -> "Pickup Parcel" (from admin_parcels.py)
+        # Admin Login -> "Admin Login"
+        # Admin Logout -> "Admin Logout"
+        query['action'] = {"$in": ["Admin Login", "Admin Logout", "Scan Parcel", "Pickup Parcel"]}
 
     logs = list(audit_logs_col.find(query).sort("timestamp", -1).limit(limit))
     for l in logs:
@@ -34,13 +41,15 @@ def export_logs():
     
     query = {}
     if log_type == 'user':
-        query['action'] = {"$in": ["User Register Outside Hours", "User Scan", "User Confirm Receive", "Self Pickup Success"]}
+        query['action'] = {"$in": ["Self Pickup Scan (Success)", "Self Pickup Scan (Failed)"]}
     else:
-        query['action'] = {"$nin": ["User Register Outside Hours", "User Scan", "User Confirm Receive", "Self Pickup Success"]}
+        query['action'] = {"$in": ["Admin Login", "Admin Logout", "Scan Parcel", "Pickup Parcel"]}
         
     logs = list(audit_logs_col.find(query).sort("timestamp", -1))
     
     output = io.StringIO()
+    # Add BOM for Excel compatibility with Thai characters
+    output.write('\ufeff') 
     writer = csv.writer(output)
     writer.writerow(['Date', 'Performed By', 'Action', 'Target', 'Details'])
     
