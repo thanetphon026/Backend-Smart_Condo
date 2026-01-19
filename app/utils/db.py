@@ -49,21 +49,31 @@ def ensure_indexes():
     except Exception as e:
         print(f"⚠️ Failed to create indexes: {e}")
 
-def log_audit(action, performed_by, target=None, details=None):
+def log_audit(action, performed_by, target=None, details=None, metadata=None):
     """
-    Log an audit event.
+    Enhanced audit logging with metadata and context.
     """
     import datetime
+    from flask import request
     try:
+        # Try to capture IP if in request context
+        ip_address = None
+        try:
+            ip_address = request.headers.get('X-Forwarded-For', request.remote_addr)
+        except:
+            pass
+
         log_entry = {
             "action": action,
             "performed_by": performed_by,
             "target": target,
             "timestamp": datetime.datetime.utcnow(),
-            "details": details or ""
+            "details": details or "",
+            "metadata": metadata or {},
+            "ip_address": ip_address
         }
         audit_logs_col.insert_one(log_entry)
-        print(f"📝 Audit Log: {action} by {performed_by}")
+        print(f"📝 Audit Log: {action} (IP: {ip_address})")
     except Exception as e:
         print(f"❌ Audit Log Error: {e}")
 

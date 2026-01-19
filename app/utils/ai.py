@@ -68,57 +68,53 @@ Return ONLY keywords (space-separated):"""
             corrected = corrected.replace(typo, correct)
         return corrected.split()
 
-def retrieve_knowledge(query, limit=8):
+def retrieve_knowledge(query, limit=5):
     """
-    Enhanced search using keywords, fuzzy matching, and multiple strategies.
+    RAG Controller: Enhanced retrieval using keywords, fuzzy matching, and multi-stage filtering.
     """
     try:
+        # 1. Extract refined keywords
         keywords = extract_keywords(query)
         keyword_str = " ".join(keywords)
         print(f"🔍 RAG Search Keywords: {keyword_str}")
         
         results = []
         
-        # Strategy 1: MongoDB Text Search
+        # 2. Match Strategy A: Text Search (Weight 1.0)
         try:
             cursor = kb_col.find(
                 {"$text": {"$search": keyword_str}},
                 {"score": {"$meta": "textScore"}}
             ).sort([("score", {"$meta": "textScore"})]).limit(limit)
             results = list(cursor)
-            print(f"✅ Text search found: {len(results)} results")
         except Exception as e:
-            print(f"⚠️ Text search failed: {e}")
+            print(f"⚠️ Text search error: {e}")
         
-        # Strategy 2: Fuzzy Regex Search (if text search fails or returns few results)
-        if len(results) < 3:
-            import re
-            print("🔄 Trying fuzzy regex search...")
+        # 3. Match Strategy B: Regex & Tag search if A is insufficient
+        if len(results) < 2:
+            print("🔄 Falling back to fuzzy regex matching...")
             regex_queries = []
             for kw in keywords:
-                # IMPORTANT: Escape special regex characters to prevent errors
+                if len(kw) < 2: continue # Ignore single chars
                 escaped_kw = re.escape(kw)
-                regex_queries.extend([
-                    {"topic": {"$regex": escaped_kw, "$options": "i"}},
-                    {"content": {"$regex": escaped_kw, "$options": "i"}},
-                    {"tags": {"$in": [kw]}}
-                ])
+                regex_queries.append({"topic": {"$regex": escaped_kw, "$options": "i"}})
+                regex_queries.append({"content": {"$regex": escaped_kw, "$options": "i"}})
+                regex_queries.append({"tags": {"$in": [kw]}})
             
             if regex_queries:
                 fuzzy_results = list(kb_col.find({"$or": regex_queries}).limit(limit))
-                print(f"✅ Fuzzy search found: {len(fuzzy_results)} results")
-                
-                # Merge without duplicates
                 existing_ids = {str(r.get('_id')) for r in results}
                 for fr in fuzzy_results:
                     if str(fr.get('_id')) not in existing_ids:
                         results.append(fr)
-                        if len(results) >= limit:
-                            break
+                        if len(results) >= limit: break
+        
+        # 4. Post-processing: Rank results based on keyword density if multiple
+        # (Simplified for now, MongoDB score usually handles this)
         
         return results[:limit]
     except Exception as e:
-        print(f"❌ Retrieve Knowledge Error: {e}")
+        print(f"❌ RAG Error: {e}")
         return []
 
 def analyze_parcel_label(image_data):
@@ -392,7 +388,7 @@ def generate_chat_response(user_text, user_context={}):
         full_prompt = f"""
         {CHAT_SYSTEM_PROMPT}
         
-        [CONDO DATABASE]
+        [CONDO KNOWLEDGE BASE]
         {kb_context}
         
         [USER PROFILE]
@@ -405,17 +401,16 @@ def generate_chat_response(user_text, user_context={}):
         User: {user_text}
         
         Instruction: 
-        1. Review the HISTORY to understand the flow.
-        2. Answer the CURRENT MESSAGE based on DATABASE and HISTORY.
-        3. If the answer is NOT in the [CONDO DATABASE], inform the user politely and do not speculate.
-        4. ABSOLUTELY refuse lottery/gambling/number prediction requests.
-        5. For billing/expenses, you can calculate the total if requested.
+        - Refer to the USER as "คุณ[Name]" with spaces.
+        - Answer ONLY based on the KNOWLEDGE BASE. 
+        - If unsure, say you don't have the info yet.
+        - Be helpful and professional.
         
-        AI Answer (Thai):
+        Answer (Thai):
         """
         
-        res = client.models.generate_content(model=MODEL_NAME, contents=full_prompt)
-        return res.text.strip()
+        response = client.models.generate_content(model=MODEL_NAME, contents=full_prompt)
+        return response.text.strip()
     except Exception as e:
         print(f"Gen Chat Error: {e}")
         return "ขออภัยค่ะ น้องบอตกำลังประมวลผลข้อมูล โปรดรอสักครู่หรือลองใหม่ภายหลังค่ะ"
