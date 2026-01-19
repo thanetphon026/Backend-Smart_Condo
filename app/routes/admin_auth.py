@@ -3,6 +3,7 @@ from ..utils.db import admins_col, log_audit
 import bcrypt
 import datetime
 import uuid
+from urllib.parse import unquote
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -38,15 +39,23 @@ def login():
             # User requirement implies RESTful, so token based.
             # Using simple simplistic session token strategy for now.
             
+            # Correct Name Logic: 'name' seems to be the field (or 'username'?) 
+            # User said: Niti A. DB likely has 'name' or 'username'. 
+            # Code previously used 'username'. I will check generic get.
+            admin_name = admin.get('name') or admin.get('username') or "Admin"
+            
+            # Get IP
+            ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+            
             # Log audit
-            log_audit("Admin Login", f"Admin:{admin.get('username')}", target="System", details="Login success")
+            log_audit("Admin Login", admin_name, target="System", details=f"Admin logged in from IP: {ip}")
             
             return jsonify({
                 "status": "success", 
                 "message": "Login successful",
                 "session_token": session_token,
                 "admin": {
-                    "name": admin.get('username'),
+                    "name": admin_name,
                     "email": admin.get('email')
                 }
             })
@@ -62,6 +71,7 @@ def login():
 def logout():
     # In a real token system, we'd invalidate the token.
     # Here we just log it.
-    auth_header = request.headers.get('X-Admin-Name', 'Unknown')
-    log_audit("Admin Logout", auth_header, target="System", details="Logout")
+    raw_name = request.headers.get('X-Admin-Name', 'Unknown')
+    auth_header = unquote(raw_name)
+    log_audit("Admin Logout", auth_header, target="System", details="Admin logged out")
     return jsonify({"status": "success"})
