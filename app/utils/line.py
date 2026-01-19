@@ -24,7 +24,7 @@ def send_message(user_id, text=None, flex_contents=None, image_url=None):
         print(f"Line Push Error: {e}")
         return False
 
-def reply_message(reply_token, text=None, flex_contents=None, image_url=None):
+def reply_message(reply_token, text=None, flex_contents=None, image_url=None, alt_text="การแจ้งเตือนพัสดุ"):
     """
     Sends a REPLY message. Use this for Webhook responses (Chat).
     FREE/Unlimited (Doesn't count towards Push quota).
@@ -33,7 +33,7 @@ def reply_message(reply_token, text=None, flex_contents=None, image_url=None):
         if not reply_token: return False
         with ApiClient(line_configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
-            messages = _format_messages(text, flex_contents, image_url)
+            messages = _format_messages(text, flex_contents, image_url, alt_text)
             if messages:
                 line_bot_api.reply_message(ReplyMessageRequest(reply_token=reply_token, messages=messages))
                 return True
@@ -41,12 +41,12 @@ def reply_message(reply_token, text=None, flex_contents=None, image_url=None):
         print(f"Line Reply Error: {e}")
         return False
 
-def _format_messages(text, flex_contents, image_url):
+def _format_messages(text, flex_contents, image_url, alt_text="การแจ้งเตือนพัสดุ"):
     messages = []
     if flex_contents:
         try:
             messages.append(FlexMessage(
-                alt_text="การแจ้งเตือนพัสดุ",
+                alt_text=alt_text,
                 contents=FlexContainer.from_dict(flex_contents)
             ))
         except Exception as e:
@@ -464,24 +464,22 @@ def create_status_card(title, status_text, color="#06c755"):
 def create_image_error_card(reason, detail):
     """
     Warning card for image validation errors (size/extension).
-    Premium Design: Red Alert Style
+    Simplified for better mobile compatibility.
     """
     return {
         "type": "bubble",
+        "styles": {
+            "header": {"backgroundColor": "#ff3333"}
+        },
         "header": {
             "type": "box",
-            "layout": "horizontal",
+            "layout": "vertical",
             "contents": [
                 {
-                    "type": "text",
-                    "text": "⚠️ ไฟล์ไม่ถูกต้อง",
-                    "weight": "bold",
-                    "color": "#FFFFFF",
-                    "size": "lg",
-                    "flex": 1
+                    "type": "text", "text": "⚠️ ไฟล์ไม่ถูกต้อง", 
+                    "weight": "bold", "color": "#ffffff", "size": "lg"
                 }
             ],
-            "backgroundColor": "#FF3333",
             "paddingAll": "15px"
         },
         "body": {
@@ -489,66 +487,24 @@ def create_image_error_card(reason, detail):
             "layout": "vertical",
             "contents": [
                 {
-                    "type": "text",
-                    "text": reason,
-                    "weight": "bold",
-                    "size": "xl",
-                    "color": "#FF3333",
-                    "align": "center",
-                    "wrap": True,
-                    "margin": "md"
+                    "type": "text", "text": reason,
+                    "weight": "bold", "size": "xl", "color": "#ff3333",
+                    "align": "center", "wrap": True, "margin": "md"
                 },
                 {
-                    "type": "separator",
-                    "margin": "lg"
+                    "type": "text", "text": detail,
+                    "size": "sm", "color": "#555555",
+                    "wrap": True, "align": "center", "margin": "md"
                 },
                 {
-                    "type": "box",
-                    "layout": "vertical",
-                    "margin": "lg",
+                    "type": "separator", "margin": "lg"
+                },
+                {
+                    "type": "box", "layout": "vertical", "margin": "lg", "spacing": "sm",
                     "contents": [
-                        {
-                            "type": "text",
-                            "text": detail,
-                            "size": "sm",
-                            "color": "#333333",
-                            "wrap": True,
-                            "align": "center"
-                        }
-                    ],
-                    "backgroundColor": "#FFF5F5",
-                    "cornerRadius": "8px",
-                    "paddingAll": "12px"
-                },
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "margin": "lg",
-                    "spacing": "sm",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": "✅ ข้อกำหนด:",
-                            "weight": "bold",
-                            "size": "sm",
-                            "color": "#555555"
-                        },
-                        {
-                            "type": "box",
-                            "layout": "horizontal",
-                            "contents": [
-                                {"type": "text", "text": "•", "size": "sm", "color": "#999999", "flex": 0, "margin": "sm"},
-                                {"type": "text", "text": "ขนาดไฟล์ต้องไม่เกิน 10 MB", "size": "sm", "color": "#666666", "flex": 1, "margin": "sm"}
-                            ]
-                        },
-                        {
-                            "type": "box",
-                            "layout": "horizontal",
-                            "contents": [
-                                {"type": "text", "text": "•", "size": "sm", "color": "#999999", "flex": 0, "margin": "sm"},
-                                {"type": "text", "text": "นามสกุล: png, jpg, jpeg, heic", "size": "sm", "color": "#666666", "flex": 1, "margin": "sm"}
-                            ]
-                        }
+                        {"type": "text", "text": "✅ ข้อกำหนด:", "weight": "bold", "size": "sm"},
+                        {"type": "text", "text": "• ขนาดไม่เกิน 10 MB", "size": "sm", "color": "#666666"},
+                        {"type": "text", "text": "• นามสกุล: png, jpg, jpeg, heic", "size": "sm", "color": "#666666"}
                     ]
                 }
             ]

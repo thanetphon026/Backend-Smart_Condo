@@ -573,8 +573,8 @@ def handle_image_message(event):
                     reason="ไฟล์ขนาดใหญ่เกินไป",
                     detail=f"รูปภาพมีขนาด {int(content_length)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
                 )
-                if not reply_message(reply_token, flex_contents=card, text="⚠️ ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ"):
-                     # Fallback if Flex fails
+                if not reply_message(reply_token, flex_contents=card, alt_text="⚠️ ไฟล์ขนาดใหญ่เกิน 10MB"):
+                     # Fallback if Flex fails entirely
                      reply_message(reply_token, text="ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ (ไม่สามารถแสดงผลการ์ดได้)")
                 return
 
@@ -588,7 +588,7 @@ def handle_image_message(event):
                     reason="นามสกุลไฟล์ไม่ถูกต้อง",
                     detail=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ"
                 )
-                if not reply_message(reply_token, flex_contents=card, text=f"⚠️ นามสกุลไฟล์ {ext} ไม่ถูกต้อง"):
+                if not reply_message(reply_token, flex_contents=card, alt_text=f"⚠️ นามสกุลไฟล์ {ext} ไม่ถูกต้อง"):
                     reply_message(reply_token, text=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ")
                 return
 
@@ -600,7 +600,7 @@ def handle_image_message(event):
                         reason="ไฟล์ขนาดใหญ่เกินไป",
                         detail=f"รูปภาพมีขนาดเกิน 10MB ค่ะ"
                     )
-                    if not reply_message(reply_token, flex_contents=card, text="⚠️ ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ"):
+                    if not reply_message(reply_token, flex_contents=card, alt_text="⚠️ ไฟล์ขนาดใหญ่เกิน 10MB"):
                         reply_message(reply_token, text="ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ")
                     return
         
