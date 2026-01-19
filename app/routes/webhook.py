@@ -613,84 +613,98 @@ def handle_image_message(event):
         reply_message(reply_token, text="เกิดข้อผิดพลาดในการตรวจสอบไฟล์รูปภาพ")
         return
 
-    # 2. Check Time Restrictions (Self-Pickup Scan: 18:00 - 08:30)
-    now = get_bkk_time()
-    # Open from 18:00 (18:00) until 08:30 (08:29)
-    is_pickup_open = (now.hour >= 18 or now.hour < 8 or (now.hour == 8 and now.minute < 30))
+    # ... Download logic above ...
     
-    if not is_pickup_open:
-        card = create_status_card(
-            title="ไม่อยู่ในเวลาให้บริการ",
-            status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเวลา 18:00 น. จนถึง 08:30 น. เท่านั้นค่ะ\n\nในช่วงเวลาทำการ (08:30 - 17:30 น.) กรุณาติดต่อรับพัสดุกับนิติบุคคลโดยตรงค่ะ",
-            color="#999999"
+    # Validation/Processing Block
+    try:
+        # 2. Check Time Restrictions (Self-Pickup Scan: 18:00 - 08:30)
+        now = get_bkk_time()
+        # Open from 18:00 (18:00) until 08:30 (08:29)
+        is_pickup_open = (now.hour >= 18 or now.hour < 8 or (now.hour == 8 and now.minute < 30))
+        
+        if not is_pickup_open:
+            card = create_status_card(
+                title="ไม่อยู่ในเวลาให้บริการ",
+                status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเวลา 18:00 น. จนถึง 08:30 น. เท่านั้นค่ะ\n\nในช่วงเวลาทำการ (08:30 - 17:30 น.) กรุณาติดต่อรับพัสดุกับนิติบุคคลโดยตรงค่ะ",
+                color="#999999"
+            )
+            reply_message(reply_token, flex_contents=card)
+            return
+
+        # 3. User Identity Check
+        user = users_col.find_one({"line_user_id": user_id})
+        if not user or not user.get('room_number'):
+            reply_message(reply_token, text="กรุณาติดต่อยืนยันตัวตนกับนิติบุคคลก่อนใช้งานฟีเจอร์นี้ครับ")
+            return
+        
+        users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}})
+        user_room = user.get('room_number')
+
+        pending_outside = list(parcels_col.find({
+            "room_number": user_room,
+            "status": "pending",
+            "is_after_hours": True
+        }))
+        
+        if not pending_outside:
+            card = create_status_card(
+                title="ไม่พบคิวพัสดุนอกเวลา",
+                status_text="❌ คุณยังไม่ได้ลงทะเบียนรับของนอกเวลา หรือไม่มีพัสดุรอรับที่เตรียมไว้ในจุดรับของด้วยตนเองค่ะ",
+                color="#ff3333"
+            )
+            reply_message(reply_token, flex_contents=card)
+            return
+
+        # 4. Strict AI Analyze (Using already downloaded image_bytes)
+        print(f"Analyzing Parcel Image: Size={len(image_bytes)} bytes")
+        label_data = analyze_parcel_label(image_bytes)
+        
+        if not label_data.get('is_label'):
+            reason = label_data.get('reason_if_not') or "ไม่พบข้อมูลที่ระบุว่าเป็นพัสดุ หรือรูปภาพไม่ชัดเจนค่ะ"
+            card = create_status_card(
+                title="ข้อมูลไม่ถูกต้อง",
+                status_text=f"❌ {reason}\n\nกรุณาถ่ายรูปหน้าพัสดุให้ชัดเจน หรือติดต่อเจ้าหน้าที่ค่ะ",
+                color="#ff3333"
+            )
+            reply_message(reply_token, flex_contents=card)
+            return
+
+        # 5. Robust Match Logic
+        match_result = check_match(label_data, user)
+        is_match = match_result['is_match']
+        reason = match_result['reason']
+        ocr = match_result['ocr_details']
+        image_url = upload_image(io.BytesIO(image_bytes))
+
+        room_name = f"ห้อง {user_room} - {user.get('first_name', 'Guest')}"
+        log_status = "Success" if is_match else "Failed"
+        log_audit(
+            action=f"Self Pickup Scan ({log_status})", 
+            performed_by=room_name, 
+            target=f"Room {ocr.get('room_number','-')}", 
+            details=f"OCR Name: {ocr.get('recipient_name','-')} | Courier: {ocr.get('transport','-')} | Match Score: {match_result.get('matched_fields', [])} | Image: {image_url}"
+        )
+        
+        import time
+        timestamp = int(time.time())
+        
+        card = create_verification_result_card(
+            is_match=is_match,
+            reason=reason,
+            ocr_details=ocr,
+            image_url=image_url,
+            confirm_action={"type": "postback", "label": "ยืนยันการรับของ", "data": f"action=confirm_self&room={user_room}&verify_img={image_url}&ts={timestamp}"} if is_match else None
         )
         reply_message(reply_token, flex_contents=card)
-        return
 
-    # 3. User Identity Check
-    user = users_col.find_one({"line_user_id": user_id})
-    if not user or not user.get('room_number'):
-        reply_message(reply_token, text="กรุณาติดต่อยืนยันตัวตนกับนิติบุคคลก่อนใช้งานฟีเจอร์นี้ครับ")
-        return
-    
-    users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}})
-    user_room = user.get('room_number')
-
-    pending_outside = list(parcels_col.find({
-        "room_number": user_room,
-        "status": "pending",
-        "is_after_hours": True
-    }))
-    
-    if not pending_outside:
-        card = create_status_card(
-            title="ไม่พบคิวพัสดุนอกเวลา",
-            status_text="❌ คุณยังไม่ได้ลงทะเบียนรับของนอกเวลา หรือไม่มีพัสดุรอรับที่เตรียมไว้ในจุดรับของด้วยตนเองค่ะ",
-            color="#ff3333"
-        )
-        reply_message(reply_token, flex_contents=card)
-        return
-
-    # 4. Strict AI Analyze (Using already downloaded image_bytes)
-    label_data = analyze_parcel_label(image_bytes)
-    
-    if not label_data.get('is_label'):
-        reason = label_data.get('reason_if_not') or "ไม่พบข้อมูลที่ระบุว่าเป็นพัสดุ หรือรูปภาพไม่ชัดเจนค่ะ"
-        card = create_status_card(
-            title="ข้อมูลไม่ถูกต้อง",
-            status_text=f"❌ {reason}\n\nกรุณาถ่ายรูปหน้าพัสดุให้ชัดเจน หรือติดต่อเจ้าหน้าที่ค่ะ",
-            color="#ff3333"
-        )
-        reply_message(reply_token, flex_contents=card)
-        return
-
-    # 5. Robust Match Logic
-    match_result = check_match(label_data, user)
-    is_match = match_result['is_match']
-    reason = match_result['reason']
-    ocr = match_result['ocr_details']
-    image_url = upload_image(io.BytesIO(image_bytes))
-
-    room_name = f"ห้อง {user_room} - {user.get('first_name', 'Guest')}"
-    log_status = "Success" if is_match else "Failed"
-    log_audit(
-        action=f"Self Pickup Scan ({log_status})", 
-        performed_by=room_name, 
-        target=f"Room {ocr.get('room_number','-')}", 
-        details=f"OCR Name: {ocr.get('recipient_name','-')} | Courier: {ocr.get('transport','-')} | Match Score: {match_result.get('matched_fields', [])} | Image: {image_url}"
-    )
-    
-    import time
-    timestamp = int(time.time())
-    
-    card = create_verification_result_card(
-        is_match=is_match,
-        reason=reason,
-        ocr_details=ocr,
-        image_url=image_url,
-        confirm_action={"type": "postback", "label": "ยืนยันการรับของ", "data": f"action=confirm_self&room={user_room}&verify_img={image_url}&ts={timestamp}"} if is_match else None
-    )
-    reply_message(reply_token, flex_contents=card)
+    except Exception as e:
+        print(f"Error Processing Image Message: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            reply_message(reply_token, text="เกิดข้อผิดพลาดในระบบ กรุณาลองใหม่อีกครั้งหรือติดต่อเจ้าหน้าที่ค่ะ")
+        except:
+            pass
 
 @line_handler.add(PostbackEvent)
 def handle_postback(event):
