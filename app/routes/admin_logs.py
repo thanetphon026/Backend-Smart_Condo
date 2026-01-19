@@ -14,11 +14,11 @@ def get_logs():
     
     query = {}
     if log_type == 'user':
-        # User Actions: Self Pickup Scan (Success/Failed) + Cancel
+        # User Actions: Self Pickup Scan (Success/Failed) + Cancel + Confirm Success
         # Note: "Self Pickup Scan (Success)" and "Self Pickup Scan (Failed)" are the audit action names used in webhook.py
         # Also include "User Scan" if that was used previously, but user authorized "Self Pickup Scan".
-        # webhook.py uses: "Self Pickup Scan (Success)", "Self Pickup Scan (Failed)" and "Self Pickup Cancel"
-        query['action'] = {"$in": ["Self Pickup Scan (Success)", "Self Pickup Scan (Failed)", "Self Pickup Cancel"]}
+        # webhook.py uses: "Self Pickup Scan (Success)", "Self Pickup Scan (Failed)", "Self Pickup Cancel", "Self Pickup Success"
+        query['action'] = {"$in": ["Self Pickup Scan (Success)", "Self Pickup Scan (Failed)", "Self Pickup Cancel", "Self Pickup Success"]}
     else:
         # Admin Actions: Login, Logout, Scan Parcel (In System), Pickup Parcel (In Time)
         # Scan Parcel (In System) -> "Scan Parcel" (from admin_parcels.py)
@@ -41,8 +41,8 @@ def export_logs():
     
     query = {}
     if log_type == 'user':
-        # User Actions: Self Pickup Scan (Success/Failed) + Cancel
-        query['action'] = {"$in": ["Self Pickup Scan (Success)", "Self Pickup Scan (Failed)", "Self Pickup Cancel"]}
+        # User Actions: Self Pickup Scan (Success/Failed) + Cancel + Confirm Success
+        query['action'] = {"$in": ["Self Pickup Scan (Success)", "Self Pickup Scan (Failed)", "Self Pickup Cancel", "Self Pickup Success"]}
     else:
         # Admin Actions: Login, Logout, Scan Parcel, Pickup Parcel
         query['action'] = {"$in": ["Admin Login", "Admin Logout", "Scan Parcel", "Pickup Parcel"]}

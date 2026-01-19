@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify, Response
+from urllib.parse import unquote
 from ..utils.db import parcels_col, users_col, log_audit
 from ..utils.helpers import get_bkk_time, token_required
 from ..utils.cloudinary_utils import upload_image, validate_image
@@ -65,7 +66,7 @@ def get_parcels():
 def confirm_receive():
     data = request.json
     pin = data.get('pin')
-    admin_name = request.headers.get('X-Admin-Name', 'Admin')
+    admin_name = unquote(request.headers.get('X-Admin-Name', 'Admin'))
 
     if not pin:
         return jsonify({"status": "error", "message": "Missing PIN"}), 400
@@ -97,7 +98,7 @@ def confirm_receive():
             )
             send_message(user['line_user_id'], flex_contents=card)
             
-        log_audit("Confirm Pickup", admin_name, target=f"Parcel {pin}", details=f"Room {result.get('room_number')}")
+        log_audit("Pickup Parcel", admin_name, target=f"Parcel {pin}", details=f"Room {result.get('room_number')}")
         return jsonify({"status": "success", "message": "Parcel received"})
     
     return jsonify({"status": "error", "message": "Parcel not found or already received"}), 404
@@ -105,7 +106,7 @@ def confirm_receive():
 @parcels_bp.route('/api/admin/parcels/export_outside', methods=['GET'])
 @token_required
 def export_outside():
-    admin_name = request.headers.get('X-Admin-Name', 'Admin')
+    admin_name = unquote(request.headers.get('X-Admin-Name', 'Admin'))
     
     parcels = list(parcels_col.find({"is_after_hours": True}))
     
@@ -283,7 +284,7 @@ def create_parcel():
     """
     try:
         data = request.json
-        admin_name = request.headers.get('X-Admin-Name', 'Admin')
+        admin_name = unquote(request.headers.get('X-Admin-Name', 'Admin'))
         
         pin = generate_pin()
         new_parcel = {
@@ -320,7 +321,7 @@ def create_parcel():
              )
              send_message(user['line_user_id'], flex_contents=card)
 
-        log_audit("Add Parcel", admin_name, target=f"Room {new_parcel['room_number']}", details=f"PIN: {pin}")
+        log_audit("Scan Parcel", admin_name, target=f"Room {new_parcel['room_number']}", details=f"PIN: {pin}")
         
         new_parcel['_id'] = str(new_parcel['_id'])
         if isinstance(new_parcel['timestamp'], datetime.datetime):
