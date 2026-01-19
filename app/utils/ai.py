@@ -213,14 +213,17 @@ def analyze_parcel_label(image_data):
            - Ignore titles like "คุณ".
 
         2. House/Room Number (เลขห้อง/เลขที่บ้าน):
-           - PRIORITY CHECK 1: Look IMMEDIATELY after the Recipient Name (Firstname Surname [Room Number]).
-           - CRITICAL: Do NOT extract the Building House Number (e.g. if the address is 99/500, and 99 is the building number, extract ONLY 500).
-           - IGNORE the main address number at the start of the address line.
-           - Look for specific condominium unit formats.
-           - usually contains a slash (/) e.g. 123/45.
-           - WARNING: Do NOT extract Zip Codes (5 digits), Phone Numbers, Soi numbers, Road numbers, or Building Numbers (เลขที่บ้าน).
+           - EXTRACT THE FULL IDENTIFIER: If the number is "28/456", extract "28/456".
+           - PRIORITY LOCATIONS (Check in this order):
+             1. IMMEDIATELY after Recipient Name.
+             2. Top Right Corner / Header Box.
+             3. "Remark" or "Note" field (often at bottom left or under barcode). Look closely here for moved room numbers.
+             4. The END of the address lines.
+             5. The START of the address (House Number/Building Number) -> Use this ONLY as a last resort fallback.
+           - FALLBACK: If NO specific condo unit number is found, use the House Number.
+           - WARNING: Do NOT extract Zip Codes (5 digits), Phone Numbers, Soi/Road numbers.
            - STRIP labels like "แขวง", "เขต", "จ.", "ถ.". Do NOT include province/district.
-           - Only extract the UNIT NUMBER (เลขห้องชุด) specific to the resident.
+           - Format Preference: "X/Y" is highly likely to be the correct Room Number.
 
         3. Tracking Number (รหัสขนส่ง):
            - Barcode number starting with "TH", "7C", etc., or under the main barcode.

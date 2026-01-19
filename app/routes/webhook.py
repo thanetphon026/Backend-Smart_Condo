@@ -558,7 +558,7 @@ def handle_image_message(event):
     
     # Use stream=True to check headers first
     try:
-        r = requests.get(url, headers=headers, stream=True)
+        r = requests.get(url, headers=headers, stream=True, timeout=30)
         if r.status_code != 200:
             reply_message(reply_token, text="เกิดข้อผิดพลาดในการโหลดรูปภาพ")
             return
@@ -609,6 +609,9 @@ def handle_image_message(event):
                 
         image_bytes = bytes(image_bytes)
         
+    except requests.exceptions.Timeout:
+         reply_message(reply_token, text="หมดเวลาดาวน์โหลดไฟล์ (Timeout) เนื่องจากไฟล์อาจมีขนาดใหญ่เกินไปค่ะ")
+         return
     except Exception as e:
         print(f"Image Download Error: {e}")
         try:
