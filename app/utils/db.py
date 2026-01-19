@@ -46,6 +46,25 @@ def ensure_indexes():
             print(f"⚠️ KB Index Note: {ie}")
             
         print("✅ MongoDB Indexes ensured.")
+        
+        # [IMPORTANT] Vector Search Index Instruction:
+        # Vector Search Indexes CANNOT be created via pymongo standard create_index.
+        # You must create it in MongoDB Atlas UI:
+        # 1. Go to Atlas Search -> Create Search Index
+        # 2. Select JSON Editor
+        # 3. Database: smart_condo, Collection: knowledge_base
+        # 4. Name: vector_index
+        # 5. Config:
+        # {
+        #   "fields": [
+        #     {
+        #       "type": "vector",
+        #       "path": "embedding",
+        #       "numDimensions": 768,
+        #       "similarity": "cosine"
+        #     }
+        #   ]
+        # }
     except Exception as e:
         print(f"⚠️ Failed to create indexes: {e}")
 

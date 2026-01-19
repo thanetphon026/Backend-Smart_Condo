@@ -7,13 +7,15 @@ import datetime
 
 client = genai.Client(api_key=Config.GEMINI_API_KEY)
 MODEL_NAME = 'gemini-2.0-flash'
+EMBEDDING_MODEL = 'text-embedding-004'
 
 CHAT_SYSTEM_PROMPT = """
 You are "Nong Bot Niti", a highly intelligent and polite Condo Assistant.
-Your goal: Provide accurate and helpful answers strictly based on the provided [CONDO DATABASE].
+Your goal: Provide accurate and helpful answers strictly based on the provided [CONDO KNOWLEDGE BASE].
 
 Rules for Interaction:
-1. **Database Strictness**: Use the [CONDO DATABASE] for all facts about the condo (rules, hours, contacts, shops). 
+1. **Prioritize Context**: Use the retrieved knowledge (both text and vector matches) to answer.
+2. **Database Strictness**: Use the [CONDO KNOWLEDGE BASE] for all facts.
    - If information is NOT in the database, say "ขออภัยค่ะ ข้อมูลส่วนนี้ไม่มีในระบบของนิติฯ ค่ะ" or similar.
    - DO NOT invent shops, menus, or services (e.g., do not suggest custom "อาหารตามสั่ง" shops if they aren't listed).
 2. **No Hallucinations**: You are forbidden from using general knowledge to supplement missing database facts if it might lead to misinformation. Only use general knowledge for common sense or polite conversion.
@@ -68,50 +70,117 @@ Return ONLY keywords (space-separated):"""
             corrected = corrected.replace(typo, correct)
         return corrected.split()
 
-def retrieve_knowledge(query, limit=5):
+def generate_embedding(text):
     """
-    RAG Controller: Enhanced retrieval using keywords, fuzzy matching, and multi-stage filtering.
+    Generate 768-dimensional vector embedding for text using Gemini.
     """
     try:
-        # 1. Extract refined keywords
-        keywords = extract_keywords(query)
-        keyword_str = " ".join(keywords)
-        print(f"🔍 RAG Search Keywords: {keyword_str}")
+        # New SDK v1
+        result = client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=text
+        )
+        return result.embeddings[0].values
+    except Exception as e:
+        print(f"❌ Embedding Error: {e}")
+        return []
+
+def retrieve_knowledge(query, limit=5):
+    """
+    Hybrid Search Strategy: 
+    1. Vector Semantic Search (Meaning)
+    2. Text Keyword Search (Exact terms)
+    3. Rerank/Merge
+    """
+    try:
+        # 1. Generate Query Vector
+        vector = generate_embedding(query)
         
         results = []
+        seen_ids = set()
         
-        # 2. Match Strategy A: Text Search (Weight 1.0)
+        # 2. Vector Search (if available in potential future DB, simulated here for structure)
+        # Note: MongoDB Atlas Vector Search requires specific aggregation pipeline.
+        # This is a placeholder for the logic structure. 
+        # In a real deployed environment with Atlas Search enabled:
+        try:
+            if vector:
+                pipeline = [
+                    {
+                        "$vectorSearch": {
+                            "index": "vector_index", 
+                            "path": "embedding", 
+                            "queryVector": vector,
+                            "numCandidates": 50, 
+                            "limit": limit
+                        }
+                    },
+                    {
+                        "$project": {
+                            "topic": 1, 
+                            "content": 1, 
+                            "tags": 1, 
+                            "score": {"$meta": "vectorSearchScore"}
+                        }
+                    }
+                ]
+                # Atlas Index is ready
+                vector_results = list(kb_col.aggregate(pipeline))
+                # vector_results = [] 
+                
+                print(f"✅ Vector search found: {len(vector_results)} results")
+                for r in vector_results:
+                    r['_id'] = str(r['_id'])
+                    r['source'] = 'vector'
+                    results.append(r)
+                    seen_ids.add(r['_id'])
+        except Exception as ve:
+             print(f"⚠️ Vector Search not active/failed: {ve}")
+        
+        # 3. Fallback/Augment with Text Search (Classic RAG)
+        keywords = extract_keywords(query)
+        keyword_str = " ".join(keywords)
+        print(f"🔍 Hybrid Search Keywords: {keyword_str}")
+        
+        text_results = []
         try:
             cursor = kb_col.find(
                 {"$text": {"$search": keyword_str}},
                 {"score": {"$meta": "textScore"}}
             ).sort([("score", {"$meta": "textScore"})]).limit(limit)
-            results = list(cursor)
+            text_results = list(cursor)
         except Exception as e:
-            print(f"⚠️ Text search error: {e}")
-        
-        # 3. Match Strategy B: Regex & Tag search if A is insufficient
+            pass
+            
+        # Merge Text Results
+        for r in text_results:
+            rid = str(r['_id'])
+            if rid not in seen_ids:
+                r['_id'] = rid
+                r['source'] = 'text'
+                results.append(r)
+                
+        # 4. Fuzzy Fallback (if total results are still low)
         if len(results) < 2:
-            print("🔄 Falling back to fuzzy regex matching...")
+            import re
             regex_queries = []
             for kw in keywords:
-                if len(kw) < 2: continue # Ignore single chars
+                if len(kw) < 2: continue
                 escaped_kw = re.escape(kw)
-                regex_queries.append({"topic": {"$regex": escaped_kw, "$options": "i"}})
-                regex_queries.append({"content": {"$regex": escaped_kw, "$options": "i"}})
-                regex_queries.append({"tags": {"$in": [kw]}})
-            
+                regex_queries.extend([
+                    {"topic": {"$regex": escaped_kw, "$options": "i"}},
+                    {"content": {"$regex": escaped_kw, "$options": "i"}}
+                ])
             if regex_queries:
-                fuzzy_results = list(kb_col.find({"$or": regex_queries}).limit(limit))
-                existing_ids = {str(r.get('_id')) for r in results}
-                for fr in fuzzy_results:
-                    if str(fr.get('_id')) not in existing_ids:
-                        results.append(fr)
-                        if len(results) >= limit: break
-        
-        # 4. Post-processing: Rank results based on keyword density if multiple
-        # (Simplified for now, MongoDB score usually handles this)
-        
+                fuzzy = list(kb_col.find({"$or": regex_queries}).limit(3))
+                for f in fuzzy:
+                    rid = str(f['_id'])
+                    if rid not in seen_ids:
+                        f['_id'] = rid
+                        f['source'] = 'fuzzy'
+                        results.append(f)
+                        seen_ids.add(rid)
+
         return results[:limit]
     except Exception as e:
         print(f"❌ RAG Error: {e}")
