@@ -22,9 +22,9 @@ def get_stats():
         
         # System Status
         now = get_bkk_time()
-        # Open 08:00 - 16:30
-        start_time = now.replace(hour=8, minute=0, second=0, microsecond=0)
-        end_time = now.replace(hour=16, minute=30, second=0, microsecond=0)
+        # Open 08:30 - 17:30
+        start_time = now.replace(hour=8, minute=30, second=0, microsecond=0)
+        end_time = now.replace(hour=17, minute=30, second=0, microsecond=0)
         is_registration_open = start_time <= now <= end_time
         
         return jsonify({

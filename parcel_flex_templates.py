@@ -398,7 +398,7 @@ def create_parcel_registered_flex(registered_parcels, total_pending, total_ah, r
                 },
                 {
                     "type": "text",
-                    "text": "18:00 - 22:00 น. ที่ Lobby ชั้น 1",
+                    "text": "18:00 - 08:30 น. ที่ Lobby ชั้น 1",
                     "size": "sm",
                     "color": "#666666",
                     "margin": "sm"
@@ -524,7 +524,7 @@ def create_parcel_cancelled_flex(cancelled_parcels, remaining_ah, room_number):
                 },
                 {
                     "type": "text",
-                    "text": "พัสดุเหล่านี้จะกลับไปรับในเวลาปกติ 08:00-18:00 น. ค่ะ",
+                    "text": "พัสดุเหล่านี้จะกลับไปรับในเวลาปกติ 08:30-17:30 น. ค่ะ",
                     "wrap": True,
                     "color": "#666666",
                     "size": "sm",

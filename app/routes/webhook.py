@@ -249,32 +249,30 @@ def handle_text_message(event):
                 handle_cancel_select_parcel(user, user_id, text, reply_token)
                 return
             
-            # Priority 2: Smart routing based on current parcel presence
-            has_pending_in_time = parcels_col.count_documents({
-                "room_number": room, "status": "pending", "is_after_hours": False
-            }) > 0
+            # Check office hours (08:30 - 17:30)
+            now = get_bkk_time()
+            is_office_open = (
+                (now.hour == 8 and now.minute >= 30) or 
+                (9 <= now.hour <= 16) or 
+                (now.hour == 17 and now.minute <= 30)
+            )
             
-            has_after_hours = parcels_col.count_documents({
-                "room_number": room, "status": "pending", "is_after_hours": True
-            }) > 0
-            
-            if has_pending_in_time:
-                # If they have normal parcels, assume they want to register them
+            if is_office_open:
+                # Within Office Hours -> assume registration
                 handle_pick_parcel(user, user_id, text, reply_token)
                 return
-            elif has_after_hours:
+            
+            # Office Closed -> smart routing
+            if has_after_hours:
                 # No in-time parcels but has after-hours -> assume cancellation selection
                 handle_cancel_select_parcel(user, user_id, text, reply_token)
                 return
             else:
-                # No parcels at all, ask confirmation before assuming anything
-                card = create_block_card(
-                    title="ยืนยันการลงทะเบียน?",
-                    status="ต้องการลงทะเบียนรับนอกเวลาใช่หรือไม่?",
-                    details=f"คุณพิมพ์: '{text}'\n\nหากต้องการลงทะเบียนรับพัสดุนอกเวลา กรุณากดยืนยันด้านล่าง",
-                    confirm_action={"type": "postback", "label": "ใช่ ต้องการลงทะเบียน", "data": "action=register_outside_trigger"},
-                    reject_action={"type": "postback", "label": "ไม่ใช่", "data": "action=register_abort"},
-                    color="#0066ff"
+                # No after-hours parcels, show status card about office closed
+                card = create_status_card(
+                    title="ไม่อยู่ในเวลาให้บริการ",
+                    status_text="❌ คุณสามารถลงทะเบียนรับได้เฉพาะเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nพัสดุจะถูกนำไปวางที่จุดรับของเองเวลา 18:00 น. ค่ะ",
+                    color="#ff9900"
                 )
                 reply_message(reply_token, flex_contents=card)
                 return
@@ -309,11 +307,17 @@ def handle_text_message(event):
 def handle_register_outside(user, user_id, reply_token):
     now = get_bkk_time()
     
-    # Allowed ONLY 08:00 - 16:30
-    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
+    # Allowed ONLY 08:30 - 17:30
+    is_office_open = (
+        (now.hour == 8 and now.minute >= 30) or 
+        (9 <= now.hour <= 16) or 
+        (now.hour == 17 and now.minute <= 30)
+    )
+    
+    if not is_office_open:
         card = create_status_card(
             title="หมดเวลาลงทะเบียน",
-            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
+            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
         reply_message(reply_token, flex_contents=card)
@@ -364,12 +368,17 @@ def handle_pick_parcel(user, user_id, text, reply_token):
         reply_message(reply_token, text="ไม่มีพัสดุในเวลาที่รอการลงทะเบียนนอกเวลาค่ะ")
         return
 
-    # Allowed ONLY 08:00 - 16:30
+    # Allowed ONLY 08:30 - 17:30
     now = get_bkk_time()
-    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
+    is_office_open = (
+        (now.hour == 8 and now.minute >= 30) or 
+        (9 <= now.hour <= 16) or 
+        (now.hour == 17 and now.minute <= 30)
+    )
+    if not is_office_open:
         card = create_status_card(
             title="หมดเวลาลงทะเบียน",
-            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
+            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
         reply_message(reply_token, flex_contents=card)
@@ -437,11 +446,16 @@ def handle_cancel_outside(user, user_id, reply_token, user_text=""):
     - Only allowed during office hours 08:00 - 16:30
     """
     now = get_bkk_time()
-    # Check if outside 08:00 - 16:30
-    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
+    # Check office hours (08:30 - 17:30)
+    is_office_open = (
+        (now.hour == 8 and now.minute >= 30) or 
+        (9 <= now.hour <= 16) or 
+        (now.hour == 17 and now.minute <= 30)
+    )
+    if not is_office_open:
         card = create_status_card(
             title="ไม่อยู่ในเวลาให้บริการ",
-            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
+            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
             color="#ff9900"
         )
         reply_message(reply_token, flex_contents=card)
@@ -484,12 +498,17 @@ def handle_cancel_select_parcel(user, user_id, text, reply_token):
     """
     Handle when user selects specific parcels to cancel from the list.
     """
-    # Allowed ONLY 08:00 - 16:30
+    # Allowed ONLY 08:30 - 17:30
     now = get_bkk_time()
-    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
+    is_office_open = (
+        (now.hour == 8 and now.minute >= 30) or 
+        (9 <= now.hour <= 16) or 
+        (now.hour == 17 and now.minute <= 30)
+    )
+    if not is_office_open:
         card = create_status_card(
             title="ไม่อยู่ในเวลาให้บริการ",
-            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
+            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
             color="#ff9900"
         )
         reply_message(reply_token, flex_contents=card)
@@ -532,18 +551,55 @@ def handle_image_message(event):
     user_id = event.source.user_id
     reply_token = event.reply_token
     message_id = event.message.id
-    now = get_bkk_time()
     
-    # Allowed only 17:00 - 08:00 (Blocking 08:00 - 16:59)
-    if 8 <= now.hour < 17:
+    # 1. PRIORITY: Download and Validate Image FIRST
+    url = f"https://api-data.line.me/v2/bot/message/{message_id}/content"
+    headers = {"Authorization": f"Bearer {Config.LINE_CHANNEL_ACCESS_TOKEN}"}
+    r = requests.get(url, headers=headers)
+    
+    if r.status_code != 200:
+        reply_message(reply_token, text="เกิดข้อผิดพลาดในการโหลดรูปภาพ")
+        return
+    
+    image_bytes = r.content
+    
+    # Check file extension from Content-Type
+    content_type = r.headers.get('Content-Type', '')
+    ext = content_type.split('/')[-1].lower() if '/' in content_type else 'jpeg'
+    
+    ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
+    if ext not in ALLOWED_EXTENSIONS and 'image' in content_type:
+        card = create_image_error_card(
+            reason="นามสกุลไฟล์ไม่ถูกต้อง",
+            detail=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ"
+        )
+        reply_message(reply_token, flex_contents=card)
+        return
+
+    # Check file size (10MB limit)
+    if len(image_bytes) > 10 * 1024 * 1024:
+        card = create_image_error_card(
+            reason="ไฟล์ขนาดใหญ่เกินไป",
+            detail=f"รูปภาพมีขนาด {len(image_bytes)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
+        )
+        reply_message(reply_token, flex_contents=card)
+        return
+
+    # 2. Check Time Restrictions (Self-Pickup Scan: 18:00 - 08:30)
+    now = get_bkk_time()
+    # Open from 18:00 (18:00) until 08:30 (08:29)
+    is_pickup_open = (now.hour >= 18 or now.hour < 8 or (now.hour == 8 and now.minute < 30))
+    
+    if not is_pickup_open:
         card = create_status_card(
-            title="นิติบุคคลกำลังเปิดทำการ",
-            status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเฉพาะหลังเวลา 17:00 น. จนถึง 08:00 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลโดยตรงค่ะ",
+            title="ไม่อยู่ในเวลาให้บริการ",
+            status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเวลา 18:00 น. จนถึง 08:30 น. เท่านั้นค่ะ\n\nในช่วงเวลาทำการ (08:30 - 17:30 น.) กรุณาติดต่อรับพัสดุกับนิติบุคคลโดยตรงค่ะ",
             color="#999999"
         )
         reply_message(reply_token, flex_contents=card)
         return
 
+    # 3. User Identity Check
     user = users_col.find_one({"line_user_id": user_id})
     if not user or not user.get('room_number'):
         reply_message(reply_token, text="กรุณาติดต่อยืนยันตัวตนกับนิติบุคคลก่อนใช้งานฟีเจอร์นี้ครับ")

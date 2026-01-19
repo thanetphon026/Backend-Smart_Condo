@@ -173,26 +173,30 @@ def handle_text_web(user, user_id, text):
             return handle_cancel_select_parcel_web(user, user_id, embedded_selection)
     
     # Context-aware handling for 'pick_parcel'
-    if intent == 'pick_parcel':
-        room = user.get('room_number')
-        if room:
-            context = user.get('context_action')
+            # Check office hours (08:30 - 17:30)
+            now = get_bkk_time()
+            is_office_open = (
+                (now.hour == 8 and now.minute >= 30) or 
+                (9 <= now.hour <= 16) or 
+                (now.hour == 17 and now.minute <= 30)
+            )
             
-            if context == 'cancel_select':
-                return handle_cancel_select_parcel_web(user, user_id, text)
-            
-            has_pending_in_time = parcels_col.count_documents({
-                "room_number": room, "status": "pending", "is_after_hours": False
-            }) > 0
-            
-            has_after_hours = parcels_col.count_documents({
-                "room_number": room, "status": "pending", "is_after_hours": True
-            }) > 0
-            
-            if has_pending_in_time:
+            if is_office_open:
+                # Within Office Hours -> assume registration
                 return handle_pick_parcel_web(user, user_id, text)
-            elif has_after_hours:
+            
+            # Office Closed -> smart routing
+            if has_after_hours:
+                # No in-time parcels but has after-hours -> assume cancellation selection
                 return handle_cancel_select_parcel_web(user, user_id, text)
+            else:
+                # No after-hours parcels, show status card about office closed
+                card = create_status_card(
+                    title="ไม่อยู่ในเวลาให้บริการ",
+                    status_text="❌ คุณสามารถลงทะเบียนรับได้เฉพาะเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nพัสดุจะถูกนำไปวางที่จุดรับของเองเวลา 18:00 น. ค่ะ",
+                    color="#ff9900"
+                )
+                return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
         
         return handle_pick_parcel_web(user, user_id, text)
     
@@ -280,11 +284,17 @@ def handle_register_outside_web(user, user_id):
     """Handle after-hours registration request."""
     now = get_bkk_time()
     
-    # Allowed ONLY 08:00 - 16:30
-    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
+    # Allowed ONLY 08:30 - 17:30
+    is_office_open = (
+        (now.hour == 8 and now.minute >= 30) or 
+        (9 <= now.hour <= 16) or 
+        (now.hour == 17 and now.minute <= 30)
+    )
+    
+    if not is_office_open:
         card = create_status_card(
             title="หมดเวลาลงทะเบียน",
-            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
+            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
         return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
@@ -345,10 +355,15 @@ def handle_pick_parcel_web(user, user_id, text):
         })
     
     now = get_bkk_time()
-    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
+    is_office_open = (
+        (now.hour == 8 and now.minute >= 30) or 
+        (9 <= now.hour <= 16) or 
+        (now.hour == 17 and now.minute <= 30)
+    )
+    if not is_office_open:
         card = create_status_card(
             title="หมดเวลาลงทะเบียน",
-            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
+            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
         return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
@@ -421,11 +436,16 @@ def handle_check_parcel_web(user, user_id):
 def handle_cancel_outside_web(user, user_id, user_text=""):
     """Handle after-hours cancellation request."""
     now = get_bkk_time()
-    
-    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
+    # Check office hours (08:30 - 17:30)
+    is_office_open = (
+        (now.hour == 8 and now.minute >= 30) or 
+        (9 <= now.hour <= 16) or 
+        (now.hour == 17 and now.minute <= 30)
+    )
+    if not is_office_open:
         card = create_status_card(
             title="ไม่อยู่ในเวลาให้บริการ",
-            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
+            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
             color="#ff9900"
         )
         return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
@@ -462,10 +482,15 @@ def handle_cancel_outside_web(user, user_id, user_text=""):
 def handle_cancel_select_parcel_web(user, user_id, text):
     """Handle parcel selection for cancellation."""
     now = get_bkk_time()
-    if now.hour < 8 or (now.hour == 16 and now.minute > 30) or now.hour > 16:
+    is_office_open = (
+        (now.hour == 8 and now.minute >= 30) or 
+        (9 <= now.hour <= 16) or 
+        (now.hour == 17 and now.minute <= 30)
+    )
+    if not is_office_open:
         card = create_status_card(
             title="ไม่อยู่ในเวลาให้บริการ",
-            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:00 - 16:30 น. เท่านั้นค่ะ",
+            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ",
             color="#ff9900"
         )
         return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
@@ -514,39 +539,7 @@ def handle_cancel_select_parcel_web(user, user_id, text):
 
 def handle_image_web(user, user_id, image_base64, image_type):
     """Handle image upload for self-pickup verification."""
-    now = get_bkk_time()
-    
-    # Allowed only 17:00 - 08:00
-    if 8 <= now.hour < 17:
-        card = create_status_card(
-            title="นิติบุคคลกำลังเปิดทำการ",
-            status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเฉพาะหลังเวลา 17:00 น. จนถึง 08:00 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลโดยตรงค่ะ",
-            color="#999999"
-        )
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
-    
-    if not user.get('room_number'):
-        return jsonify({
-            "status": "success",
-            "reply": "กรุณาติดต่อยืนยันตัวตนกับนิติบุคคลก่อนใช้งานฟีเจอร์นี้ครับ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
-    
-    user_room = user.get('room_number')
-    
-    pending_outside = list(parcels_col.find({
-        "room_number": user_room, "status": "pending", "is_after_hours": True
-    }))
-    
-    if not pending_outside:
-        card = create_status_card(
-            title="ไม่พบคิวพัสดุนอกเวลา",
-            status_text="❌ คุณยังไม่ได้ลงทะเบียนรับของนอกเวลา หรือไม่มีพัสดุรอรับที่เตรียมไว้ในจุดรับของด้วยตนเองค่ะ",
-            color="#ff3333"
-        )
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
-    
-    # Decode base64 image and check size/type
+    # 1. PRIORITY: Validate Image FIRST (Before time or database checks)
     try:
         # Check image type
         ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'heic', 'heif'}
@@ -573,6 +566,41 @@ def handle_image_web(user, user_id, image_base64, image_type):
             "reply": f"เกิดข้อผิดพลาดในการประมวลผลรูปภาพ: {str(e)}",
             "timestamp": datetime.datetime.utcnow().isoformat()
         })
+
+    # 2. Check Time Restrictions (Self-Pickup Scan: 18:00 - 08:30)
+    now = get_bkk_time()
+    # Open from 18:00 (18:00) until 08:30 (08:29)
+    is_pickup_open = (now.hour >= 18 or now.hour < 8 or (now.hour == 8 and now.minute < 30))
+    
+    if not is_pickup_open:
+        card = create_status_card(
+            title="ไม่อยู่ในเวลาให้บริการ",
+            status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเวลา 18:00 น. จนถึง 08:30 น. เท่านั้นค่ะ\n\nในช่วงเวลาทำการ (08:30 - 17:30 น.) กรุณาติดต่อรับพัสดุกับนิติบุคคลโดยตรงค่ะ",
+            color="#999999"
+        )
+        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+
+    # 3. Identity and Queue Check
+    if not user.get('room_number'):
+        return jsonify({
+            "status": "success",
+            "reply": "กรุณาติดต่อยืนยันตัวตนกับนิติบุคคลก่อนใช้งานฟีเจอร์นี้ครับ",
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        })
+    
+    user_room = user.get('room_number')
+    
+    pending_outside = list(parcels_col.find({
+        "room_number": user_room, "status": "pending", "is_after_hours": True
+    }))
+    
+    if not pending_outside:
+        card = create_status_card(
+            title="ไม่พบคิวพัสดุนอกเวลา",
+            status_text="❌ คุณยังไม่ได้ลงทะเบียนรับของนอกเวลา หรือไม่มีพัสดุรอรับที่เตรียมไว้ในจุดรับของด้วยตนเองค่ะ",
+            color="#ff3333"
+        )
+        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
     
     # AI Analyze
     label_data = analyze_parcel_label(image_bytes)

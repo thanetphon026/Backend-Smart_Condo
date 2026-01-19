@@ -167,7 +167,7 @@ def create_new_parcel_notification(room_number, recipient_name, transport, track
             {"type": "text", "text": f"📊 พัสดุค้างทั้งหมด: {total_pending} ชิ้น", "weight": "bold", "size": "sm", "color": "#007bff", "margin": "md"},
             {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#fff4e5", "paddingAll": "10px", "cornerRadius": "md", "contents": [
                 {"type": "text", "text": "🔔 ต้องการรับนอกเวลา?", "weight": "bold", "size": "xs", "color": "#b45d00"},
-                {"type": "text", "text": "ให้แจ้งภายใน 08:00-16:30 น. ของทุกวัน", "size": "xs", "color": "#b45d00", "wrap": True}
+                {"type": "text", "text": "ให้แจ้งภายใน 08:30-17:30 น. ของทุกวัน", "size": "xs", "color": "#b45d00", "wrap": True}
             ]}
         ]
     }
@@ -560,7 +560,7 @@ def create_verification_result_card(is_match, reason, ocr_details, image_url, co
             "cornerRadius": "md",
             "contents": [
                 {"type": "text", "text": "⚠️ ไม่ใช่พัสดุของคุณ", "weight": "bold", "size": "xs", "color": "#dc3545"},
-                {"type": "text", "text": "กรุณาวางพัสดุไว้ที่เดิม\nหรือตรวจสอบเลขห้องอีกครั้งค่ะ", "size": "xs", "color": "#dc3545", "wrap": True, "margin": "xs"}
+                {"type": "text", "text": "กรุณาวางพัสดุไว้ที่เดิม\n\nหรือตรวจสอบเลขห้องอีกครั้งค่ะ", "size": "xs", "color": "#dc3545", "wrap": True, "margin": "xs"}
             ]
         }
         bubble["body"]["contents"].append(warning_box)
