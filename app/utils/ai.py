@@ -213,10 +213,14 @@ def analyze_parcel_label(image_data):
            - Ignore titles like "คุณ".
 
         2. House/Room Number (เลขห้อง/เลขที่บ้าน):
-           - Can be found: 1) Appended to name, 2) In address, 3) Floating near the top/right corner.
-           - Usually contains a slash (/) e.g., 123/45, 9/123.
-           - STRIP labels like "แขวง", "เขต", "จ.", "ถ." or "จังหวัด". Do NOT include the provincial/district address parts here.
-           - Only extract the unit identifying number.
+           - PRIORITY CHECK 1: Look IMMEDIATELY after the Recipient Name (Firstname Surname [Room Number]).
+           - CRITICAL: Do NOT extract the Building House Number (e.g. if the address is 99/500, and 99 is the building number, extract ONLY 500).
+           - IGNORE the main address number at the start of the address line.
+           - Look for specific condominium unit formats.
+           - usually contains a slash (/) e.g. 123/45.
+           - WARNING: Do NOT extract Zip Codes (5 digits), Phone Numbers, Soi numbers, Road numbers, or Building Numbers (เลขที่บ้าน).
+           - STRIP labels like "แขวง", "เขต", "จ.", "ถ.". Do NOT include province/district.
+           - Only extract the UNIT NUMBER (เลขห้องชุด) specific to the resident.
 
         3. Tracking Number (รหัสขนส่ง):
            - Barcode number starting with "TH", "7C", etc., or under the main barcode.

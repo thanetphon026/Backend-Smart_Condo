@@ -567,13 +567,18 @@ def handle_image_message(event):
         content_length = r.headers.get('Content-Length')
         MAX_SIZE = 10 * 1024 * 1024  # 10 MB
         
-        if content_length and int(content_length) > MAX_SIZE:
-             card = create_image_error_card(
-                reason="ไฟล์ขนาดใหญ่เกินไป",
-                detail=f"รูปภาพมีขนาด {int(content_length)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
-            )
-             reply_message(reply_token, flex_contents=card)
-             return
+        try:
+            if content_length and int(content_length) > MAX_SIZE:
+                 card = create_image_error_card(
+                    reason="ไฟล์ขนาดใหญ่เกินไป",
+                    detail=f"รูปภาพมีขนาด {int(content_length)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
+                )
+                 if not reply_message(reply_token, flex_contents=card):
+                     # Fallback if Flex fails
+                     reply_message(reply_token, text="ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ (ไม่สามารถแสดงผลการ์ดได้)")
+                 return
+        except ValueError:
+            pass # Ignore validation if header is weird, rely on streaming
 
         # Check Content-Type header
         content_type = r.headers.get('Content-Type', '')
@@ -585,7 +590,8 @@ def handle_image_message(event):
                 reason="นามสกุลไฟล์ไม่ถูกต้อง",
                 detail=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ"
             )
-            reply_message(reply_token, flex_contents=card)
+            if not reply_message(reply_token, flex_contents=card):
+                 reply_message(reply_token, text=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ")
             return
 
         # Download chunks and enforce strict limit
@@ -597,14 +603,18 @@ def handle_image_message(event):
                     reason="ไฟล์ขนาดใหญ่เกินไป",
                     detail=f"รูปภาพมีขนาดเกิน 10MB ค่ะ"
                 )
-                reply_message(reply_token, flex_contents=card)
+                if not reply_message(reply_token, flex_contents=card):
+                     reply_message(reply_token, text="ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ")
                 return
                 
         image_bytes = bytes(image_bytes)
         
     except Exception as e:
         print(f"Image Download Error: {e}")
-        reply_message(reply_token, text="เกิดข้อผิดพลาดในการดาวน์โหลดรูปภาพ")
+        try:
+            reply_message(reply_token, text="เกิดข้อผิดพลาดในการตรวจสอบไฟล์รูปภาพ")
+        except:
+            pass
         return
 
     # 2. Check Time Restrictions (Self-Pickup Scan: 18:00 - 08:30)
@@ -659,13 +669,17 @@ def handle_image_message(event):
         content_length = r.headers.get('Content-Length')
         MAX_SIZE = 10 * 1024 * 1024
         
-        if content_length and int(content_length) > MAX_SIZE:
-             card = create_image_error_card(
-                reason="ไฟล์ขนาดใหญ่เกินไป",
-                detail=f"รูปภาพมีขนาด {int(content_length)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
-            )
-             reply_message(reply_token, flex_contents=card)
-             return
+        try:
+            if content_length and int(content_length) > MAX_SIZE:
+                 card = create_image_error_card(
+                    reason="ไฟล์ขนาดใหญ่เกินไป",
+                    detail=f"รูปภาพมีขนาด {int(content_length)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
+                )
+                 if not reply_message(reply_token, flex_contents=card):
+                     reply_message(reply_token, text="ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ (ไม่สามารถแสดงผลการ์ดได้)")
+                 return
+        except ValueError:
+            pass
         
         # Check type
         content_type = r.headers.get('Content-Type', '')
@@ -677,7 +691,8 @@ def handle_image_message(event):
                 reason="นามสกุลไฟล์ไม่ถูกต้อง",
                 detail=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ"
             )
-            reply_message(reply_token, flex_contents=card)
+            if not reply_message(reply_token, flex_contents=card):
+                reply_message(reply_token, text=f"ระบบไม่รองรับไฟล์ {ext} ค่ะ")
             return
 
         # Download chunks
@@ -689,7 +704,8 @@ def handle_image_message(event):
                     reason="ไฟล์ขนาดใหญ่เกินไป",
                     detail=f"รูปภาพมีขนาดเกิน 10MB ค่ะ"
                 )
-                 reply_message(reply_token, flex_contents=card)
+                 if not reply_message(reply_token, flex_contents=card):
+                     reply_message(reply_token, text="ไฟล์ขนาดใหญ่เกิน 10MB ค่ะ")
                  return
                  
         image_bytes = bytes(image_bytes)
