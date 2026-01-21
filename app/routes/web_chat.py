@@ -23,6 +23,18 @@ import base64
 import time
 import re
 
+def web_reply(user_id, reply=None, flex=None, status="success"):
+    """Helper to save assistant response and return JSON."""
+    if reply or flex:
+        save_chat_history(user_id, 'assistant', reply or "[Flex Message]", platform='web')
+    
+    return jsonify({
+        "status": status,
+        "reply": reply,
+        "flex": flex,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    })
+
 web_chat_bp = Blueprint('web_chat', __name__, url_prefix='/api/web')
 
 
@@ -149,17 +161,17 @@ def handle_text_web(user, user_id, text):
             # Send success card
             card = create_user_registration_success_card(room_number, full_name, phone)
             log_audit("User Registration (Web)", f"ห้อง {room_number} - {full_name}", target="New Registration", details=f"Phone: {phone}")
-            return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+            return web_reply(user_id, flex=card)
         else:
             # Invalid format - show how to register
             card = create_registration_required_card(user.get('display_name'))
-            return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+            return web_reply(user_id, flex=card)
     
     # 2. Check if user is registered (has room_number)
     if not user.get('room_number'):
         # Not registered - prompt to register
         card = create_registration_required_card(user.get('display_name'))
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
     
     # 3. Extract Intent AND Selection
     intent, embedded_selection = extract_intent_and_selection(text)
@@ -196,7 +208,7 @@ def handle_text_web(user, user_id, text):
                     status_text="❌ คุณสามารถลงทะเบียนรับได้เฉพาะเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nพัสดุจะถูกนำไปวางที่จุดรับของเองเวลา 18:00 น. ค่ะ",
                     color="#ff9900"
                 )
-                return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+                return web_reply(user_id, flex=card)
         
         return handle_pick_parcel_web(user, user_id, text)
     
@@ -217,13 +229,7 @@ def handle_text_web(user, user_id, text):
     
     # General -> AI Chat
     response_text = generate_chat_response(text, user)
-    save_chat_history(user_id, 'assistant', response_text, platform='web')
-    
-    return jsonify({
-        "status": "success",
-        "reply": response_text,
-        "timestamp": datetime.datetime.utcnow().isoformat()
-    })
+    return web_reply(user_id, reply=response_text)
 
 
 def parse_user_registration_web(text):
@@ -297,15 +303,11 @@ def handle_register_outside_web(user, user_id):
             status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
     
     room = user.get('room_number')
     if not room:
-        return jsonify({
-            "status": "success",
-            "reply": "ไม่พบข้อมูลห้องของคุณในระบบ กรุณาติดต่อยืนยันตัวตนกับนิติบุคคล",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="ไม่พบข้อมูลห้องของคุณในระบบ กรุณาติดต่อยืนยันตัวตนกับนิติบุคคล")
     
     # Find pending in-time parcels
     pending_in_time = list(parcels_col.find({
@@ -316,43 +318,31 @@ def handle_register_outside_web(user, user_id):
         all_pending = list(parcels_col.find({"room_number": room, "status": "pending"}).sort("timestamp", 1))
         if all_pending:
             card = create_premium_parcel_list(all_pending, title="🌙 สถานะการรับนอกเวลา", header_color="#6200ee")
-            return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+            return web_reply(user_id, flex=card)
         else:
-            return jsonify({
-                "status": "success",
-                "reply": "ไม่พบพัสดุรอรับสำหรับห้องของคุณครับ",
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            })
+            return web_reply(user_id, reply="ไม่พบพัสดุรอรับสำหรับห้องของคุณครับ")
     
     if len(pending_in_time) == 1:
         card = create_registration_confirmation_card(pending_in_time)
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
     else:
         all_pending = list(parcels_col.find({"room_number": room, "status": "pending"}).sort("timestamp", 1))
         card = create_premium_parcel_list(all_pending, title="🌙 เลือกพัสดุที่ต้องการรับ", header_color="#6200ee")
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
 
 
 def handle_pick_parcel_web(user, user_id, text):
     """Handle parcel selection for after-hours registration."""
     room = user.get('room_number')
     if not room:
-        return jsonify({
-            "status": "success",
-            "reply": "ไม่พบข้อมูลห้องของคุณในระบบ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="ไม่พบข้อมูลห้องของคุณในระบบ")
     
     available = list(parcels_col.find({
         "room_number": room, "status": "pending", "is_after_hours": False
     }).sort("timestamp", 1))
     
     if not available:
-        return jsonify({
-            "status": "success",
-            "reply": "ไม่มีพัสดุในเวลาที่รอการลงทะเบียนนอกเวลาค่ะ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="ไม่มีพัสดุในเวลาที่รอการลงทะเบียนนอกเวลาค่ะ")
     
     now = get_bkk_time()
     is_office_open = (
@@ -366,16 +356,12 @@ def handle_pick_parcel_web(user, user_id, text):
             status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
     
     selected_pins = extract_selection_ids(text, available)
     
     if not selected_pins:
-        return jsonify({
-            "status": "success",
-            "reply": "น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาพิมพ์ลำดับ (1, 2, 3) หรือรหัส PIN 4-5 หลักค่ะ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาพิมพ์ลำดับ (1, 2, 3) หรือรหัส PIN 4-5 หลักค่ะ")
     
     selected_parcels = [p for p in available if str(p.get('pin')) in selected_pins]
     
@@ -399,13 +385,9 @@ def handle_pick_parcel_web(user, user_id, text):
         )
         room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
         log_audit("Register Outside (Web)", room_name, target="Select Parcel", details=f"PINs: {', '.join(selected_pins)}")
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
     else:
-        return jsonify({
-            "status": "success",
-            "reply": "ไม่พบพัสดุที่คุณระบุ หรือพัสดุถูกลงทะเบียนไปแล้วค่ะ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="ไม่พบพัสดุที่คุณระบุ หรือพัสดุถูกลงทะเบียนไปแล้วค่ะ")
 
 
 def handle_check_parcel_web(user, user_id):
@@ -427,10 +409,10 @@ def handle_check_parcel_web(user, user_id):
             details="คุณไม่มีพัสดุคงค้างในขณะนี้",
             color="#999999"
         )
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
     
     card = create_premium_parcel_list(parcels, title="📦 รายการพัสดุรอรับ", header_color="#0066ff")
-    return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+    return web_reply(user_id, flex=card)
 
 
 def handle_cancel_outside_web(user, user_id, user_text=""):
@@ -448,7 +430,7 @@ def handle_cancel_outside_web(user, user_id, user_text=""):
             status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
             color="#ff9900"
         )
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
     
     room = user.get('room_number')
     if not room:
@@ -461,22 +443,18 @@ def handle_cancel_outside_web(user, user_id, user_text=""):
     to_cancel = list(parcels_col.find({"room_number": room, "status": "pending", "is_after_hours": True}))
     
     if not to_cancel:
-        return jsonify({
-            "status": "success",
-            "reply": "ไม่พบรายการที่ลงทะเบียนนอกเวลาไว้ค่ะ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="ไม่พบรายการที่ลงทะเบียนนอกเวลาไว้ค่ะ")
     
     cancel_all = "ทั้งหมด" in user_text
     
     if len(to_cancel) == 1 or cancel_all:
         users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": None}})
         card = create_cancellation_confirmation_card(to_cancel)
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
     else:
         users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": "cancel_select"}})
         card = create_premium_parcel_list(to_cancel, title="⚠️ เลือกพัสดุที่ต้องการยกเลิก", header_color="#ff9900")
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
 
 
 def handle_cancel_select_parcel_web(user, user_id, text):
@@ -493,7 +471,7 @@ def handle_cancel_select_parcel_web(user, user_id, text):
             status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ",
             color="#ff9900"
         )
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
     
     room = user.get('room_number')
     if not room:
@@ -508,33 +486,21 @@ def handle_cancel_select_parcel_web(user, user_id, text):
     }).sort("timestamp", 1))
     
     if not available:
-        return jsonify({
-            "status": "success",
-            "reply": "ไม่พบรายการที่ลงทะเบียนนอกเวลาค่ะ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="ไม่พบรายการที่ลงทะเบียนนอกเวลาค่ะ")
     
     selected_pins = extract_selection_ids(text, available)
     
     if not selected_pins:
-        return jsonify({
-            "status": "success",
-            "reply": "น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาระบุลำดับหรือรหัส PIN ที่ต้องการยกเลิกค่ะ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาระบุลำดับหรือรหัส PIN ที่ต้องการยกเลิกค่ะ")
     
     selected_parcels = [p for p in available if str(p.get('pin')) in selected_pins]
     
     if not selected_parcels:
-        return jsonify({
-            "status": "success",
-            "reply": "ไม่พบพัสดุที่คุณเลือกค่ะ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="ไม่พบพัสดุที่คุณเลือกค่ะ")
     
     users_col.update_one({"line_user_id": user_id}, {"$set": {"context_action": None}})
     card = create_cancellation_confirmation_card(selected_parcels)
-    return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+    return web_reply(user_id, flex=card)
 
 
 def handle_image_web(user, user_id, image_base64, image_type):
@@ -559,7 +525,7 @@ def handle_image_web(user, user_id, image_base64, image_type):
                 reason="ไฟล์ขนาดใหญ่เกินไป",
                 detail=f"รูปภาพมีขนาดเกิน 10MB ค่ะ"
             )
-             return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+             return web_reply(user_id, flex=card)
 
         image_bytes = base64.b64decode(image_base64)
         
@@ -569,14 +535,10 @@ def handle_image_web(user, user_id, image_base64, image_type):
                 reason="ไฟล์ขนาดใหญ่เกินไป",
                 detail=f"รูปภาพมีขนาด {len(image_bytes)/(1024*1024):.1f}MB ซึ่งเกิน 10MB ค่ะ"
             )
-            return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+            return web_reply(user_id, flex=card)
             
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "reply": f"เกิดข้อผิดพลาดในการประมวลผลรูปภาพ: {str(e)}",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply=f"เกิดข้อผิดพลาดในการประมวลผลรูปภาพ: {str(e)}", status="error")
 
     # 2. Check Time Restrictions (Self-Pickup Scan: 18:00 - 08:30)
     now = get_bkk_time()
@@ -589,15 +551,11 @@ def handle_image_web(user, user_id, image_base64, image_type):
             status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเวลา 18:00 น. จนถึง 08:30 น. เท่านั้นค่ะ\n\nในช่วงเวลาทำการ (08:30 - 17:30 น.) กรุณาติดต่อรับพัสดุกับนิติบุคคลโดยตรงค่ะ",
             color="#999999"
         )
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
 
     # 3. Identity and Queue Check
     if not user.get('room_number'):
-        return jsonify({
-            "status": "success",
-            "reply": "กรุณาติดต่อยืนยันตัวตนกับนิติบุคคลก่อนใช้งานฟีเจอร์นี้ครับ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="กรุณาติดต่อยืนยันตัวตนกับนิติบุคคลก่อนใช้งานฟีเจอร์นี้ครับ")
     
     user_room = user.get('room_number')
     
@@ -611,7 +569,7 @@ def handle_image_web(user, user_id, image_base64, image_type):
             status_text="❌ คุณยังไม่ได้ลงทะเบียนรับของนอกเวลา หรือไม่มีพัสดุรอรับที่เตรียมไว้ในจุดรับของด้วยตนเองค่ะ",
             color="#ff3333"
         )
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
     
     # AI Analyze
     label_data = analyze_parcel_label(image_bytes)
@@ -623,7 +581,7 @@ def handle_image_web(user, user_id, image_base64, image_type):
             status_text=f"❌ {reason}\n\nกรุณาถ่ายรูปหน้าพัสดุให้ชัดเจน หรือติดต่อเจ้าหน้าที่ค่ะ",
             color="#ff3333"
         )
-        return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+        return web_reply(user_id, flex=card)
     
     # Match logic
     match_result = check_match(label_data, user)
@@ -666,18 +624,10 @@ def handle_postback_web(user, user_id, postback_data):
     users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}})
     
     if action == 'verify_retry':
-        return jsonify({
-            "status": "success",
-            "reply": "ยกเลิกการสแกนเรียบร้อยแล้วค่ะ คุณสามารถเลือกทำรายการอื่นหรือถ่ายรูปใหม่อีกครั้งได้ทันทีค่ะ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="ยกเลิกการสแกนเรียบร้อยแล้วค่ะ คุณสามารถเลือกทำรายการอื่นหรือถ่ายรูปใหม่อีกครั้งได้ทันทีค่ะ")
     
     if action == 'button_disabled':
-        return jsonify({
-            "status": "success",
-            "reply": "ปุ่มนี้ไม่สามารถใช้งานได้ในสถานการณ์นี้ค่ะ กรุณาใช้ปุ่มอื่นหรือติดต่อเจ้าหน้าที่ค่ะ",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="ปุ่มนี้ไม่สามารถใช้งานได้ในสถานการณ์นี้ค่ะ กรุณาใช้ปุ่มอื่นหรือติดต่อเจ้าหน้าที่ค่ะ")
     
     # Check stale card
     card_ts = parsed.get('ts')
@@ -685,11 +635,7 @@ def handle_postback_web(user, user_id, postback_data):
         try:
             age_seconds = time.time() - int(card_ts)
             if age_seconds > 300:  # 5 minutes
-                return jsonify({
-                    "status": "success",
-                    "reply": "บล็อกการ์ดนี้หมดอายุแล้วค่ะ กรุณาใช้บล็อกการ์ดล่าสุดหรือส่งคำสั่งใหม่ค่ะ",
-                    "timestamp": datetime.datetime.utcnow().isoformat()
-                })
+                return web_reply(user_id, reply="บล็อกการ์ดนี้หมดอายุแล้วค่ะ กรุณาใช้บล็อกการ์ดล่าสุดหรือส่งคำสั่งใหม่ค่ะ")
         except:
             pass
     
@@ -710,11 +656,7 @@ def handle_postback_web(user, user_id, postback_data):
         total_in_request = len([p for p in pins_str.split(',') if p])
         
         if already_done >= total_in_request and total_in_request > 0:
-            return jsonify({
-                "status": "success",
-                "reply": "รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏",
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            })
+            return web_reply(user_id, reply="รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏")
         
         result = parcels_col.update_many(
             {"room_number": str(room), "pin": {"$in": pin_list}, "status": "pending", "is_after_hours": False},
@@ -729,13 +671,9 @@ def handle_postback_web(user, user_id, postback_data):
             )
             room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
             log_audit("Register Outside (Web)", room_name, target="Confirm", details=f"PINs: {pins_str}")
-            return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+            return web_reply(user_id, flex=card)
         else:
-            return jsonify({
-                "status": "success",
-                "reply": "ไม่สามารถลงทะเบียนได้ กรุณาลองใหม่อีกครั้งค่ะ",
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            })
+            return web_reply(user_id, reply="ไม่สามารถลงทะเบียนได้ กรุณาลองใหม่อีกครั้งค่ะ")
     
     if action == 'confirm_self':
         room = parsed.get('room')
@@ -747,11 +685,7 @@ def handle_postback_web(user, user_id, postback_data):
         })
         
         if still_pending == 0:
-            return jsonify({
-                "status": "success",
-                "reply": "รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏",
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            })
+            return web_reply(user_id, reply="รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏")
         
         result = parcels_col.update_many(
             {"room_number": room, "status": "pending", "is_after_hours": True},
@@ -777,13 +711,9 @@ def handle_postback_web(user, user_id, postback_data):
             )
             room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
             log_audit("Self Pickup Success (Web)", room_name, target="รับพัสดุเองสำเร็จ", details=f"พัสดุดำเนินการแล้ว {result.modified_count} ชิ้น")
-            return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+            return web_reply(user_id, flex=card)
         else:
-            return jsonify({
-                "status": "success",
-                "reply": "เกิดข้อผิดพลาด หรือพัสดุถูกรับไปแล้วค่ะ",
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            })
+            return web_reply(user_id, reply="เกิดข้อผิดพลาด หรือพัสดุถูกรับไปแล้วค่ะ")
     
     if action == 'cancel_after_hours_confirm':
         room = user.get('room_number')
@@ -801,11 +731,7 @@ def handle_postback_web(user, user_id, postback_data):
         })
         
         if still_registered == 0:
-            return jsonify({
-                "status": "success",
-                "reply": "รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏",
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            })
+            return web_reply(user_id, reply="รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏")
         
         result = parcels_col.update_many(
             {"room_number": str(room), "pin": {"$in": pin_list}, "status": "pending", "is_after_hours": True},
@@ -820,30 +746,18 @@ def handle_postback_web(user, user_id, postback_data):
             )
             room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
             log_audit("Cancel Outside (Web)", room_name, target="ยกเลิกนัดหมาย", details=f"PINs: {pins_str}")
-            return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+            return web_reply(user_id, flex=card)
         else:
-            return jsonify({
-                "status": "success",
-                "reply": "เกิดข้อผิดพลาดในการยกเลิกรายการค่ะ",
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            })
+            return web_reply(user_id, reply="เกิดข้อผิดพลาดในการยกเลิกรายการค่ะ")
     
     if action == 'register_outside_trigger':
         return handle_register_outside_web(user, user_id)
 
     if action == 'cancel_abort' or action == 'register_abort':
-        return jsonify({
-            "status": "success",
-            "reply": "รับทราบค่ะ ยกเลิกรายการให้เรียบร้อยแล้วค่ะ 😊",
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        return web_reply(user_id, reply="รับทราบค่ะ ยกเลิกรายการให้เรียบร้อยแล้วค่ะ 😊")
 
     # Unknown action
-    return jsonify({
-        "status": "success",
-        "reply": "ไม่พบ action ที่ต้องการ",
-        "timestamp": datetime.datetime.utcnow().isoformat()
-    })
+    return web_reply(user_id, reply="ไม่พบ action ที่ต้องการ")
 
 
 @web_chat_bp.route("/chat-history/<user_id>", methods=['GET'])
@@ -864,7 +778,7 @@ def get_chat_history(user_id):
             "role": h.get('role'),
             "message": h.get('message'),
             "image_url": h.get('image_url'),
-            "timestamp": h.get('timestamp').isoformat() if h.get('timestamp') else None,
+            "timestamp": h.get('timestamp').replace(tzinfo=datetime.timezone.utc).isoformat() if h.get('timestamp') else None,
             "platform": h.get('platform', 'line')
         } for h in history]
     })

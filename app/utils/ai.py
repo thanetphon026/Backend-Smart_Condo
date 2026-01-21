@@ -11,29 +11,24 @@ EMBEDDING_MODEL = 'text-embedding-004'
 
 CHAT_SYSTEM_PROMPT = """
 You are "Nong Bot Niti", a highly intelligent and polite Condo Assistant.
-Your goal: Provide accurate and helpful answers strictly based on the provided [CONDO KNOWLEDGE BASE].
+
+**CRITICAL**: When answering questions, PRIORITIZE information from PDF documents in the knowledge base.
+- PDF sources contain official condo regulations, rules, and policies.
+- Always cite the source and page number when using PDF information.
+- Example: "ตามข้อบังคับของคอนโด (หน้า 3) ระบุว่า..."
 
 Rules for Interaction:
-1. **Prioritize Context**: Use the retrieved knowledge (both text and vector matches) to answer.
-2. **Database Strictness**: Use the [CONDO KNOWLEDGE BASE] for all facts.
+1. **PDF Priority**: If the answer exists in a PDF document, use it FIRST.
+2. **Source Citation**: Always mention "ตามเอกสาร [filename] หน้า [page]" when using PDF content.
+3. **Database Strictness**: Use the [CONDO KNOWLEDGE BASE] for all facts.
    - If information is NOT in the database, say "ขออภัยค่ะ ข้อมูลส่วนนี้ไม่มีในระบบของนิติฯ ค่ะ" or similar.
-   - DO NOT invent shops, menus, or services (e.g., do not suggest custom "อาหารตามสั่ง" shops if they aren't listed).
-2. **No Hallucinations**: You are forbidden from using general knowledge to supplement missing database facts if it might lead to misinformation. Only use general knowledge for common sense or polite conversion.
-3. **Prohibited Topics**: 
-   - **Lottery & Gambling**: Strictly decline any requests for lucky numbers, lottery predictions (หวย, เลขเด็ด, 3 ตัว), or gambling advice. Say "น้องบอตไม่สามารถให้เลขเด็ดหรือทำนายผลหวยได้ค่ะ".
-   - **Unrelated Science/Math**: Decline complex scientific or academic questions that don't relate to condo living.
-4. **Billing & Utilities**: You CAN perform basic arithmetic for billing, expenses, or calculation of dates/fees related to condo services.
-5. **Intent & Typos**: Infer user intent even if there are typos or misspellings:
-   - "หิวข้าว", "หอวข้าว", "หาไรกิน" -> Search for food/shops in DATABASE.
-   - "จอดรถ", "จอดรถที่ไหน" -> Information about parking from DATABASE.
-   - Be flexible with Thai spelling variations.
-6. **Conversation Flow**: Use [CHAT HISTORY] to maintain context.
-7. **Tone**: Polite Thai ("ค่ะ/ครับ"). Use "ค่ะ" as default.
-8. **User Addressing**: When referring to the user, ALWAYS use the format: " คุณ[Name] " (Note the spaces before and after). 
-   - Ensure there is a space BEFORE "คุณ".
-   - Ensure there is a space AFTER "[Name]".
-   - Example: "แน่นอนค่ะ คุณสมชาย ข้อมูลที่คุณถามคือ..."
-   - DO NOT let the name stick to other words.
+   - DO NOT invent shops, menus, or services.
+4. **No Hallucinations**: You are forbidden from using general knowledge to supplement missing database facts if it might lead to misinformation.
+5. **Billing & Utilities**: You CAN perform basic arithmetic for billing, expenses, or calculation of dates/fees.
+6. **Intent & Typos**: Infer user intent even if there are typos.
+7. **Conversation Flow**: Use [CHAT HISTORY] to maintain context.
+8. **Tone**: Polite Thai ("ค่ะ/ครับ"). Use "ค่ะ" as default.
+9. **User Addressing**: When referring to the user, ALWAYS use the format: " คุณ[Name] " (Note the spaces).
 """
 
 def extract_keywords(text):
@@ -88,12 +83,7 @@ def generate_embedding(text):
         return []
 
 def retrieve_knowledge(query, limit=5):
-    """
-    Hybrid Search Strategy: 
-    1. Vector Semantic Search (Meaning)
-    2. Text Keyword Search (Exact terms)
-    3. Rerank/Merge
-    """
+    """Enhanced hybrid search strategy with PDF prioritization."""
     try:
         # 1. Generate Query Vector
         vector = generate_embedding(query)
@@ -101,10 +91,9 @@ def retrieve_knowledge(query, limit=5):
         results = []
         seen_ids = set()
         
-        # 2. Vector Search (if available in potential future DB, simulated here for structure)
-        # Note: MongoDB Atlas Vector Search requires specific aggregation pipeline.
-        # This is a placeholder for the logic structure. 
-        # In a real deployed environment with Atlas Search enabled:
+        # 2. Vector Search (Atlas)
+        # Assuming index 'vector_index' is set up for 'embedding' field
+        vector_results = []
         try:
             if vector:
                 pipeline = [
@@ -114,7 +103,7 @@ def retrieve_knowledge(query, limit=5):
                             "path": "embedding", 
                             "queryVector": vector,
                             "numCandidates": 50, 
-                            "limit": limit
+                            "limit": 10  # Increased to get more candidates
                         }
                     },
                     {
@@ -129,18 +118,11 @@ def retrieve_knowledge(query, limit=5):
                         }
                     }
                 ]
-                # Atlas Index is ready
                 vector_results = list(kb_col.aggregate(pipeline))
-                # vector_results = [] 
-                
                 print(f"✅ Vector search found: {len(vector_results)} results")
-                for r in vector_results:
-                    r['_id'] = str(r['_id'])
-                    r['source'] = 'vector'
-                    results.append(r)
-                    seen_ids.add(r['_id'])
         except Exception as ve:
-             print(f"⚠️ Vector Search not active/failed: {ve}")
+             # This is expected if Atlas Vector Search is not enabled on this specific cluster tier
+             print(f"⚠️ Vector Search unavailable (normal for free tier/no index): {ve}")
         
         # 3. Fallback/Augment with Text Search (Classic RAG)
         keywords = extract_keywords(query)
@@ -149,27 +131,59 @@ def retrieve_knowledge(query, limit=5):
         
         text_results = []
         try:
+            # 3.1 Prioritize PDF content first (Official regs)
             cursor = kb_col.find(
-                {"$text": {"$search": keyword_str}},
+                {
+                    "$and": [
+                        {"$text": {"$search": keyword_str}},
+                        {"type": "pdf"}
+                    ]
+                },
                 {"score": {"$meta": "textScore"}}
             ).sort([("score", {"$meta": "textScore"})]).limit(limit)
-            text_results = list(cursor)
-        except Exception as e:
-            pass
+            pdf_text_results = list(cursor)
             
-        # Merge Text Results (Prioritize appending them)
-        for r in text_results:
+            # 3.2 If PDFs found, great. If not, search everything.
+            if len(pdf_text_results) < 3:
+                cursor_all = kb_col.find(
+                    {"$text": {"$search": keyword_str}},
+                    {"score": {"$meta": "textScore"}}
+                ).sort([("score", {"$meta": "textScore"})]).limit(limit)
+                text_results = list(cursor_all)
+            else:
+                text_results = pdf_text_results
+                
+        except Exception as e:
+            # Fallback for manual regex if text index missing
+             pass
+             
+        # Merge Strategy: Prioritize PDFs, but mix in best vector matches
+        all_candidates = vector_results + text_results
+        
+        # Separation
+        pdfs = [r for r in all_candidates if r.get('type') == 'pdf']
+        others = [r for r in all_candidates if r.get('type') != 'pdf']
+        
+        # Combine: PDFs first, then others
+        final_list = pdfs + others
+        
+        for r in final_list:
             rid = str(r['_id'])
             if rid not in seen_ids:
                 r['_id'] = rid
-                r['source'] = 'text'
-                # Insert at position 1 (second place) to mix with top vector result
-                # or just append. Appending is fine if we return enough results.
+                # Normalize source/page info for AI context
+                if r.get('type') == 'pdf':
+                    src = r.get('source', 'Unknown PDF')
+                    pg = r.get('page', '?')
+                    r['source_citation'] = f"PDF: {src} (Page {pg})"
+                else:
+                    r['source_citation'] = "ADMIN KNOWLEDGE BASE"
+                    
                 results.append(r)
                 seen_ids.add(rid)
         
-        # 4. Fuzzy Fallback (only if total results are low)
-        if len(results) < limit: # Only fallback to fuzzy if we really need more
+        # 4. Fuzzy Fallback (only if total results are very low)
+        if len(results) < 1: 
             import re
             regex_queries = []
             for kw in keywords:
@@ -185,13 +199,12 @@ def retrieve_knowledge(query, limit=5):
                     rid = str(f['_id'])
                     if rid not in seen_ids:
                         f['_id'] = rid
-                        f['source'] = 'fuzzy'
+                        f['source_citation'] = "FUZZY MATCH"
                         results.append(f)
                         seen_ids.add(rid)
 
-        # Truncate at a reasonable size for LLM context (Gemini Flash can handle more than 5)
-        # We allow up to 10 results to ensure both Vector and Text matches are included.
-        return results[:10]
+        # Truncate
+        return results[:8]
     except Exception as e:
         print(f"❌ RAG Error: {e}")
         return []

@@ -28,9 +28,7 @@ def ensure_indexes():
         parcels_col.create_index([("room_number", 1)])
         
         # Knowledge Base (Text Search)
-        # MongoDB only allows ONE text index. If a different one exists, we must drop it.
         try:
-            # Check for existing text index
             for index in kb_col.list_indexes():
                 if any(v == 'text' for v in index['key'].values()):
                     if index['name'] != "rag_text_index":
@@ -44,27 +42,11 @@ def ensure_indexes():
             ], name="rag_text_index", weights={"topic": 3, "content": 2, "tags": 1})
         except Exception as ie:
             print(f"⚠️ KB Index Note: {ie}")
-            
-        print("✅ MongoDB Indexes ensured.")
+
+        # Chat History
+        chat_history_col.create_index([("line_user_id", 1), ("timestamp", -1)])
         
-        # [IMPORTANT] Vector Search Index Instruction:
-        # Vector Search Indexes CANNOT be created via pymongo standard create_index.
-        # You must create it in MongoDB Atlas UI:
-        # 1. Go to Atlas Search -> Create Search Index
-        # 2. Select JSON Editor
-        # 3. Database: smart_condo, Collection: knowledge_base
-        # 4. Name: vector_index
-        # 5. Config:
-        # {
-        #   "fields": [
-        #     {
-        #       "type": "vector",
-        #       "path": "embedding",
-        #       "numDimensions": 768,
-        #       "similarity": "cosine"
-        #     }
-        #   ]
-        # }
+        print("✅ MongoDB Indexes ensured.")
     except Exception as e:
         print(f"⚠️ Failed to create indexes: {e}")
 
@@ -108,7 +90,7 @@ def save_chat_history(line_user_id, role, message, platform="line", image_url=No
             "message": message,
             "platform": platform,
             "image_url": image_url,
-            "timestamp": datetime.datetime.utcnow()
+            "timestamp": datetime.datetime.now(datetime.timezone.utc)
         }
         chat_history_col.insert_one(entry)
     except Exception as e:

@@ -24,6 +24,16 @@ import io
 
 webhook_bp = Blueprint('webhook', __name__)
 
+def reply_with_logging(user_id, reply_token, text=None, flex_contents=None):
+    """Helper to reply and log assistant response to history."""
+    from ..utils.line import reply_message
+    from ..utils.db import save_chat_history
+    
+    reply_message(reply_token, text=text, flex_contents=flex_contents)
+    if text or flex_contents:
+        save_chat_history(user_id, 'assistant', text or "[Flex Message]", platform='line')
+
+
 @webhook_bp.route("/", methods=['GET'])
 def health_check():
     try:
@@ -73,12 +83,12 @@ def handle_follow(event):
             is_returning=True,
             user_info=user
         )
-        reply_message(reply_token, flex_contents=card)
+        reply_with_logging(user_id, reply_token, flex_contents=card)
         log_audit("User Unblocked", f"ห้อง {user.get('room_number')} - {user.get('first_name', 'Guest')}", target="Follow Event")
     else:
         # New user - show registration prompt
         card = create_welcome_card(display_name=display_name, is_returning=False)
-        reply_message(reply_token, flex_contents=card)
+        reply_with_logging(user_id, reply_token, flex_contents=card)
         
         # Create user record if not exists
         if not user:
@@ -186,11 +196,11 @@ def handle_text_message(event):
             
             # Allow re-registration for SAME user, but block if taken by others
             if existing_room and existing_room['line_user_id'] != user_id:
-                reply_message(reply_token, text=f"⚠️ ไม่สามารถลงทะเบียนได้\n\nห้อง {room_number} มีผู้ลงทะเบียนในระบบแล้วค่ะ หากมีข้อผิดพลาดกรุณาติดต่อนิติบุคคล")
+                reply_with_logging(user_id, reply_token, text=f"⚠️ ไม่สามารถลงทะเบียนได้\n\nห้อง {room_number} มีผู้ลงทะเบียนในระบบแล้วค่ะ หากมีข้อผิดพลาดกรุณาติดต่อนิติบุคคล")
                 return
                 
             if existing_phone and existing_phone['line_user_id'] != user_id:
-                reply_message(reply_token, text=f"⚠️ ไม่สามารถลงทะเบียนได้\n\nเบอร์โทร {phone} มีผู้ใช้งานในระบบแล้วค่ะ")
+                reply_with_logging(user_id, reply_token, text=f"⚠️ ไม่สามารถลงทะเบียนได้\n\nเบอร์โทร {phone} มีผู้ใช้งานในระบบแล้วค่ะ")
                 return
 
             # Update user record
@@ -208,20 +218,20 @@ def handle_text_message(event):
             
             # Send success card
             card = create_user_registration_success_card(room_number, full_name, phone)
-            reply_message(reply_token, flex_contents=card)
+            reply_with_logging(user_id, reply_token, flex_contents=card)
             log_audit("User Registration", f"ห้อง {room_number} - {full_name}", target="New Registration", details=f"Phone: {phone}")
             return
         else:
             # Invalid format - show how to register
             card = create_registration_required_card(user.get('display_name'))
-            reply_message(reply_token, flex_contents=card)
+            reply_with_logging(user_id, reply_token, flex_contents=card)
             return
     
     # 3. Check if user is registered (has room_number)
     if not user.get('room_number'):
         # Not registered - prompt to register
         card = create_registration_required_card(user.get('display_name'))
-        reply_message(reply_token, flex_contents=card)
+        reply_with_logging(user_id, reply_token, flex_contents=card)
         return
     
     # 4. Extract Intent AND Selection (combined parsing)
@@ -274,7 +284,7 @@ def handle_text_message(event):
                     status_text="❌ คุณสามารถลงทะเบียนรับได้เฉพาะเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nพัสดุจะถูกนำไปวางที่จุดรับของเองเวลา 18:00 น. ค่ะ",
                     color="#ff9900"
                 )
-                reply_message(reply_token, flex_contents=card)
+                reply_with_logging(user_id, reply_token, flex_contents=card)
                 return
         
         # Fallback if no room or other issues
@@ -301,8 +311,7 @@ def handle_text_message(event):
     
     # 9. General -> AI Chat
     response_text = generate_chat_response(text, user)
-    reply_message(reply_token, text=response_text)
-    save_chat_history(user_id, 'assistant', response_text)
+    reply_with_logging(user_id, reply_token, text=response_text)
 
 def handle_register_outside(user, user_id, reply_token):
     now = get_bkk_time()
@@ -320,7 +329,7 @@ def handle_register_outside(user, user_id, reply_token):
             status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
-        reply_message(reply_token, flex_contents=card)
+        reply_with_logging(user_id, reply_token, flex_contents=card)
         return
 
     room = user.get('room_number')
@@ -339,9 +348,9 @@ def handle_register_outside(user, user_id, reply_token):
         all_pending = list(parcels_col.find({"room_number": room, "status": "pending"}).sort("timestamp", 1))
         if all_pending:
             card = create_premium_parcel_list(all_pending, title="🌙 สถานะการรับนอกเวลา", header_color="#6200ee")
-            reply_message(reply_token, flex_contents=card)
+            reply_with_logging(user_id, reply_token, flex_contents=card)
         else:
-            reply_message(reply_token, text="ไม่พบพัสดุรอรับสำหรับห้องของคุณครับ")
+            reply_with_logging(user_id, reply_token, text="ไม่พบพัสดุรอรับสำหรับห้องของคุณครับ")
         return
 
     if len(pending_in_time) == 1:
@@ -365,7 +374,7 @@ def handle_pick_parcel(user, user_id, text, reply_token):
     }).sort("timestamp", 1))
 
     if not available:
-        reply_message(reply_token, text="ไม่มีพัสดุในเวลาที่รอการลงทะเบียนนอกเวลาค่ะ")
+        reply_with_logging(user_id, reply_token, text="ไม่มีพัสดุในเวลาที่รอการลงทะเบียนนอกเวลาค่ะ")
         return
 
     # Allowed ONLY 08:30 - 17:30
@@ -381,14 +390,14 @@ def handle_pick_parcel(user, user_id, text, reply_token):
             status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
-        reply_message(reply_token, flex_contents=card)
+        reply_with_logging(user_id, reply_token, flex_contents=card)
         return
 
     # Multi-selection support
     selected_pins = extract_selection_ids(text, available)
     
     if not selected_pins:
-        reply_message(reply_token, text="น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาพิมพ์ลำดับ (1, 2, 3) หรือรหัส PIN 4-5 หลักค่ะ")
+        reply_with_logging(user_id, reply_token, text="น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาพิมพ์ลำดับ (1, 2, 3) หรือรหัส PIN 4-5 หลักค่ะ")
         return
 
     # Filter based on selected PINs (robust string comparison)
@@ -421,7 +430,7 @@ def handle_pick_parcel(user, user_id, text, reply_token):
 def handle_check_parcel(user, user_id, reply_token):
     room = user.get('room_number')
     if not room:
-        reply_message(reply_token, text="ไม่พบข้อมูลห้องของคุณ")
+        reply_with_logging(user_id, reply_token, text="ไม่พบข้อมูลห้องของคุณ")
         return
     
     parcels = list(parcels_col.find({"room_number": room, "status": "pending"}).sort("timestamp", 1))
@@ -433,12 +442,12 @@ def handle_check_parcel(user, user_id, reply_token):
             details="คุณไม่มีพัสดุคงค้างในขณะนี้",
             color="#999999"
         )
-        reply_message(reply_token, flex_contents=card)
+        reply_with_logging(user_id, reply_token, flex_contents=card)
         return
          
     # Show Premium Unified List Card for Check status
     card = create_premium_parcel_list(parcels, title="📦 รายการพัสดุรอรับ", header_color="#0066ff")
-    reply_message(reply_token, flex_contents=card)
+    reply_with_logging(user_id, reply_token, flex_contents=card)
 
 def handle_cancel_outside(user, user_id, reply_token, user_text=""):
     """
@@ -458,7 +467,7 @@ def handle_cancel_outside(user, user_id, reply_token, user_text=""):
             status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
             color="#ff9900"
         )
-        reply_message(reply_token, flex_contents=card)
+        reply_with_logging(user_id, reply_token, flex_contents=card)
         return
 
     room = user.get('room_number')
@@ -467,7 +476,7 @@ def handle_cancel_outside(user, user_id, reply_token, user_text=""):
     to_cancel = list(parcels_col.find({"room_number": room, "status": "pending", "is_after_hours": True}))
     
     if not to_cancel:
-        reply_message(reply_token, text="ไม่พบรายการที่ลงทะเบียนนอกเวลาไว้ค่ะ")
+        reply_with_logging(user_id, reply_token, text="ไม่พบรายการที่ลงทะเบียนนอกเวลาไว้ค่ะ")
         return
     
     # Check if user said "ทั้งหมด" (all)
@@ -511,7 +520,7 @@ def handle_cancel_select_parcel(user, user_id, text, reply_token):
             status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
             color="#ff9900"
         )
-        reply_message(reply_token, flex_contents=card)
+        reply_with_logging(user_id, reply_token, flex_contents=card)
         return
 
     room = user.get('room_number')
@@ -524,21 +533,21 @@ def handle_cancel_select_parcel(user, user_id, text, reply_token):
     }).sort("timestamp", 1))
     
     if not available:
-        reply_message(reply_token, text="ไม่พบรายการที่ลงทะเบียนนอกเวลาค่ะ")
+        reply_with_logging(user_id, reply_token, text="ไม่พบรายการที่ลงทะเบียนนอกเวลาค่ะ")
         return
     
     # Use extraction to find selected PINs
     selected_pins = extract_selection_ids(text, available)
     
     if not selected_pins:
-        reply_message(reply_token, text="น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาระบุลำดับหรือรหัส PIN ที่ต้องการยกเลิกค่ะ")
+        reply_with_logging(user_id, reply_token, text="น้องบอตไม่แน่ใจว่าคุณเลือกชิ้นไหน กรุณาระบุลำดับหรือรหัส PIN ที่ต้องการยกเลิกค่ะ")
         return
     
     # Get the selected parcels
     selected_parcels = [p for p in available if str(p.get('pin')) in selected_pins]
     
     if not selected_parcels:
-        reply_message(reply_token, text="ไม่พบพัสดุที่คุณเลือกค่ะ")
+        reply_with_logging(user_id, reply_token, text="ไม่พบพัสดุที่คุณเลือกค่ะ")
         return
     
     # Clear context and show confirmation
@@ -629,13 +638,13 @@ def handle_image_message(event):
                 status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเวลา 18:00 น. จนถึง 08:30 น. เท่านั้นค่ะ\n\nในช่วงเวลาทำการ (08:30 - 17:30 น.) กรุณาติดต่อรับพัสดุกับนิติบุคคลโดยตรงค่ะ",
                 color="#999999"
             )
-            reply_message(reply_token, flex_contents=card)
+            reply_with_logging(user_id, reply_token, flex_contents=card)
             return
 
         # 3. User Identity Check
         user = users_col.find_one({"line_user_id": user_id})
         if not user or not user.get('room_number'):
-            reply_message(reply_token, text="กรุณาติดต่อยืนยันตัวตนกับนิติบุคคลก่อนใช้งานฟีเจอร์นี้ครับ")
+            reply_with_logging(user_id, reply_token, text="กรุณาติดต่อยืนยันตัวตนกับนิติบุคคลก่อนใช้งานฟีเจอร์นี้ครับ")
             return
         
         users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}})
@@ -816,7 +825,7 @@ def handle_postback(event):
         })
         
         if still_pending == 0:
-            reply_message(reply_token, text="รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏")
+            reply_with_logging(user_id, reply_token, text="รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏")
             return
 
         result = parcels_col.update_many(
@@ -846,7 +855,7 @@ def handle_postback(event):
             room_name = f"ห้อง {room} - {user.get('first_name', 'Guest') if user else 'Guest'}"
             log_audit("Self Pickup Success", room_name, target="รับพัสดุเองสำเร็จ", details=f"พัสดุดำเนินการแล้ว {result.modified_count} ชิ้น")
         else:
-            reply_message(reply_token, text="เกิดข้อผิดพลาด หรือพัสดุถูกรับไปแล้วค่ะ")
+            reply_with_logging(user_id, reply_token, text="เกิดข้อผิดพลาด หรือพัสดุถูกรับไปแล้วค่ะ")
         return
 
     if action == 'cancel_after_hours_confirm':
@@ -883,7 +892,7 @@ def handle_postback(event):
         })
         
         if still_registered == 0:
-            reply_message(reply_token, text="รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏")
+            reply_with_logging(user_id, reply_token, text="รายการนี้ได้ดำเนินการไปเป็นที่เรียบร้อยแล้วค่ะ 🙏")
             return
 
         result = parcels_col.update_many(
@@ -901,7 +910,7 @@ def handle_postback(event):
             room_name = f"ห้อง {room} - {user.get('first_name', 'Guest')}"
             log_audit("Cancel Outside", room_name, target="ยกเลิกนัดหมาย", details=f"PINs: {pins_str}")
         else:
-            reply_message(reply_token, text="เกิดข้อผิดพลาดในการยกเลิกรายการค่ะ")
+            reply_with_logging(user_id, reply_token, text="เกิดข้อผิดพลาดในการยกเลิกรายการค่ะ")
         return
 
     if action == 'register_outside_trigger':
