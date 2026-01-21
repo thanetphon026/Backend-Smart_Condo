@@ -70,6 +70,19 @@ def handle_follow(event):
             line_api = MessagingApi(api_client)
             profile = line_api.get_profile(user_id)
             display_name = profile.display_name
+            picture_url = profile.picture_url
+            
+            # Update user with profile info immediately
+            users_col.update_one(
+                {"line_user_id": user_id},
+                {"$set": {
+                    "display_name": display_name,
+                    "picture_url": picture_url,
+                    "platform": "line",
+                    "last_active_at": datetime.datetime.utcnow()
+                }},
+                upsert=True
+            )
     except Exception as e:
         print(f"Failed to get LINE profile: {e}")
     
@@ -171,8 +184,29 @@ def handle_text_message(event):
     if not user:
         user = {"line_user_id": user_id, "first_name": "Guest", "room_number": None}
 
-    save_chat_history(user_id, 'user', text)
-    users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow()}}, upsert=True)
+    save_chat_history(user_id, 'user', text, platform='line')
+    
+    # Check if user needs profile update (Guest or missing name/avatar)
+    if user.get('first_name') == 'Guest' or not user.get('display_name') or not user.get('picture_url'):
+        try:
+            from linebot.v3.messaging import Configuration, ApiClient, MessagingApi
+            config = Configuration(access_token=Config.LINE_CHANNEL_ACCESS_TOKEN)
+            with ApiClient(config) as api_client:
+                line_api = MessagingApi(api_client)
+                profile = line_api.get_profile(user_id)
+                users_col.update_one(
+                    {"line_user_id": user_id},
+                    {"$set": {
+                        "display_name": profile.display_name,
+                        "picture_url": profile.picture_url,
+                        "last_active_at": datetime.datetime.utcnow()
+                    }},
+                    upsert=True
+                )
+        except Exception as e:
+            print(f"Failed to auto-update profile: {e}")
+
+    users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow(), "platform": "line"}}, upsert=True)
     
     # 2. Check for USER REGISTRATION command (always allow this)
     # Priority Fix: unexpected trigger from "ลงทะเบียนรับนอกเวลา"

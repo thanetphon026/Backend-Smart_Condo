@@ -107,7 +107,8 @@ def save_chat_history(line_user_id, role, message, platform="line", image_url=No
                             "$each": [entry],
                             "$slice": -10
                         }
-                    }
+                    },
+                    "$set": {"platform": platform}
                 }
             )
         except Exception as ue:

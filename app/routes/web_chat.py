@@ -107,10 +107,18 @@ def handle_chat():
             if picture_url:
                 user["picture_url"] = picture_url
         
-        # Update last active
+        # Update user info (including picture_url and platform)
+        update_data = {
+            "last_active_at": datetime.datetime.utcnow(), 
+            "display_name": display_name,
+            "platform": "web"
+        }
+        if picture_url:
+            update_data["picture_url"] = picture_url
+
         users_col.update_one(
             {"line_user_id": user_id}, 
-            {"$set": {"last_active_at": datetime.datetime.utcnow(), "display_name": display_name}},
+            {"$set": update_data},
             upsert=True
         )
         
