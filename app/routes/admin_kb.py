@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from ..utils.pdf_processor import process_pdf_to_kb
-from ..utils.line import admin_required
+from ..utils.helpers import token_required
 import os
 from werkzeug.utils import secure_filename
 
@@ -10,8 +10,8 @@ UPLOAD_FOLDER = 'temp_uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-@admin_kb_bp.route('/upload-pdf', methods=['POST'])
-@admin_required
+@admin_kb_bp.route('/api/admin/upload-pdf', methods=['POST'])
+@token_required
 def upload_pdf():
     """
     Endpoint for admins to upload PDF files to the knowledge base.
