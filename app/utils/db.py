@@ -92,6 +92,26 @@ def save_chat_history(line_user_id, role, message, platform="line", image_url=No
             "image_url": image_url,
             "timestamp": datetime.datetime.now(datetime.timezone.utc)
         }
+        
+        # 1. Archive in full chat history
         chat_history_col.insert_one(entry)
+        
+        # 2. Update User's active context (Keep last 10 interactions)
+        # We use $push with $slice -10 to keep only the last 10 elements.
+        try:
+            users_col.update_one(
+                {"line_user_id": line_user_id},
+                {
+                    "$push": {
+                        "history": {
+                            "$each": [entry],
+                            "$slice": -10
+                        }
+                    }
+                }
+            )
+        except Exception as ue:
+            print(f"⚠️ Failed to update user context history: {ue}")
+            
     except Exception as e:
         print(f"❌ Chat History Error: {e}")

@@ -83,9 +83,14 @@ def generate_embedding(text):
         print(f"❌ Embedding Error: {e}")
         return []
 
-def retrieve_knowledge(query, limit=5):
-    """Enhanced hybrid search strategy with PDF prioritization."""
+def retrieve_knowledge(query, limit=15):
+    """Enhanced hybrid search strategy with PDF prioritization and holistic search."""
     try:
+        # 0. Special Handling: Identity Questions (Who/Where/What Project)
+        # If user asks about the place, FORCE include Page 1 of all PDFs (usually covers)
+        identity_keywords = ['ที่นี่ที่ไหน', 'โครงการอะไร', 'ชื่อคอนโด', 'นิติบุคคลที่ไหน', 'ติดต่อใคร', 'เบอร์โทร', 'what condo', 'where is this']
+        force_page_one = any(k in query.lower() for k in identity_keywords)
+        
         # 1. Generate Query Vector
         vector = generate_embedding(query)
         
@@ -93,7 +98,6 @@ def retrieve_knowledge(query, limit=5):
         seen_ids = set()
         
         # 2. Vector Search (Atlas)
-        # Assuming index 'vector_index' is set up for 'embedding' field
         vector_results = []
         try:
             if vector:
@@ -103,8 +107,8 @@ def retrieve_knowledge(query, limit=5):
                             "index": "vector_index", 
                             "path": "embedding", 
                             "queryVector": vector,
-                            "numCandidates": 50, 
-                            "limit": 10  # Increased to get more candidates
+                            "numCandidates": 100,  # Scan more candidates
+                            "limit": 20            # Return more vector results
                         }
                     },
                     {
@@ -122,90 +126,64 @@ def retrieve_knowledge(query, limit=5):
                 vector_results = list(kb_col.aggregate(pipeline))
                 print(f"✅ Vector search found: {len(vector_results)} results")
         except Exception as ve:
-             # This is expected if Atlas Vector Search is not enabled on this specific cluster tier
-             print(f"⚠️ Vector Search unavailable (normal for free tier/no index): {ve}")
+             print(f"⚠️ Vector Search unavailable: {ve}")
         
-        # 3. Fallback/Augment with Text Search (Classic RAG)
+        # 3. Text Search (Broader scope)
         keywords = extract_keywords(query)
+        if force_page_one:
+            keywords.append("โครงการ") # Add 'Project' to ensure we hit titles
+            
         keyword_str = " ".join(keywords)
         print(f"🔍 Hybrid Search Keywords: {keyword_str}")
         
         text_results = []
         try:
-            # 3.1 Prioritize PDF content first (Official regs)
+            # Search EVERYTHING in the KB with text match
             cursor = kb_col.find(
-                {
-                    "$and": [
-                        {"$text": {"$search": keyword_str}},
-                        {"type": "pdf"}
-                    ]
-                },
+                {"$text": {"$search": keyword_str}},
                 {"score": {"$meta": "textScore"}}
-            ).sort([("score", {"$meta": "textScore"})]).limit(limit)
-            pdf_text_results = list(cursor)
-            
-            # 3.2 If PDFs found, great. If not, search everything.
-            if len(pdf_text_results) < 3:
-                cursor_all = kb_col.find(
-                    {"$text": {"$search": keyword_str}},
-                    {"score": {"$meta": "textScore"}}
-                ).sort([("score", {"$meta": "textScore"})]).limit(limit)
-                text_results = list(cursor_all)
-            else:
-                text_results = pdf_text_results
-                
+            ).sort([("score", {"$meta": "textScore"})]).limit(20) # Significantly increased limit
+            text_results = list(cursor)
         except Exception as e:
-            # Fallback for manual regex if text index missing
              pass
              
-        # Merge Strategy: Prioritize PDFs, but mix in best vector matches
-        all_candidates = vector_results + text_results
+        # 4. Force Page 1 Injection (if identity question)
+        page_one_results = []
+        if force_page_one:
+            print("🚀 Identity Question Detected: Injecting PDF Covers...")
+            # Fetch Page 1 from all PDFs
+            page_one_results = list(kb_col.find({"type": "pdf", "page": 1}).limit(5))
+            
+        # Merge Strategy: 
+        # 1. Page 1s (if relevant)
+        # 2. PDFs (Text & Vector)
+        # 3. Everything else
         
-        # Separation
-        pdfs = [r for r in all_candidates if r.get('type') == 'pdf']
-        others = [r for r in all_candidates if r.get('type') != 'pdf']
+        all_candidates = page_one_results + vector_results + text_results
         
-        # Combine: PDFs first, then others
-        final_list = pdfs + others
-        
-        for r in final_list:
-            rid = str(r['_id'])
-            if rid not in seen_ids:
+        # Deduplication and Formatting
+        for r in all_candidates:
+            rid = str(r.get('_id', ''))
+            if rid and rid not in seen_ids:
                 r['_id'] = rid
-                # Normalize source/page info for AI context
+                
+                # Normalize source/page info
                 if r.get('type') == 'pdf':
                     src = r.get('source', 'Unknown PDF')
                     pg = r.get('page', '?')
+                    # Citation uses proper naming now
                     r['source_citation'] = f"PDF: {src} (Page {pg})"
                 else:
                     r['source_citation'] = "ADMIN KNOWLEDGE BASE"
                     
                 results.append(r)
                 seen_ids.add(rid)
+                
+                # Cap at 15 distinct chunks to provide broad context
+                if len(results) >= 15:
+                    break
         
-        # 4. Fuzzy Fallback (only if total results are very low)
-        if len(results) < 1: 
-            import re
-            regex_queries = []
-            for kw in keywords:
-                if len(kw) < 2: continue
-                escaped_kw = re.escape(kw)
-                regex_queries.extend([
-                    {"topic": {"$regex": escaped_kw, "$options": "i"}},
-                    {"content": {"$regex": escaped_kw, "$options": "i"}}
-                ])
-            if regex_queries:
-                fuzzy = list(kb_col.find({"$or": regex_queries}).limit(3))
-                for f in fuzzy:
-                    rid = str(f['_id'])
-                    if rid not in seen_ids:
-                        f['_id'] = rid
-                        f['source_citation'] = "FUZZY MATCH"
-                        results.append(f)
-                        seen_ids.add(rid)
-
-        # Truncate
-        return results[:8]
+        return results
     except Exception as e:
         print(f"❌ RAG Error: {e}")
         return []
@@ -454,24 +432,27 @@ def generate_chat_response(user_text, user_context={}):
     try:
         line_user_id = user_context.get('line_user_id')
         
-        # 1. Fetch Chat History (Last 10 turns)
+        # 1. Use Active Context from User Profile (Fast & Relevant)
         history_context = ""
-        if line_user_id:
-            history = list(chat_history_col.find(
-                {"line_user_id": line_user_id}
-            ).sort("timestamp", -1).limit(10))
+        # The history comes directly from the user document slice we maintain
+        raw_history = user_context.get('history', [])
+        
+        if raw_history:
+            history_text = []
+            for h in raw_history:
+                # Interpret role
+                role_label = "AI" if h.get('role') == 'assistant' else "User"
+                msg = h.get('message', '')
+                if msg:
+                    history_text.append(f"{role_label}: {msg}")
             
-            # Reverse to get chronological order
-            history.reverse()
-            
-            if history:
-                history_text = []
-                for h in history:
-                    role_label = "User" if h['role'] == 'user' else "AI"
-                    history_text.append(f"{role_label}: {h['message']}")
+            if history_text:
                 history_context = "\n".join(history_text)
+                print(f"📜 loaded {len(history_text)} turns from User Context")
             else:
                 history_context = "No previous history."
+        else:
+            history_context = "No previous history."
         
         # 2. RAG Step (Knowledge Retrieval)
         docs = retrieve_knowledge(user_text)
