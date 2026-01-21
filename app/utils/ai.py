@@ -122,6 +122,9 @@ def retrieve_knowledge(query, limit=5):
                             "topic": 1, 
                             "content": 1, 
                             "tags": 1, 
+                            "source": 1,
+                            "page": 1,
+                            "type": 1,
                             "score": {"$meta": "vectorSearchScore"}
                         }
                     }

@@ -10,3 +10,4 @@ gunicorn
 Werkzeug
 pytz
 bcrypt
+pymupdf
