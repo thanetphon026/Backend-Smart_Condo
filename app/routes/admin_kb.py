@@ -25,14 +25,21 @@ def upload_pdf():
         return jsonify({"error": "No selected file"}), 400
 
     if file and file.filename.endswith('.pdf'):
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        original_filename = file.filename
+        # Use a safe name for the temporary file path, but keep original for the DB
+        temp_name = secure_filename(original_filename)
+        # Fallback if secure_filename makes it empty (e.g. only Thai characters)
+        if not temp_name or temp_name == ".pdf":
+            import time
+            temp_name = f"upload_{int(time.time())}.pdf"
+            
+        file_path = os.path.join(UPLOAD_FOLDER, temp_name)
         
         try:
             file.save(file_path)
             
-            # Process the PDF
-            success, result = process_pdf_to_kb(file_path, filename)
+            # Process the PDF using the original filename for source tracking
+            success, result = process_pdf_to_kb(file_path, original_filename)
             
             # Clean up temp file
             if os.path.exists(file_path):
