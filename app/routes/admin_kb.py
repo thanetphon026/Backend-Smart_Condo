@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from ..utils.pdf_processor import process_pdf_to_kb
 from ..utils.helpers import token_required
+from ..utils.db import kb_col
 import os
 from werkzeug.utils import secure_filename
 
@@ -48,4 +49,59 @@ def upload_pdf():
         except Exception as e:
             return jsonify({"error": str(e)}), 500
     
+    
     return jsonify({"error": "Invalid file type. Only PDF allowed."}), 400
+
+@admin_kb_bp.route('/api/admin/documents', methods=['GET'])
+@token_required
+def list_documents():
+    """
+    List all uploaded documents (grouped by source filename).
+    """
+    try:
+        # Aggregate to find unique sources and count chunks
+        pipeline = [
+            {"$group": {
+                "_id": "$source",
+                "chunks": {"$sum": 1},
+                "last_modified": {"$max": "$_id"} # Approximate last modified using ObjectId timestamp if available, or just a placeholder
+            }}
+        ]
+        
+        documents = list(kb_col.aggregate(pipeline))
+        
+        # Format for frontend
+        results = []
+        for doc in documents:
+            filename = doc['_id']
+            if filename:
+                results.append({
+                    "filename": filename,
+                    "chunks": doc['chunks'],
+                    "uploaded_at": doc['last_modified'].generation_time.isoformat() if hasattr(doc['last_modified'], 'generation_time') else None
+                })
+        
+        return jsonify(results), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@admin_kb_bp.route('/api/admin/documents/<filename>', methods=['DELETE'])
+@token_required
+def delete_document(filename):
+    """
+    Delete a document and all its chunks from the knowledge base.
+    """
+    try:
+        # Delete from MongoDB
+        result = kb_col.delete_many({"source": filename})
+        
+        if result.deleted_count > 0:
+            return jsonify({
+                "message": f"Successfully deleted {filename}",
+                "deleted_chunks": result.deleted_count
+            }), 200
+        else:
+            return jsonify({"error": "Document not found"}), 404
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
