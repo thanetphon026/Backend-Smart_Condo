@@ -47,7 +47,7 @@ def upload_pdf():
                 
             if success:
                 return jsonify({
-                    "message": f"Successfully indexed {result} chunks from {filename}",
+                    "message": f"Successfully indexed {result} chunks from {original_filename}",
                     "chunks": result
                 }), 200
             else:
