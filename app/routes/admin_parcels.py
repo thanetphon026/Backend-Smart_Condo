@@ -4,6 +4,7 @@ from ..utils.db import parcels_col, users_col, log_audit
 from ..utils.helpers import get_bkk_time, token_required
 from ..utils.cloudinary_utils import upload_image, validate_image
 from ..utils.ai import analyze_parcel_label
+from ..utils.lookup import find_user_by_parcel_info, get_user_info_with_parcel_count
 from ..utils.line import (
     send_message, create_block_card, 
     create_new_parcel_notification, create_pickup_complete_card
@@ -159,111 +160,16 @@ def scan_parcel():
         file_bytes = file.read() 
         ai_data = analyze_parcel_label(file_bytes) or {}
         
-        # Suggested User Lookup - BULLETPROOF MATCHING
-        suggested_user = None
+        # Use centralized lookup utility
         extracted_room = ai_data.get('room_number')
         extracted_name = ai_data.get('recipient_name')
         
-        # Normalize room number for comparison
-        def normalize_room(room_str):
-            if not room_str or room_str == "N/A":
-                return None
-            # Convert to string, strip all whitespace, remove common prefixes
-            normalized = str(room_str).strip().replace(" ", "").replace("\t", "")
-            # Remove common Thai/English prefixes
-            normalized = normalized.replace("Room", "").replace("room", "").replace("ห้อง", "")
-            return normalized if normalized else None
-        
-        # Normalize name for comparison
-        def normalize_name(name_str):
-            if not name_str or name_str == "N/A":
-                return None
-            # Strip whitespace, remove titles, lowercase for comparison
-            normalized = str(name_str).strip().replace("คุณ", "").replace("Mr.", "").replace("Ms.", "").replace("Mrs.", "")
-            normalized = normalized.replace(" ", "").replace("\t", "")
-            return normalized if normalized else None
-        
-        room_normalized = normalize_room(extracted_room)
-        name_normalized = normalize_name(extracted_name)
-        
-        print(f"🔍 Scan Debug - Room: '{extracted_room}' -> '{room_normalized}', Name: '{extracted_name}' -> '{name_normalized}'")
-        
-        # Strategy 1: Try exact room match (normalized)
-        if room_normalized:
-            all_users = list(users_col.find({}))
-            for u in all_users:
-                db_room = normalize_room(u.get('room_number'))
-                if db_room and db_room == room_normalized:
-                    suggested_user = u
-                    print(f"✅ MATCH by exact room: {db_room}")
-                    break
-        
-        # Strategy 2: Try partial room match (e.g., "101" matches "101/5")
-        if not suggested_user and room_normalized:
-            all_users = list(users_col.find({}))
-            for u in all_users:
-                db_room = normalize_room(u.get('room_number'))
-                if db_room:
-                    # Check if one contains the other
-                    if (room_normalized in db_room) or (db_room in room_normalized):
-                        suggested_user = u
-                        print(f"✅ MATCH by partial room: {room_normalized} <-> {db_room}")
-                        break
-        
-        # Strategy 3: Try name matching (fuzzy)
-        if not suggested_user and name_normalized and len(name_normalized) > 2:
-            all_users = list(users_col.find({}))
-            for u in all_users:
-                # Try matching against first_name, last_name, display_name
-                first_name = normalize_name(u.get('first_name', ''))
-                last_name = normalize_name(u.get('last_name', ''))
-                display_name = normalize_name(u.get('display_name', ''))
-                full_name = (first_name or '') + (last_name or '')
-                
-                # Check if name matches any part
-                if first_name and (name_normalized in first_name or first_name in name_normalized):
-                    suggested_user = u
-                    print(f"✅ MATCH by first name: {name_normalized} <-> {first_name}")
-                    break
-                if last_name and (name_normalized in last_name or last_name in name_normalized):
-                    suggested_user = u
-                    print(f"✅ MATCH by last name: {name_normalized} <-> {last_name}")
-                    break
-                if display_name and (name_normalized in display_name or display_name in name_normalized):
-                    suggested_user = u
-                    print(f"✅ MATCH by display name: {name_normalized} <-> {display_name}")
-                    break
-                if full_name and (name_normalized in full_name or full_name in name_normalized):
-                    suggested_user = u
-                    print(f"✅ MATCH by full name: {name_normalized} <-> {full_name}")
-                    break
-        
-        if not suggested_user:
-            print(f"❌ NO MATCH FOUND for Room: {room_normalized}, Name: {name_normalized}")
+        suggested_user = find_user_by_parcel_info(extracted_room, extracted_name)
         
         # Prepare AI Data for frontend
         ai_data['image_url'] = img_url
-        ai_data['parcel_count'] = 0
-        
-        if suggested_user:
-            room_num = suggested_user.get('room_number')
-            # Calculate pending parcels for this room
-            p_count = parcels_col.count_documents({"room_number": room_num, "status": "pending"})
-            
-            ai_data['user_found'] = {
-                "exists": True,
-                "room_number": room_num,
-                "first_name": suggested_user.get('first_name', ''),
-                "last_name": suggested_user.get('last_name', ''),
-                "display_name": suggested_user.get('display_name', '')
-            }
-            ai_data['parcel_count'] = p_count
-        else:
-            ai_data['user_found'] = {"exists": False}
-            # If no user found, but we have a room number from OCR, still try to count parcels
-            if room_normalized:
-                p_count = parcels_col.count_documents({"room_number": extracted_room, "status": "pending"})
-                ai_data['parcel_count'] = p_count
+        ai_data['user_found'] = get_user_info_with_parcel_count(suggested_user)
+        ai_data['parcel_count'] = ai_data['user_found'].get('parcel_count', 0)
         
         return jsonify({
             "status": "success", 
@@ -286,6 +192,9 @@ def create_parcel():
         data = request.json
         admin_name = unquote(request.headers.get('X-Admin-Name', 'Admin'))
         
+        # Get scan_method from request (default to 'ai' for backward compatibility)
+        scan_method = data.get('scan_method', 'ai')  # 'ai' or 'manual'
+        
         pin = generate_pin()
         new_parcel = {
             "room_number": data.get('room_number', 'Unknown'),
@@ -296,6 +205,7 @@ def create_parcel():
             "pin": pin,
             "status": "pending",
             "is_after_hours": False,
+            "scan_method": scan_method,  # Track import method
             "timestamp": get_bkk_time(),
             "created_by": admin_name
         }
