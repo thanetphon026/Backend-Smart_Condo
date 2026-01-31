@@ -153,9 +153,27 @@ def scan_parcel():
         if not is_valid:
              return jsonify({"status": "error", "message": msg}), 400
              
-        # Uploading to Cloudinary early to get URL for preview
+        # Support skip_ai for manual entry (pure upload)
+        skip_ai = request.form.get('skip_ai', 'false').lower() == 'true'
+        
+        # Uploading to Cloudinary early to get URL
         img_url = upload_image(file)
         
+        if skip_ai:
+            print("🚀 Skip AI requested: Pure upload mode")
+            return jsonify({
+                "status": "success",
+                "data": {
+                    "image_url": img_url,
+                    "room_number": "",
+                    "recipient_name": "",
+                    "transport": "",
+                    "tracking_number": "",
+                    "user_found": {"exists": False},
+                    "parcel_count": 0
+                }
+            })
+
         file.seek(0)
         file_bytes = file.read() 
         ai_data = analyze_parcel_label(file_bytes) or {}
