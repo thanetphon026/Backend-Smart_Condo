@@ -249,7 +249,9 @@ def create_parcel():
              )
              send_message(user['line_user_id'], flex_contents=card)
 
-        log_audit("Scan Parcel", admin_name, target=f"Room {new_parcel['room_number']}", details=f"PIN: {pin}")
+        # Differentiate between AI scan and manual input in log details
+        method_text = "ระบบอัตโนมัติ" if scan_method == 'ai' else "บันทึกข้อมูลเอง"
+        log_audit("Scan Parcel", admin_name, target=f"Room {new_parcel['room_number']}", details=f"PIN: {pin} ({method_text})")
         
         new_parcel['_id'] = str(new_parcel['_id'])
         if isinstance(new_parcel['timestamp'], datetime.datetime):
