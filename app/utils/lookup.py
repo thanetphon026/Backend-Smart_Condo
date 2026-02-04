@@ -62,21 +62,26 @@ def find_user_by_parcel_info(room_number=None, recipient_name=None):
     
     print(f"🔍 Lookup - Room: '{room_number}' -> '{room_normalized}', Name: '{recipient_name}' -> '{name_normalized}'")
     
-    # Strategy 1: Exact room match
+    # Strategy 1: Flexible Room Match (Regex-based for speed + accuracy)
     if room_normalized:
-        user = users_col.find_one({"room_number": room_normalized})
+        # Create a regex that is flexible about common prefixes like "ห้อง" or "Room"
+        # and whitespace, but focuses on the core digits and slashes
+        clean_room = room_normalized.replace("/", r"\/")
+        # Matches: "ห้อง 101/5", "Room 101/5", "101/5", etc.
+        room_regex = f".*{clean_room}.*"
+        user = users_col.find_one({"room_number": {"$regex": room_regex, "$options": "i"}})
         if user:
-            print(f"✅ MATCH by exact room: {room_normalized}")
+            print(f"✅ MATCH by room regex: {room_normalized}")
             return user
-
-    # Strategy 2: Partial room match (e.g., "101" matches "101/5")
-    if room_normalized:
-        # Try finding where DB room contains our input or vice versa
-        # Note: In Mongo we can use regex for "contains"
-        user = users_col.find_one({"room_number": {"$regex": room_normalized, "$options": "i"}})
-        if user:
-            print(f"✅ MATCH by partial room regex: {room_normalized}")
-            return user
+            
+    # Strategy 2: If slashed room found, try matching just the part after slash
+    if room_normalized and "/" in room_normalized:
+        part_after = room_normalized.split("/")[-1]
+        if len(part_after) >= 2:
+            user = users_col.find_one({"room_number": {"$regex": part_after + "$", "$options": "i"}})
+            if user:
+                print(f"✅ MATCH by room suffix: {part_after}")
+                return user
             
     # Strategy 3: Try name matching (improved for accuracy)
     if name_normalized and len(name_normalized) > 2:
@@ -93,10 +98,25 @@ def find_user_by_parcel_info(room_number=None, recipient_name=None):
             print(f"✅ MATCH by direct name query: {name_normalized}")
             return user
             
-        # 3.2 If not found, try split name using MongoDB TEXT SEARCH (Fast)
+        # 3.2 Try searching by First word only (if full name didn't match)
+        # Often OCR misreads the last name but gets the first name right
+        name_parts = name_normalized.split()
+        if len(name_parts) > 0 and len(name_parts[0]) > 2:
+            first_token = name_parts[0]
+            user = users_col.find_one({
+                "$or": [
+                    {"first_name": {"$regex": first_token, "$options": "i"}},
+                    {"display_name": {"$regex": first_token, "$options": "i"}}
+                ]
+            })
+            if user:
+                print(f"✅ MATCH by first name token: {first_token}")
+                return user
+            
+        # 3.3 If still not found, try MongoDB TEXT SEARCH (Fast)
         try:
-            # Check if name looks like it has a space or is long enough for text search
-            text_query = name_normalized.replace("/", " ") # Clean for search
+            # Clean for search
+            text_query = name_normalized.replace("/", " ") 
             user = users_col.find_one(
                 {"$text": {"$search": text_query}},
                 {"score": {"$meta": "textScore"}}
@@ -107,7 +127,7 @@ def find_user_by_parcel_info(room_number=None, recipient_name=None):
         except Exception as te:
             print(f"⚠️ Text Search Error/Unavailable: {te}")
 
-        # 3.3 Deep Fallback: Normalize EVERY name in DB and compare (only if above fails)
+        # 3.4 Deep Fallback: Normalize EVERY name in DB and compare (only if above fails)
         # This handles tone mismatches like "เอี๊ย" vs "เอีย"
         print("🧠 Running Deep Name Fallback (Ignoring Tones)...")
         all_users = list(users_col.find({}, {"first_name": 1, "last_name": 1, "display_name": 1, "room_number": 1}))
