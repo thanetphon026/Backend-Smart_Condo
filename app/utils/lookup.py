@@ -128,9 +128,19 @@ def find_user_by_parcel_info(room_number=None, recipient_name=None):
             print(f"⚠️ Text Search Error/Unavailable: {te}")
 
         # 3.4 Deep Fallback: Normalize EVERY name in DB and compare (only if above fails)
-        # This handles tone mismatches like "เอี๊ย" vs "เอีย"
         print("🧠 Running Deep Name Fallback (Ignoring Tones)...")
-        all_users = list(users_col.find({}, {"first_name": 1, "last_name": 1, "display_name": 1, "room_number": 1}))
+        # Optimization: Only search users in the SAME room if room was found
+        # This drastically reduces the number of users to check.
+        search_filter = {}
+        if room_normalized:
+            search_filter = {"room_number": room_normalized}
+        
+        all_users = list(users_col.find(search_filter, {"first_name": 1, "last_name": 1, "display_name": 1, "room_number": 1}))
+        
+        # If no users in that room, search all (just in case)
+        if room_normalized and not all_users:
+             all_users = list(users_col.find({}, {"first_name": 1, "last_name": 1, "display_name": 1, "room_number": 1}))
+
         for u in all_users:
             fn = normalize_name(u.get('first_name', ''))
             ln = normalize_name(u.get('last_name', ''))
