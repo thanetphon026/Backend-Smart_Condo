@@ -156,11 +156,9 @@ def scan_parcel():
         # Support skip_ai for manual entry (pure upload)
         skip_ai = request.form.get('skip_ai', 'false').lower() == 'true'
         
-        # Uploading to Cloudinary early to get URL
-        img_url = upload_image(file)
-        
         if skip_ai:
             print("🚀 Skip AI requested: Pure upload mode")
+            img_url = upload_image(file) # Still upload for manual mode
             return jsonify({
                 "status": "success",
                 "data": {
@@ -175,9 +173,20 @@ def scan_parcel():
             })
 
         file.seek(0)
-        file_bytes = file.read() 
-        ai_data = analyze_parcel_label(file_bytes) or {}
+        file_bytes = file.read()
         
+        # Parallelize Cloudinary upload and AI analysis
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_upload = executor.submit(upload_image, file)
+            future_ai = executor.submit(analyze_parcel_label, file_bytes)
+            
+            img_url = future_upload.result()
+            ai_data = future_ai.result() or {}
+        
+        if not img_url:
+            print("⚠️ Cloudinary upload failed, but proceeding with AI data")
+            
         # Use centralized lookup utility
         extracted_room = ai_data.get('room_number')
         extracted_name = ai_data.get('recipient_name')

@@ -36,76 +36,66 @@ def normalize_name(name_str):
 def find_user_by_parcel_info(room_number=None, recipient_name=None):
     """
     Find user in database based on room number and/or recipient name.
-    Uses fuzzy matching strategies:
-    1. Exact room match (normalized)
-    2. Partial room match
-    3. Name matching (first/last/display name)
-    
-    Returns: 
-        - User document if found
-        - None if not found
+    Uses efficient MongoDB queries:
+    1. Exact room match
+    2. Partial room match (starts with or ends with)
+    3. Name matching (fuzzy regex)
     """
     room_normalized = normalize_room(room_number)
     name_normalized = normalize_name(recipient_name)
     
     print(f"🔍 Lookup - Room: '{room_number}' -> '{room_normalized}', Name: '{recipient_name}' -> '{name_normalized}'")
     
-    suggested_user = None
-    
-    # Strategy 1: Try exact room match (normalized)
+    # Strategy 1: Exact room match
     if room_normalized:
-        all_users = list(users_col.find({}))
-        for u in all_users:
-            db_room = normalize_room(u.get('room_number'))
-            if db_room and db_room == room_normalized:
-                suggested_user = u
-                print(f"✅ MATCH by exact room: {db_room}")
-                break
-    
-    # Strategy 2: Try partial room match (e.g., "101" matches "101/5")
-    if not suggested_user and room_normalized:
-        all_users = list(users_col.find({}))
-        for u in all_users:
-            db_room = normalize_room(u.get('room_number'))
-            if db_room:
-                # Check if one contains the other
-                if (room_normalized in db_room) or (db_room in room_normalized):
-                    suggested_user = u
-                    print(f"✅ MATCH by partial room: {room_normalized} <-> {db_room}")
-                    break
-    
-    # Strategy 3: Try name matching (fuzzy)
-    if not suggested_user and name_normalized and len(name_normalized) > 2:
-        all_users = list(users_col.find({}))
-        for u in all_users:
-            # Try matching against first_name, last_name, display_name
-            first_name = normalize_name(u.get('first_name', ''))
-            last_name = normalize_name(u.get('last_name', ''))
-            display_name = normalize_name(u.get('display_name', ''))
-            full_name = (first_name or '') + (last_name or '')
+        user = users_col.find_one({"room_number": room_normalized})
+        if user:
+            print(f"✅ MATCH by exact room: {room_normalized}")
+            return user
+
+    # Strategy 2: Partial room match (e.g., "101" matches "101/5")
+    if room_normalized:
+        # Try finding where DB room contains our input or vice versa
+        # Note: In Mongo we can use regex for "contains"
+        user = users_col.find_one({"room_number": {"$regex": room_normalized, "$options": "i"}})
+        if user:
+            print(f"✅ MATCH by partial room regex: {room_normalized}")
+            return user
             
-            # Check if name matches any part
-            if first_name and (name_normalized in first_name or first_name in name_normalized):
-                suggested_user = u
-                print(f"✅ MATCH by first name: {name_normalized} <-> {first_name}")
-                break
-            if last_name and (name_normalized in last_name or last_name in name_normalized):
-                suggested_user = u
-                print(f"✅ MATCH by last name: {name_normalized} <-> {last_name}")
-                break
-            if display_name and (name_normalized in display_name or display_name in name_normalized):
-                suggested_user = u
-                print(f"✅ MATCH by display name: {name_normalized} <-> {display_name}")
-                break
-            if full_name and (name_normalized in full_name or full_name in name_normalized):
-                suggested_user = u
-                print(f"✅ MATCH by full name: {name_normalized} <-> {full_name}")
-                break
+    # Strategy 3: Try name matching (improved for accuracy)
+    if name_normalized and len(name_normalized) > 2:
+        # 3.1 Try direct field regex (already fast)
+        query = {
+            "$or": [
+                {"first_name": {"$regex": name_normalized, "$options": "i"}},
+                {"last_name": {"$regex": name_normalized, "$options": "i"}},
+                {"display_name": {"$regex": name_normalized, "$options": "i"}}
+            ]
+        }
+        user = users_col.find_one(query)
+        if user:
+            print(f"✅ MATCH by direct name query: {name_normalized}")
+            return user
+            
+        # 3.2 If not found, try splitting the name (in case OCR joined first/last)
+        # We search if the first_name is AT THE START of the scanned name
+        # This is a bit more expensive but only runs if 3.1 fails
+        all_users = list(users_col.find({}, {"first_name": 1, "last_name": 1, "display_name": 1, "room_number": 1}))
+        for u in all_users:
+            fn = normalize_name(u.get('first_name', ''))
+            ln = normalize_name(u.get('last_name', ''))
+            dn = normalize_name(u.get('display_name', ''))
+            full = (fn or '') + (ln or '')
+            
+            if (fn and fn in name_normalized) or \
+               (ln and ln in name_normalized) or \
+               (dn and dn in name_normalized) or \
+               (full and (name_normalized in full or full in name_normalized)):
+                print(f"✅ MATCH by deep name check: {name_normalized} <-> {full}")
+                return u
     
-    if not suggested_user:
-        print(f"❌ NO MATCH FOUND for Room: {room_normalized}, Name: {name_normalized}")
-    
-    return suggested_user
+    print(f"❌ NO MATCH FOUND for Room: {room_normalized}, Name: {name_normalized}")
+    return None
 
 
 def get_user_info_with_parcel_count(user):
