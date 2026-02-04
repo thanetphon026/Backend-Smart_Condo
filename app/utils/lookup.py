@@ -77,23 +77,21 @@ def find_user_by_parcel_info(room_number=None, recipient_name=None):
             print(f"✅ MATCH by direct name query: {name_normalized}")
             return user
             
-        # 3.2 If not found, try splitting the name (in case OCR joined first/last)
-        # We search if the first_name is AT THE START of the scanned name
-        # This is a bit more expensive but only runs if 3.1 fails
-        all_users = list(users_col.find({}, {"first_name": 1, "last_name": 1, "display_name": 1, "room_number": 1}))
-        for u in all_users:
-            fn = normalize_name(u.get('first_name', ''))
-            ln = normalize_name(u.get('last_name', ''))
-            dn = normalize_name(u.get('display_name', ''))
-            full = (fn or '') + (ln or '')
-            
-            if (fn and fn in name_normalized) or \
-               (ln and ln in name_normalized) or \
-               (dn and dn in name_normalized) or \
-               (full and (name_normalized in full or full in name_normalized)):
-                print(f"✅ MATCH by deep name check: {name_normalized} <-> {full}")
-                return u
-    
+        # 3.2 If not found, try split name using MongoDB TEXT SEARCH (Fast)
+        # This uses the text index we created to find users with similar names
+        try:
+            # Check if name looks like it has a space or is long enough for text search
+            text_query = name_normalized.replace("/", " ") # Clean for search
+            user = users_col.find_one(
+                {"$text": {"$search": text_query}},
+                {"score": {"$meta": "textScore"}}
+            )
+            if user:
+                print(f"✅ MATCH by MongoDB Text Search: {name_normalized}")
+                return user
+        except Exception as te:
+            print(f"⚠️ Text Search Error/Unavailable: {te}")
+
     print(f"❌ NO MATCH FOUND for Room: {room_normalized}, Name: {name_normalized}")
     return None
 

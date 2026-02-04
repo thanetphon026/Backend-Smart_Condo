@@ -18,6 +18,14 @@ def ensure_indexes():
         # Users
         users_col.create_index([("line_user_id", 1)], unique=True)
         users_col.create_index([("room_number", 1)])
+        try:
+            users_col.create_index([
+                ("first_name", "text"),
+                ("last_name", "text"),
+                ("display_name", "text")
+            ], name="user_name_text_index")
+        except Exception as ue:
+            print(f"⚠️ User Index Note: {ue}")
         
         # Parcels
         parcels_col.create_index([("tracking_number", 1)])
