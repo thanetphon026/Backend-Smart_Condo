@@ -191,15 +191,26 @@ def retrieve_knowledge(query, limit=15):
 
 def analyze_parcel_label(image_data):
     """
-    Analyze image data (bytes) using an expert OCR prompt to find Recipient Name, Room Number, 
-    Tracking Number, and Logistics Company.
+    Analyze image data using Gemini's native JSON output mode for maximum speed and reliability.
     """
     try:
-        prompt = """
+        # Define the expected JSON schema for the response
+        response_schema = {
+            "type": "OBJECT",
+            "properties": {
+                "recipient_name": {"type": "STRING", "description": "Full name in Thai with space between first/last. Strip titles."},
+                "room_number": {"type": "STRING", "description": "Condo unit number (e.g., 101/5)."},
+                "tracking_number": {"type": "STRING", "description": "Full tracking/barcode string."},
+                "transport": {"type": "STRING", "description": "Normalized name (e.g., SPX EXPRESS, FLASH EXPRESS)."},
+                "is_label": {"type": "BOOLEAN", "description": "true if this is a logistics/shipping label."},
+                "reason_if_not": {"type": "STRING", "description": "Reason if is_label is false (Thai)."}
+            },
+            "required": ["recipient_name", "room_number", "tracking_number", "transport", "is_label", "reason_if_not"]
+        }
+
+        system_instruction = """
         Act as an expert OCR and Data Extraction AI specialized in Thai Logistics Labels. 
         Your task is to extract specific information from the provided shipping label images with 100% accuracy.
-
-        Please analyze the image and extract the following 4 fields. If a field is not clearly visible or covered, mark it as "N/A".
 
         Fields to extract:
         1. Recipient Name (ชื่อผู้รับ):
@@ -235,41 +246,32 @@ def analyze_parcel_label(image_data):
              - Post -> "Thailand Post"
              - Others -> Use their full professional name.
 
-        Output Format:
-        Return ONLY valid JSON:
-        {
-          "recipient_name": "Recipient Name",
-          "room_number": "Unit/Room Number",
-          "tracking_number": "Tracking Number",
-          "transport": "Logistics Company",
-          "is_label": true,
-          "reason_if_not": ""
-        }
-        
         CRITICAL RULES:
         1. "is_label" must be TRUE ONLY if you see a clear logistics label (e.g. Courier logo, Recipient name, Room number).
         2. If the image is blurry, random, or not a parcel label, set "is_label": false and provide "reason_if_not" (Thai).
         3. If it is a parcel but NO recipient name or room number is visible, set "is_label": false.
         """
         
-        # New Google GenAI SDK (v1) expects specific structures or Part objects
+        # Using native JSON output mode is much faster than text parsing
         response = client.models.generate_content(
             model=MODEL_NAME,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type='application/json',
+                response_schema=response_schema,
+                temperature=0.1 # Low temperature for consistency
+            ),
             contents=[
-                types.Part.from_text(text=prompt),
                 types.Part.from_bytes(data=image_data, mime_type='image/jpeg')
             ]
         )
         
-        # Clean markdown json
-        txt = response.text.strip()
-        if txt.startswith("```json"):
-            txt = txt[7:]
-        if txt.endswith("```"):
-            txt = txt[:-3]
-            
+        # Clean markdown json using a more robust regex approach
         import json
-        return json.loads(txt.strip())
+        return json.loads(response.text.strip())
+    except Exception as e:
+        print(f"AI Label Analysis Error: {e}")
+        return None
     except Exception as e:
         print(f"AI Label Analysis Error: {e}")
         return None
