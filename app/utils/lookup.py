@@ -23,14 +23,30 @@ def normalize_room(room_str):
 def normalize_name(name_str):
     """
     Normalize name for comparison.
-    Removes titles, whitespace, and converts to lowercase.
+    Removes titles, whitespace, Thai tone marks, and converts to lowercase.
     """
     if not name_str or name_str == "N/A":
         return None
-    # Strip whitespace, remove titles, lowercase for comparison
-    normalized = str(name_str).strip().replace("คุณ", "").replace("Mr.", "").replace("Ms.", "").replace("Mrs.", "")
-    normalized = normalized.replace(" ", "").replace("\t", "")
-    return normalized if normalized else None
+    
+    import re
+    # Thai tone marks and symbols: ่ ้ ๊ ๋ ็ ์ ํ ฺ
+    thai_tones = r'[\u0e31\u0e34-\u0e3a\u0e47-\u0e4e]'
+    
+    # 1. Basic cleaning
+    s = str(name_str).strip()
+    
+    # 2. Remove common titles
+    titles = ["คุณ", "นาย", "นาง", "นางสาว", "เด็กชาย", "เด็กหญิง", "mr.", "ms.", "mrs.", "miss"]
+    for t in titles:
+        s = s.replace(t, "")
+        
+    # 3. Remove Thai tones/vowels that cause misreads
+    s = re.sub(thai_tones, '', s)
+    
+    # 4. Remove all whitespace
+    s = "".join(s.split())
+    
+    return s.lower() if s else None
 
 
 def find_user_by_parcel_info(room_number=None, recipient_name=None):
@@ -78,7 +94,6 @@ def find_user_by_parcel_info(room_number=None, recipient_name=None):
             return user
             
         # 3.2 If not found, try split name using MongoDB TEXT SEARCH (Fast)
-        # This uses the text index we created to find users with similar names
         try:
             # Check if name looks like it has a space or is long enough for text search
             text_query = name_normalized.replace("/", " ") # Clean for search
@@ -91,6 +106,24 @@ def find_user_by_parcel_info(room_number=None, recipient_name=None):
                 return user
         except Exception as te:
             print(f"⚠️ Text Search Error/Unavailable: {te}")
+
+        # 3.3 Deep Fallback: Normalize EVERY name in DB and compare (only if above fails)
+        # This handles tone mismatches like "เอี๊ย" vs "เอีย"
+        print("🧠 Running Deep Name Fallback (Ignoring Tones)...")
+        all_users = list(users_col.find({}, {"first_name": 1, "last_name": 1, "display_name": 1, "room_number": 1}))
+        for u in all_users:
+            fn = normalize_name(u.get('first_name', ''))
+            ln = normalize_name(u.get('last_name', ''))
+            dn = normalize_name(u.get('display_name', ''))
+            full = (fn or '') + (ln or '')
+            
+            # Match against parts or full name
+            if (fn and (name_normalized in fn or fn in name_normalized)) or \
+               (ln and (name_normalized in ln or ln in name_normalized)) or \
+               (dn and (name_normalized in dn or dn in name_normalized)) or \
+               (full and (name_normalized in full or full in name_normalized)):
+                print(f"✅ MATCH by Deep Fallback: {name_normalized} <-> {full}")
+                return u
 
     print(f"❌ NO MATCH FOUND for Room: {room_normalized}, Name: {name_normalized}")
     return None

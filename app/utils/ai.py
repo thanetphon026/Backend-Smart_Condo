@@ -4,6 +4,7 @@ from ..config import Config
 from .db import kb_col, chat_history_col
 import re
 import datetime
+from .lookup import normalize_name
 
 client = genai.Client(api_key=Config.GEMINI_API_KEY)
 MODEL_NAME = 'gemini-2.0-flash'
@@ -288,13 +289,7 @@ def check_match(scanned_data, user_profile):
         if not room_str or room_str == "N/A": return ""
         return str(room_str).strip().replace(" ", "").replace("ห้อง", "").replace("Room", "").replace("room", "").replace("/", "")
 
-    def normalize_name(name_str):
-        if not name_str or name_str == "N/A": return ""
-        # Remove common titles and spaces
-        s = str(name_str).strip().lower()
-        for title in ["คุณ", "mr.", "ms.", "mrs.", "miss", "นาย", "นาง", "นางสาว"]:
-            s = s.replace(title, "")
-        return s.replace(" ", "")
+    # Note: normalize_name is now imported from .lookup
 
     scanned_room = normalize_room(scanned_data.get('room_number'))
     user_room = normalize_room(user_profile.get('room_number'))
