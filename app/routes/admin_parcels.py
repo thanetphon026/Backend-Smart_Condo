@@ -178,14 +178,27 @@ def scan_parcel():
         # Parallelize Cloudinary upload and AI analysis
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=2) as executor:
-            future_upload = executor.submit(upload_image, file)
+            # Important: Pass file_bytes to upload_image because 'file' pointer is at EOF
+            future_upload = executor.submit(upload_image, file_bytes)
             future_ai = executor.submit(analyze_parcel_label, file_bytes)
             
             img_url = future_upload.result()
-            ai_data = future_ai.result() or {}
+            ai_data = future_ai.result()
+            
+        # Ensure ai_data is a valid dict with default values to prevent frontend issues
+        if not ai_data:
+            print("⚠️ AI Extraction returned None, using empty results")
+            ai_data = {
+                "room_number": "", 
+                "recipient_name": "", 
+                "transport": "", 
+                "tracking_number": "",
+                "is_label": False,
+                "reason_if_not": "AI ไม่สามารถอ่านข้อมูลได้"
+            }
         
         if not img_url:
-            print("⚠️ Cloudinary upload failed, but proceeding with AI data")
+            print("⚠️ Cloudinary upload failed")
             
         # Use centralized lookup utility
         extracted_room = ai_data.get('room_number')
