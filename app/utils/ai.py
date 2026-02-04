@@ -206,6 +206,7 @@ def analyze_parcel_label(image_data):
            - Look for the text after "ผู้รับ (TO)" or "TO".
            - IMPORTANT: If a room number or house number (e.g., 28/548) is appended to the name, STRIP IT OUT and place it in the unit_number field.
            - Extract the full name strictly in Thai (or English if Thai is absent).
+           - ALWAYS include a SPACE between the First Name and Last Name (e.g., "ธเนศพล แซ่เอี๊ย").
            - Ignore titles like "คุณ".
 
         2. House/Room Number (เลขห้อง/เลขที่บ้าน):
@@ -225,7 +226,14 @@ def analyze_parcel_label(image_data):
            - Barcode number starting with "TH", "7C", etc., or under the main barcode.
         
         4. Logistics Company (บริษัทขนส่ง):
-           - Identify from logo/header (SPX, Flash, J&T, Kerry, Post).
+           - Identify from logo/header.
+           - Normalize to official names:
+             - SPX -> "SPX EXPRESS"
+             - Flash -> "FLASH EXPRESS"
+             - J&T -> "J&T EXPRESS"
+             - Kerry -> "KERRY EXPRESS"
+             - Post -> "Thailand Post"
+             - Others -> Use their full professional name.
 
         Output Format:
         Return ONLY valid JSON:
