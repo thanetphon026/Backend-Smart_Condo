@@ -195,7 +195,7 @@ def analyze_parcel_label(image_data):
     """
     try:
         # Define the expected JSON schema for the response
-        response_schema = {
+response_schema = {
     "type": "OBJECT",
     "properties": {
         "recipient_name": {"type": "STRING"},
