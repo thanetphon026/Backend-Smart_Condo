@@ -208,37 +208,34 @@ def analyze_parcel_label(image_data):
         }
 
         system_instruction = """
-        You are a high-speed OCR engine for Thai Shipping Labels.
-        Extract text visually and output strict JSON.
+        Parse Thai Shipping Label to JSON. Apply strict logic:
 
-        ### CRITICAL RULES:
+        1. TRANSPORT (Map Logo -> Official Name):
+        - SPX -> "SPX EXPRESS"
+        - Flash -> "FLASH EXPRESS"
+        - Kerry -> "KERRY EXPRESS"
+        - J&T -> "J&T EXPRESS"
+        - Post -> "Thailand Post"
+        - DHL -> "DHL"
+        - Ninja -> "NINJA VAN"
+        - Else -> Return full visible header name.
 
-        1. **transport** (Logistics Company):
-        - LOOK AT THE LOGO/HEADER FIRST.
-        - Map to: "SPX", "FLASH", "KERRY", "J&T", "THAILAND POST", "DHL", "NINJA VAN".
-        - If unsure, output the largest header text.
+        2. RECIPIENT_NAME:
+        - Target: Text after "ผู้รับ" or "TO".
+        - IF line ends with Number/"X/Y" -> CUT & MOVE to `room_number`.
+        - CLEAN: Remove titles (นาย/นาง/คุณ). Format: "First Last".
 
-        2. **recipient_name**:
-        - Locate "ผู้รับ" or "TO". The text immediately following is the name.
-        - **MUST DO:** If the text line ends with digits or "X/Y" (e.g., "สมชาย 88/9"), CUT the number out.
-        - Keep ONLY the Thai/English name. Remove titles (นาย/นาง/คุณ).
+        3. ROOM_NUMBER (Priority Order):
+        - [1] Extracted from `recipient_name` (Highest Priority).
+        - [2] Top-Right Corner / Header Box.
+        - [3] "Remark" / "Note" field.
+        - FILTER: Keep "XX/YY" or unit digits. IGNORE Soi/Moo/Road/Zip.
 
-        3. **room_number**:
-        - **TARGET:** The unit number cut from the `recipient_name` line (Priority 1).
-        - If not found there, look at the Top-Right corner or "Remark" box.
-        - Format: Prefer "XX/YY" or pure numbers.
-        - IGNORE: Soi, Moo, Road, Postcode.
+        4. TRACKING_NUMBER:
+        - Main alphanumeric barcode (TH/KER/SPE/etc).
 
-        4. **tracking_number**:
-        - The alphanumeric code under the main barcode (Starts with TH, KER, SPX, etc.).
-
-        5. **is_label**:
-        - true if it looks like a shipping label.
-
-        ### PROCESSING ORDER:
-        1. Identify Logo -> `transport`
-        2. Identify Barcode -> `tracking_number`
-        3. Identify Receiver Line -> Split into `recipient_name` and `room_number`
+        5. IS_LABEL:
+        - True if valid label text exists.
         """
         
         # Using native JSON output mode is much faster than text parsing
