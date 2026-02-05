@@ -246,37 +246,10 @@ def analyze_parcel_label(image_data):
              - Post -> "Thailand Post"
              - Others -> Use their full professional name.
 
-        5. THAI HANDWRITING RECOGNITION (CRITICAL):
-           - Many parcels have HANDWRITTEN Thai names and room numbers
-           - Thai handwriting characteristics to recognize:
-             * Connected characters (ตัวต่อ) - letters flow together
-             * Simplified forms - ก may look like ค, ต may look like จ
-             * Missing or unclear tone marks (่ ้ ๊ ๋)
-             * Missing or abbreviated vowels
-             * Cursive style mixing print and script
-             * Thai numerals may be handwritten: ๑ ๒ ๓ ๔ ๕ ๖ ๗ ๘ ๙ ๐
-           
-           - HANDWRITING EXTRACTION STRATEGY:
-             * Use context clues from surrounding PRINTED text
-             * Cross-reference with address format patterns
-             * If name is handwritten, look for printed room number nearby (often in header or remark)
-             * If room number is handwritten, check multiple locations (name suffix, remark field, address end)
-             * Common handwritten patterns: "คุณ[Name]", "[Name] ห้อง[Number]", "[Number]/[SubNumber]"
-             * Apply character similarity matching for unclear Thai letters
-             * Use stroke analysis to differentiate similar characters (ก/ค, น/ม, ส/ห)
-           
-           - HANDWRITTEN NUMBER PATTERNS:
-             * Thai handwritten numbers (๑-๙) should be converted to Arabic (1-9)
-             * Room numbers often written as "XX/YYY" format even in handwriting
-             * Look for slash "/" as separator between building/room numbers
-             * Handwritten zeros (๐ or 0) may be circular or oval
-
         CRITICAL RULES:
         1. "is_label" must be TRUE ONLY if you see a clear logistics label (e.g. Courier logo, Recipient name, Room number).
         2. If the image is blurry, random, or not a parcel label, set "is_label": false and provide "reason_if_not" (Thai).
         3. If it is a parcel but NO recipient name or room number is visible, set "is_label": false.
-        4. PRIORITIZE HANDWRITTEN TEXT: If both printed and handwritten versions exist, prefer the handwritten one as it's usually more specific.
-        5. CONTEXT IS KEY: Use all available information on the label to validate and cross-check extracted data.
         """
         
         # Using native JSON output mode is much faster than text parsing
@@ -286,9 +259,7 @@ def analyze_parcel_label(image_data):
                 system_instruction=system_instruction,
                 response_mime_type='application/json',
                 response_schema=response_schema,
-                temperature=0.1, # Low temperature for consistency
-                candidate_count=1, # Only need one response for speed
-                response_modalities=["TEXT"] # Prioritize text-only response for speed
+                temperature=0.1 # Low temperature for consistency
             ),
             contents=[
                 types.Part.from_bytes(data=image_data, mime_type='image/jpeg')
