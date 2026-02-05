@@ -3,9 +3,11 @@ from google.genai import types
 from ..config import Config
 from .db import kb_col, chat_history_col
 import re
+import json
 import datetime
 from .lookup import normalize_name
 
+# Initialize Client
 client = genai.Client(api_key=Config.GEMINI_API_KEY)
 MODEL_NAME = 'gemini-2.0-flash'
 EMBEDDING_MODEL = 'text-embedding-004'
@@ -88,7 +90,6 @@ def retrieve_knowledge(query, limit=15):
     """Enhanced hybrid search strategy with PDF prioritization and holistic search."""
     try:
         # 0. Special Handling: Identity Questions (Who/Where/What Project)
-        # If user asks about the place, FORCE include Page 1 of all PDFs (usually covers)
         identity_keywords = ['ที่นี่ที่ไหน', 'โครงการอะไร', 'ชื่อคอนโด', 'นิติบุคคลที่ไหน', 'ติดต่อใคร', 'เบอร์โทร', 'what condo', 'where is this']
         force_page_one = any(k in query.lower() for k in identity_keywords)
         
@@ -108,8 +109,8 @@ def retrieve_knowledge(query, limit=15):
                             "index": "vector_index", 
                             "path": "embedding", 
                             "queryVector": vector,
-                            "numCandidates": 100,  # Scan more candidates
-                            "limit": 20            # Return more vector results
+                            "numCandidates": 100,
+                            "limit": 20
                         }
                     },
                     {
@@ -143,7 +144,7 @@ def retrieve_knowledge(query, limit=15):
             cursor = kb_col.find(
                 {"$text": {"$search": keyword_str}},
                 {"score": {"$meta": "textScore"}}
-            ).sort([("score", {"$meta": "textScore"})]).limit(20) # Significantly increased limit
+            ).sort([("score", {"$meta": "textScore"})]).limit(20)
             text_results = list(cursor)
         except Exception as e:
              pass
@@ -155,11 +156,7 @@ def retrieve_knowledge(query, limit=15):
             # Fetch Page 1 from all PDFs
             page_one_results = list(kb_col.find({"type": "pdf", "page": 1}).limit(5))
             
-        # Merge Strategy: 
-        # 1. Page 1s (if relevant)
-        # 2. PDFs (Text & Vector)
-        # 3. Everything else
-        
+        # Merge Strategy
         all_candidates = page_one_results + vector_results + text_results
         
         # Deduplication and Formatting
@@ -180,7 +177,6 @@ def retrieve_knowledge(query, limit=15):
                 results.append(r)
                 seen_ids.add(rid)
                 
-                # Cap at 15 distinct chunks to provide broad context
                 if len(results) >= 15:
                     break
         
@@ -194,20 +190,20 @@ def analyze_parcel_label(image_data):
     Analyze image data using Gemini's native JSON output mode for maximum speed and reliability.
     """
     try:
-        # Define the expected JSON schema for the response
-response_schema = {
-    "type": "OBJECT",
-    "properties": {
-        "recipient_name": {"type": "STRING"},
-        "room_number": {"type": "STRING"},
-        "transport": {"type": "STRING"},
-        "tracking_number": {"type": "STRING"},
-        "is_label": {"type": "BOOLEAN"}
-    },
-    "required": ["recipient_name", "room_number", "transport", "tracking_number", "is_label"]
-}
+        response_schema = {
+            "type": "OBJECT",
+            "properties": {
+                "recipient_name": {"type": "STRING"},
+                "room_number": {"type": "STRING"},
+                "transport": {"type": "STRING"},
+                "tracking_number": {"type": "STRING"},
+                "is_label": {"type": "BOOLEAN"}
+            },
+            "required": ["recipient_name", "room_number", "transport", "tracking_number", "is_label"]
+        }
 
-system_instruction = """
+        # UPDATED PROMPT: Direct, Fast, Strict Mapping
+        system_instruction = """
 You are a high-speed OCR engine for Thai Shipping Labels.
 Extract text visually and output strict JSON.
 
@@ -248,26 +244,21 @@ Extract text visually and output strict JSON.
 3. Identify Receiver Line -> Split into `recipient_name` and `room_number`
 """
         
-        # Using native JSON output mode is much faster than text parsing
         response = client.models.generate_content(
             model=MODEL_NAME,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 response_mime_type='application/json',
                 response_schema=response_schema,
-                temperature=0.1 # Low temperature for consistency
+                temperature=0.1 
             ),
             contents=[
                 types.Part.from_bytes(data=image_data, mime_type='image/jpeg')
             ]
         )
         
-        # Clean markdown json using a more robust regex approach
-        import json
         return json.loads(response.text.strip())
-    except Exception as e:
-        print(f"AI Label Analysis Error: {e}")
-        return None
+        
     except Exception as e:
         print(f"AI Label Analysis Error: {e}")
         return None
@@ -275,12 +266,6 @@ Extract text visually and output strict JSON.
 def check_match(scanned_data, user_profile):
     """
     Robust comparison between scanned data and user profile.
-    Returns: {
-        "is_match": bool,
-        "reason": str,
-        "matched_fields": list,
-        "ocr_details": dict
-    }
     """
     if not scanned_data or not scanned_data.get('is_label'):
         return {
@@ -294,8 +279,6 @@ def check_match(scanned_data, user_profile):
     def normalize_room(room_str):
         if not room_str or room_str == "N/A": return ""
         return str(room_str).strip().replace(" ", "").replace("ห้อง", "").replace("Room", "").replace("room", "").replace("/", "")
-
-    # Note: normalize_name is now imported from .lookup
 
     scanned_room = normalize_room(scanned_data.get('room_number'))
     user_room = normalize_room(user_profile.get('room_number'))
@@ -325,17 +308,12 @@ def check_match(scanned_data, user_profile):
             name_match = True
             matched_fields.append("ชื่อ-นามสกุล")
 
-    # Final Decision: BOTH must nominally match or be strongly indicated
-    # However, sometimes scanning misses one but gets the other perfectly.
-    # We require at least ONE strong match and the other not being a HARD mismatch.
-    
     is_match = room_match and name_match
     
     if is_match:
         reason = "ข้อมูลถูกต้อง ตรงกับฐานข้อมูล"
     elif room_match:
         reason = "พบเลขห้องที่ถูกต้อง แต่ชื่อผู้รับไม่ชัดเจน"
-        # We might allow if room is very certain? Requirement says check both.
     elif name_match:
         reason = "พบชื่อที่ถูกต้อง แต่เลขห้องไม่ตรง"
     else:
@@ -348,19 +326,9 @@ def check_match(scanned_data, user_profile):
         "ocr_details": scanned_data
     }
 
-
-
-
 def extract_intent_and_selection(text):
     """
     Extract both intent and embedded selection from user input.
-    Returns: (intent, selection_text)
-    
-    Examples:
-    - "ขอรับนอกเวลา45632" -> ('register_outside', '45632')
-    - "ยกเลิก ชิ้น1" -> ('cancel', 'ชิ้น1')  
-    - "ลงทะเบียน" -> ('register_outside', None)
-    - "1-3" -> ('pick_parcel', '1-3')
     """
     try:
         prompt = f"""Analyze Thai text to extract BOTH the intent and any embedded selection (numbers/PINs).
@@ -382,13 +350,13 @@ Return JSON format ONLY:
 {{"intent": "register_outside|cancel|pick_parcel|check_parcel|general", "selection": "extracted_number_or_null"}}"""
 
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
-        import json
-        result = json.loads(res.text.strip().replace('```json', '').replace('```', '').strip())
+        # Clean markdown
+        result_text = res.text.strip().replace('```json', '').replace('```', '').strip()
+        result = json.loads(result_text)
         
         intent = result.get('intent', 'general').lower()
         selection = result.get('selection')
         
-        # Normalize null values
         if selection in ['null', 'None', '', 'none']:
             selection = None
             
@@ -401,11 +369,8 @@ Return JSON format ONLY:
         
     except Exception as e:
         print(f"Intent Extraction Error: {e}")
-        # Fallback: try simple pattern matching
-        import re
+        # Fallback
         text_lower = text.lower()
-        
-        # Check for numbers
         numbers = re.findall(r'\d+', text)
         
         if 'ลงทะเบียน' in text or 'รับนอกเวลา' in text or 'ขอรับนอก' in text:
@@ -420,9 +385,7 @@ Return JSON format ONLY:
             return ('general', None)
 
 def analyze_intent(text):
-    """
-    Legacy compatibility wrapper - extracts only intent.
-    """
+    """Legacy compatibility wrapper."""
     intent, _ = extract_intent_and_selection(text)
     return intent
 
@@ -431,17 +394,13 @@ def generate_chat_response(user_text, user_context={}):
     Generates a response using Gemini + RAG + Chat History.
     """
     try:
-        line_user_id = user_context.get('line_user_id')
-        
-        # 1. Use Active Context from User Profile (Fast & Relevant)
+        # 1. Use Active Context
         history_context = ""
-        # The history comes directly from the user document slice we maintain
         raw_history = user_context.get('history', [])
         
         if raw_history:
             history_text = []
             for h in raw_history:
-                # Interpret role
                 role_label = "AI" if h.get('role') == 'assistant' else "User"
                 msg = h.get('message', '')
                 if msg:
@@ -449,13 +408,12 @@ def generate_chat_response(user_text, user_context={}):
             
             if history_text:
                 history_context = "\n".join(history_text)
-                print(f"📜 loaded {len(history_text)} turns from User Context")
             else:
                 history_context = "No previous history."
         else:
             history_context = "No previous history."
         
-        # 2. RAG Step (Knowledge Retrieval)
+        # 2. RAG Step
         docs = retrieve_knowledge(user_text)
         if docs:
             kb_context = "\n".join([
@@ -502,21 +460,11 @@ def generate_chat_response(user_text, user_context={}):
 
 def extract_selection_ids(text, parcels):
     """
-    Comprehensive parcel selection extraction supporting:
-    1. Pure numbers: "1 2 3" or "1"
-    2. Comma-separated: "1,2,3" or "1, 2, 3"
-    3. Ranges: "1-2", "2-4", "หนึ่งถึงสาม"
-    4. Thai words: "ชิ้นหนึ่ง", "ชิ้นสอง"
-    5. Mixed: "ชิ้น1และสอง", "ชิ้นสองและ3"
-    6. With typos: corrections handled by AI
-    7. PIN+Index: "ชิ้น1และรหัส65489", "รหัส45689และชิ้น3"
+    Comprehensive parcel selection extraction.
     """
     try:
-        import re
-        
         print(f"🔍 extract_selection_ids called with text: '{text}'")
         
-        # Pre-format parcels for reference
         parcel_info = []
         parcel_by_index = {}
         parcel_by_pin = {}
@@ -530,14 +478,13 @@ def extract_selection_ids(text, parcels):
         text_clean = text.strip()
         selected_pins = []
         
-        # Check if contains any Thai characters
         has_thai = bool(re.search(r'[\u0E00-\u0E7F]', text_clean))
         
-        # Strategy 1: Pure number handling (ONLY if NO Thai text)
+        # Strategy 1: Pure number handling
         if not has_thai:
             print("📊 Using regex for pure number input")
             
-            # Handle ranges: "1-3", "2-4"
+            # Ranges
             range_match = re.match(r'^(\d+)\s*-\s*(\d+)$', text_clean)
             if range_match:
                 start_idx = int(range_match.group(1))
@@ -545,10 +492,9 @@ def extract_selection_ids(text, parcels):
                 for idx in range(start_idx, end_idx + 1):
                     if idx in parcel_by_index:
                         selected_pins.append(parcel_by_index[idx])
-                print(f"✅ Range detected: {selected_pins}")
                 return selected_pins
             
-            # Handle comma-separated: "1,2,3" or "1, 2, 3"
+            # Comma-separated
             if ',' in text_clean:
                 parts = re.split(r'[,\s]+', text_clean)
                 for part in parts:
@@ -556,44 +502,35 @@ def extract_selection_ids(text, parcels):
                         idx = int(part)
                         if idx in parcel_by_index:
                             selected_pins.append(parcel_by_index[idx])
-                print(f"✅ Comma-separated detected: {selected_pins}")
                 return selected_pins if selected_pins else []
             
-            # Handle space-separated: "1 2 3"
+            # Space-separated
             if ' ' in text_clean:
                 parts = text_clean.split()
                 for part in parts:
                     if part.isdigit():
                         num = int(part)
-                        # If it's a small number (1-9), treat as index
                         if 1 <= num <= len(parcels):
                             if num in parcel_by_index:
                                 selected_pins.append(parcel_by_index[num])
                 if selected_pins:
-                    print(f"✅ Space-separated detected: {selected_pins}")
                     return selected_pins
             
-            # Handle pure digits (no spaces): "123" or "1" or "12345"
+            # Pure digits (PIN vs Index)
             if text_clean.isdigit():
                 digits = text_clean
-                # Rule: 5+ digits = PIN, 1-4 digits = separate indexes
-                if len(digits) >= 5:
-                    # Treat as PIN
+                if len(digits) >= 5: # PIN
                     if digits in parcel_by_pin:
-                        print(f"✅ PIN detected: {digits}")
                         return [digits]
-                    print(f"⚠️ PIN {digits} not found")
                     return []
-                else:
-                    # Treat each digit as index: "123" -> [1,2,3]
+                else: # Index sequential e.g. "12" -> 1,2
                     for digit_char in digits:
                         idx = int(digit_char)
                         if idx in parcel_by_index:
                             selected_pins.append(parcel_by_index[idx])
-                    print(f"✅ Sequential digits detected: {selected_pins}")
                     return selected_pins if selected_pins else []
         
-        # Strategy 2: Use AI for Thai text, mixed inputs, or complex cases
+        # Strategy 2: AI for complex input
         print("🤖 Using AI for complex input")
         info_str = "\n".join(parcel_info)
         
@@ -604,64 +541,23 @@ def extract_selection_ids(text, parcels):
         User input: "{text}"
         
         TASK: Extract ALL selected parcels and return their PIN codes.
-        
-        HANDLE THESE FORMATS:
-        1. Pure numbers: "1" -> Index 1, "1 2 3" -> Indexes 1,2,3
-        2. Comma-separated: "1,2,3" or "1, 2, 3" -> Indexes 1,2,3
-        3. Ranges: "1-2" or "2-4" -> Indexes in range
-        4. Thai numbers: "หนึ่ง"=1, "สอง"=2, "สาม"=3, "สี่"=4, "ห้า"=5
-        5. Thai ranges: "หนึ่งถึงสาม" or "ชิ้นหนึ่งถึงสาม" -> Indexes 1,2,3
-        6. Mixed: "ชิ้น1และสอง" -> Indexes 1,2
-        7. CORRECT TYPOS: "หนึง่"->1, "สอว"->2, "ชิ้นสองเเละ3"->"2,3"
-        8. PIN codes: If text contains 5+ consecutive digits, treat as PIN
-        9. PIN+Index mix: "ชิ้น1และรหัส65489" -> Index 1 + PIN 65489
-        
-        CRITICAL RULES:
-        - Return the actual PIN codes from the list, NOT index numbers
-        - For index N, find the PIN at that position
-        - Be flexible with spacing and Thai spelling errors
-        - If nothing matches, return empty array
-        
         OUTPUT FORMAT: Return ONLY a valid JSON array of PIN strings.
-        Examples: 
-        - ["1234"] for single item
-        - ["1234", "5678", "9012"] for multiple items
-        - [] if nothing found
-        
-        DO NOT include any explanation, ONLY the JSON array.
+        Examples: ["1234"], ["1234", "5678"], []
         """
         
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
+        txt = res.text.strip().replace('```json', '').replace('```', '').strip()
         
-        # Clean markdown
-        txt = res.text.strip()
-        print(f"🤖 AI Response: {txt}")
-        
-        if txt.startswith("```json"): txt = txt[7:]
-        if txt.startswith("```"): txt = txt[3:]
-        if txt.endswith("```"): txt = txt[:-3]
-        txt = txt.strip()
-        
-        # Handle empty or invalid responses
-        if not txt or txt.lower() == "none" or txt == "null":
-            print("⚠️ AI returned empty response")
-            return []
-        
-        import json
-        selected_pins = json.loads(txt)
-        
-        if isinstance(selected_pins, list):
-            result = [str(p) for p in selected_pins]
-            print(f"✅ AI extraction successful: {result}")
-            return result
-        else:
-            print(f"⚠️ AI returned non-list: {selected_pins}")
+        if not txt or txt.lower() in ["none", "null"]:
             return []
             
-    except json.JSONDecodeError as e:
-        print(f"❌ JSON Parse Error: {e}, Response was: {txt if 'txt' in locals() else 'N/A'}")
-        return []
+        selected_pins = json.loads(txt)
+        if isinstance(selected_pins, list):
+            result = [str(p) for p in selected_pins]
+            return result
+        else:
+            return []
+            
     except Exception as e:
         print(f"❌ Extraction Error: {e}")
         return []
-
