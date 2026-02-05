@@ -196,47 +196,57 @@ def analyze_parcel_label(image_data):
     try:
         # Define the expected JSON schema for the response
         response_schema = {
-            "type": "OBJECT",
-            "properties": {
-                "recipient_name": {"type": "STRING"},
-                "room_number": {"type": "STRING"},
-                "transport": {"type": "STRING"},
-                "tracking_number": {"type": "STRING"},
-                "is_label": {"type": "BOOLEAN"}
-            },
-            "required": ["recipient_name", "room_number", "transport", "tracking_number", "is_label"]
-        }
+    "type": "OBJECT",
+    "properties": {
+        "recipient_name": {"type": "STRING"},
+        "room_number": {"type": "STRING"},
+        "transport": {"type": "STRING"},
+        "tracking_number": {"type": "STRING"},
+        "is_label": {"type": "BOOLEAN"}
+    },
+    "required": ["recipient_name", "room_number", "transport", "tracking_number", "is_label"]
+}
 
-        system_instruction = """
-        Parse Thai Shipping Label to JSON. Apply strict logic:
+system_instruction = """
+You are a high-speed OCR engine for Thai Shipping Labels.
+Extract text visually and output strict JSON.
 
-        1. TRANSPORT (Map Logo -> Official Name):
-        - SPX -> "SPX EXPRESS"
-        - Flash -> "FLASH EXPRESS"
-        - Kerry -> "KERRY EXPRESS"
-        - J&T -> "J&T EXPRESS"
-        - Post -> "Thailand Post"
-        - DHL -> "DHL"
-        - Ninja -> "NINJA VAN"
-        - Else -> Return full visible header name.
+### CRITICAL RULES:
 
-        2. RECIPIENT_NAME:
-        - Target: Text after "ผู้รับ" or "TO".
-        - IF line ends with Number/"X/Y" -> CUT & MOVE to `room_number`.
-        - CLEAN: Remove titles (นาย/นาง/คุณ). Format: "First Last".
+1. **transport** (Logistics Company):
+   - LOOK AT THE LOGO/HEADER FIRST.
+   - **NORMALIZE STRICTLY (Map detected logo to these exact strings):**
+     - SPX / Shopee -> "SPX EXPRESS"
+     - Flash -> "FLASH EXPRESS"
+     - Kerry -> "KERRY EXPRESS"
+     - J&T -> "J&T EXPRESS"
+     - Post / Thailand Post -> "Thailand Post"
+     - DHL -> "DHL"
+     - Ninja -> "NINJA VAN"
+   - If not in list, output the largest header text found.
 
-        3. ROOM_NUMBER (Priority Order):
-        - [1] Extracted from `recipient_name` (Highest Priority).
-        - [2] Top-Right Corner / Header Box.
-        - [3] "Remark" / "Note" field.
-        - FILTER: Keep "XX/YY" or unit digits. IGNORE Soi/Moo/Road/Zip.
+2. **recipient_name**:
+   - Locate "ผู้รับ" or "TO". The text immediately following is the name.
+   - **MUST DO:** If the text line ends with digits or "X/Y" (e.g., "สมชาย 88/9"), CUT the number out.
+   - Keep ONLY the Thai/English name. Remove titles (นาย/นาง/คุณ).
 
-        4. TRACKING_NUMBER:
-        - Main alphanumeric barcode (TH/KER/SPE/etc).
+3. **room_number**:
+   - **TARGET:** The unit number cut from the `recipient_name` line (Priority 1).
+   - If not found there, look at the Top-Right corner or "Remark" box.
+   - Format: Prefer "XX/YY" or pure numbers.
+   - IGNORE: Soi, Moo, Road, Postcode.
 
-        5. IS_LABEL:
-        - True if valid label text exists.
-        """
+4. **tracking_number**:
+   - The alphanumeric code under the main barcode (Starts with TH, KER, SPX, etc.).
+
+5. **is_label**:
+   - true if it looks like a shipping label.
+
+### PROCESSING ORDER:
+1. Identify Logo -> Apply `transport` mapping.
+2. Identify Barcode -> `tracking_number`
+3. Identify Receiver Line -> Split into `recipient_name` and `room_number`
+"""
         
         # Using native JSON output mode is much faster than text parsing
         response = client.models.generate_content(
