@@ -198,67 +198,48 @@ def analyze_parcel_label(image_data):
         response_schema = {
             "type": "OBJECT",
             "properties": {
-                "is_label": {
-                    "type": "BOOLEAN",
-                    "description": "Set to true ONLY if it is a valid shipping label with visible recipient info."
-                },
-                "recipient_name": {
-                    "type": "STRING",
-                    "description": "Full Thai name. Space between First/Last name. NO numbers/titles."
-                },
-                "house_number": {
-                    "type": "STRING",
-                    "description": "The exact house no. or room no. (e.g., 88/123). Strip province/district/zipcode."
-                },
-                "tracking_number": {
-                    "type": "STRING",
-                    "description": "Primary barcode alphanumeric string."
-                },
-                "logistics_company": {
-                    "type": "STRING",
-                    "description": "Normalized name (e.g., SPX EXPRESS, KERRY EXPRESS, FLASH EXPRESS)."
-                },
-                "reason_if_not": {
-                    "type": "STRING",
-                    "description": "Reason in Thai if is_label is false, otherwise null."
-                }
+                "recipient_name": {"type": "STRING"},
+                "room_number": {"type": "STRING"},
+                "transport": {"type": "STRING"},
+                "tracking_number": {"type": "STRING"},
+                "is_label": {"type": "BOOLEAN"}
             },
-            "required": ["is_label", "recipient_name", "house_number", "tracking_number", "logistics_company", "reason_if_not"]
+            "required": ["recipient_name", "room_number", "transport", "tracking_number", "is_label"]
         }
 
         system_instruction = """
-            Act as an expert OCR and Data Extraction AI specialized in Thai Logistics Labels. 
-            Your task is to extract specific information from shipping label images with 100% accuracy into the defined JSON structure.
+        You are a high-speed OCR engine for Thai Shipping Labels.
+        Extract text visually and output strict JSON.
 
-            ### FIELD EXTRACTION RULES:
+        ### CRITICAL RULES:
 
-            1. **recipient_name**:
-            - Locate text after "ผู้รับ (TO)" or "TO".
-            - **CRITICAL CLEANING:** If a house/room number (e.g., "28/548", "101") is written at the end of the name, REMOVE IT from the name and move it to `house_number`.
-            - Strip titles (คุณ, นาย, นาง).
-            - Format: "FirstName LastName" (Ensure 1 space between them).
+        1. **transport** (Logistics Company):
+        - LOOK AT THE LOGO/HEADER FIRST.
+        - Map to: "SPX", "FLASH", "KERRY", "J&T", "THAILAND POST", "DHL", "NINJA VAN".
+        - If unsure, output the largest header text.
 
-            2. **house_number**:
-            - Extract the specific House Number or Room Number (e.g., "88/123", "B12").
-            - **PRIORITY SEARCH ORDER:**
-                1. **End of Recipient Name line** (Very common in Shopee/Lazada labels).
-                2. Top Right Corner / Header Box.
-                3. "Remark" or "Note" field.
-                4. Start of the address block.
-            - **EXCLUDE:** Do NOT include "Moo/หมู่", "Soi/ซอย", Province, District, or Zip Code.
-            - If multiple numbers exist, prefer the format "X/Y".
+        2. **recipient_name**:
+        - Locate "ผู้รับ" or "TO". The text immediately following is the name.
+        - **MUST DO:** If the text line ends with digits or "X/Y" (e.g., "สมชาย 88/9"), CUT the number out.
+        - Keep ONLY the Thai/English name. Remove titles (นาย/นาง/คุณ).
 
-            3. **tracking_number**:
-            - Extract the main tracking barcode number (starts with TH, KER, SPE, 7C, etc.).
+        3. **room_number**:
+        - **TARGET:** The unit number cut from the `recipient_name` line (Priority 1).
+        - If not found there, look at the Top-Right corner or "Remark" box.
+        - Format: Prefer "XX/YY" or pure numbers.
+        - IGNORE: Soi, Moo, Road, Postcode.
 
-            4. **logistics_company**:
-            - Identify the courier from the logo/header.
-            - **NORMALIZE TO:** "SPX EXPRESS", "FLASH EXPRESS", "J&T EXPRESS", "KERRY EXPRESS", "THAILAND POST", "DHL", "NINJA VAN".
+        4. **tracking_number**:
+        - The alphanumeric code under the main barcode (Starts with TH, KER, SPX, etc.).
 
-            5. **is_label**:
-            - Return `true` ONLY if it is a clear logistics label.
-            - If image is blurry, irrelevant, or text is unreadable, return `false` and fill `reason_if_not`.
-            """
+        5. **is_label**:
+        - true if it looks like a shipping label.
+
+        ### PROCESSING ORDER:
+        1. Identify Logo -> `transport`
+        2. Identify Barcode -> `tracking_number`
+        3. Identify Receiver Line -> Split into `recipient_name` and `room_number`
+        """
         
         # Using native JSON output mode is much faster than text parsing
         response = client.models.generate_content(
