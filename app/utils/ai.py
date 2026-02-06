@@ -204,13 +204,12 @@ def analyze_parcel_label(image_data):
 
         # UPDATED PROMPT: Direct, Fast, Strict Mapping
         system_instruction = """
-You are a high-speed OCR engine for Thai Shipping Labels.
+You are an expert Thai OCR engine specialized in deciphering **Handwritten (ลายมือ)** and Printed Shipping Labels.
 Extract text visually and output strict JSON.
 
-### CRITICAL PERFORMANCE RULES:
-- **SPEED IS KEY:** Do not over-analyze. Scan the main areas.
-- **DECISIVENESS:** If a field is not clearly visible or ambiguous, return "N/A" immediately. DO NOT GUESS.
-- **NULL HANDLING:** It is better to return "N/A" than a wrong value.
+### CRITICAL RULES:
+- **HANDWRITING:** Expect messy, cursive, or faint handwriting. Use context to infer characters.
+- **SPEED:** Scan efficiently. If a value is illegible, return "N/A".
 
 ### EXTRACTION RULES:
 
@@ -228,19 +227,17 @@ Extract text visually and output strict JSON.
 
 2. **recipient_name**:
    - Locate "ผู้รับ" or "TO". The text immediately following is the name.
-   - **MUST DO:** If the text line ends with digits (e.g. "สมชาย 88/9"), CUT the number out.
-   - Keep ONLY the name. Remove titles.
-   - If not found, return "N/A".
+   - **Separation:** If a number appears at the end of the name line, split it! That is likely the Room Number.
+   - Keep ONLY the name. Remove titles (นาย/นาง/คุณ).
 
 3. **room_number**:
-   - **PRIORITY 1 (CRITICAL):** Look IMMEDIATELY after the recipient's name on the same line.
-     - "สมชาย 123/45" -> "123/45"
-     - "คุณมีนา 8888" -> "8888"
-   - **PRIORITY 2:** Look at the line immediately BELOW the name.
-   - **NEGATIVE CONSTRAINT:** ABSOLUTELY DO NOT extract numbers from "Price", "COD", "THB", "Amount" areas (Right side).
-   - **FORMAT:** Prefer "XX/YY" or pure numbers.
-   - IGNORE: Soi, Moo, Road, Phone Numbers.
-   - **IF UNSURE OR NOT FOUND:** Return "N/A".
+   - **PRIORITY 1 (The "Next-to-Name" Rule):** The room number is most often written **right after the recipient's name** on the same line.
+     - Example: "สมชาย 123/45" -> Room is "123/45"
+     - Example: "นิดา (888)" -> Room is "888"
+   - **PRIORITY 2:** The line immediately BELOW the name.
+   - **HANDWRITING:** Watch out for messy digits. "/" might look like "1" or "|". Convert Thai digits (๑ -> 1) if found.
+   - **Anti-Hallucination:** Do not confuse "Price/COD" (typically on the far right, often with currency symbols) with Room Number. However, if a number is next to the name, it is likely the Room, even if it looks simple.
+   - **FORMAT:** Prefer "XX/YY" or pure numbers. Ignore "Soi", "Moo", "Road".
 
 4. **tracking_number**:
    - The code under the barcode (TH..., KER..., SPX...).
@@ -252,7 +249,7 @@ Extract text visually and output strict JSON.
 ### PROCESSING ORDER:
 1. Logo -> `transport`
 2. Barcode -> `tracking_number`
-3. Receiver Line -> `recipient_name` & `room_number` (Priority: Next to Name)
+3. Receiver Line -> `recipient_name` & `room_number` (Focus on Handwriting interpretation)
 """
         
         response = client.models.generate_content(
@@ -261,8 +258,8 @@ Extract text visually and output strict JSON.
                 system_instruction=system_instruction,
                 response_mime_type='application/json',
                 response_schema=response_schema,
-                temperature=0.0, # Zero temp for max determinism/speed
-                top_k=1 # Force single best token choice (Fastest)
+                temperature=0.1, # Slightly relaxed for Handwriting inference
+                # top_k removed to allow better handwriting probability search
             ),
             contents=[
                 types.Part.from_bytes(data=image_data, mime_type='image/jpeg')
