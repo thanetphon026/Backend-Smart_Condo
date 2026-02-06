@@ -5,11 +5,13 @@ from .db import kb_col, chat_history_col
 import re
 import json
 import datetime
+import io
+from PIL import Image  # ต้องลง pip install Pillow
 from .lookup import normalize_name
 
 # Initialize Client
 client = genai.Client(api_key=Config.GEMINI_API_KEY)
-MODEL_NAME = 'gemini-2.0-flash'
+MODEL_NAME = 'gemini-2.0-flash'  # ใช้ Flash เพื่อความไวสูงสุด
 EMBEDDING_MODEL = 'text-embedding-004'
 
 CHAT_SYSTEM_PROMPT = """
@@ -21,14 +23,14 @@ You are "Nong Bot Niti", a highly intelligent and polite Condo Assistant.
 Rules for Interaction:
 1. **PDF Priority**: If the answer exists in a PDF document, use it FIRST.
 2. **Citation Style**: 
-   - DO NOT mention the specific filename (e.g., "1_GC_Regulations.pdf"). 
-   - Instead, use natural language references like "ตามระเบียบของคอนโด" (According to condo regulations) or "ตามข้อบังคับ" (According to by-laws).
-   - ONLY mention the PAGE NUMBER if it's crucial for the user to look it up (e.g., "ระบุไว้ในหน้า 3").
+   - DO NOT mention the specific filename. 
+   - Instead, use natural language references like "ตามระเบียบของคอนโด" (According to condo regulations).
+   - ONLY mention the PAGE NUMBER if it's crucial.
 3. **Database Strictness**: Use the [CONDO KNOWLEDGE BASE] for all facts.
-   - If information is NOT in the database, say "ขออภัยค่ะ ข้อมูลส่วนนี้ไม่มีในระบบของนิติฯ ค่ะ" or similar.
+   - If information is NOT in the database, say "ขออภัยค่ะ ข้อมูลส่วนนี้ไม่มีในระบบของนิติฯ ค่ะ".
    - DO NOT invent shops, menus, or services.
 4. **No Hallucinations**: You are forbidden from using general knowledge to supplement missing database facts.
-5. **Billing & Utilities**: You CAN perform basic arithmetic for billing/expenses.
+5. **Billing & Utilities**: You CAN perform basic arithmetic.
 6. **Intent & Typos**: Infer user intent even if there are typos.
 7. **Conversation Flow**: Use [CHAT HISTORY] to maintain context.
 8. **Tone**: Polite Thai ("ค่ะ/ครับ"). Use "ค่ะ" as default.
@@ -38,7 +40,6 @@ Rules for Interaction:
 def extract_keywords(text):
     """Enhanced keyword extraction with typo correction and intent expansion."""
     try:
-        # Common Thai typo corrections
         typo_map = {
             'หอวข้าว': 'หาอาหาร', 'หอว': 'หา', 'หวิข้าว': 'หิวข้าว',
             'เซเวน': 'เซเว่น', 'ร้านาหาร': 'ร้านอาหาร',
@@ -52,9 +53,9 @@ def extract_keywords(text):
         prompt = f"""Analyze the user input, correct any Thai typos, and extract 3-5 Thai keywords for condo knowledge base.
 
 Infer intent even from misspellings:
-- "หิวข้าว"/"หาอาหาร"/"หอวข้าว" → อาหาร ร้านอาหาร เซเว่น ร้านค้า
+- "หิวข้าว"/"หาอาหาร" → อาหาร ร้านอาหาร เซเว่น ร้านค้า
 - "จอดรถ"/"ที่จอด" → จอดรถ ที่จอดรถ ลานจอด
-- "ฟิตเนส"/"สระน้ำ"/"ส่วนกลาง" → สิ่งอำนวยความสะดวก ฟิตเนส ออกกำลังกาย สระว่ายน้ำ
+- "ฟิตเนส"/"สระน้ำ" → สิ่งอำนวยความสะดวก ฟิตเนส สระว่ายน้ำ
 
 User Input: "{corrected_text}"
 
@@ -62,21 +63,14 @@ Return ONLY keywords (space-separated):"""
         
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
         keywords = res.text.strip().split()
-        print(f"🔑 Keywords: {keywords} (from: '{text}')")
         return keywords
     except Exception as e:
         print(f"AI Keyword Error: {e}")
-        corrected = text
-        for typo, correct in typo_map.items():
-            corrected = corrected.replace(typo, correct)
-        return corrected.split()
+        return text.split()
 
 def generate_embedding(text):
-    """
-    Generate 768-dimensional vector embedding for text using Gemini.
-    """
+    """Generate 768-dimensional vector embedding."""
     try:
-        # New SDK v1
         result = client.models.embed_content(
             model=EMBEDDING_MODEL,
             contents=text
@@ -87,19 +81,16 @@ def generate_embedding(text):
         return []
 
 def retrieve_knowledge(query, limit=15):
-    """Enhanced hybrid search strategy with PDF prioritization and holistic search."""
+    """Enhanced hybrid search strategy."""
     try:
-        # 0. Special Handling: Identity Questions (Who/Where/What Project)
-        identity_keywords = ['ที่นี่ที่ไหน', 'โครงการอะไร', 'ชื่อคอนโด', 'นิติบุคคลที่ไหน', 'ติดต่อใคร', 'เบอร์โทร', 'what condo', 'where is this']
+        identity_keywords = ['ที่นี่ที่ไหน', 'โครงการอะไร', 'ชื่อคอนโด', 'นิติบุคคลที่ไหน', 'ติดต่อใคร', 'เบอร์โทร', 'what condo']
         force_page_one = any(k in query.lower() for k in identity_keywords)
         
-        # 1. Generate Query Vector
         vector = generate_embedding(query)
-        
         results = []
         seen_ids = set()
         
-        # 2. Vector Search (Atlas)
+        # Vector Search
         vector_results = []
         try:
             if vector:
@@ -115,81 +106,91 @@ def retrieve_knowledge(query, limit=15):
                     },
                     {
                         "$project": {
-                            "topic": 1, 
-                            "content": 1, 
-                            "tags": 1, 
-                            "source": 1,
-                            "page": 1,
-                            "type": 1,
+                            "topic": 1, "content": 1, "tags": 1, "source": 1, "page": 1, "type": 1,
                             "score": {"$meta": "vectorSearchScore"}
                         }
                     }
                 ]
                 vector_results = list(kb_col.aggregate(pipeline))
-                print(f"✅ Vector search found: {len(vector_results)} results")
         except Exception as ve:
              print(f"⚠️ Vector Search unavailable: {ve}")
         
-        # 3. Text Search (Broader scope)
+        # Text Search
         keywords = extract_keywords(query)
-        if force_page_one:
-            keywords.append("โครงการ") # Add 'Project' to ensure we hit titles
-            
+        if force_page_one: keywords.append("โครงการ")
         keyword_str = " ".join(keywords)
-        print(f"🔍 Hybrid Search Keywords: {keyword_str}")
         
         text_results = []
         try:
-            # Search EVERYTHING in the KB with text match
             cursor = kb_col.find(
                 {"$text": {"$search": keyword_str}},
                 {"score": {"$meta": "textScore"}}
             ).sort([("score", {"$meta": "textScore"})]).limit(20)
             text_results = list(cursor)
-        except Exception as e:
+        except Exception:
              pass
              
-        # 4. Force Page 1 Injection (if identity question)
+        # Page 1 Injection
         page_one_results = []
         if force_page_one:
-            print("🚀 Identity Question Detected: Injecting PDF Covers...")
-            # Fetch Page 1 from all PDFs
             page_one_results = list(kb_col.find({"type": "pdf", "page": 1}).limit(5))
             
-        # Merge Strategy
         all_candidates = page_one_results + vector_results + text_results
         
-        # Deduplication and Formatting
         for r in all_candidates:
             rid = str(r.get('_id', ''))
             if rid and rid not in seen_ids:
                 r['_id'] = rid
-                
-                # Normalize source/page info
                 if r.get('type') == 'pdf':
                     src = r.get('source', 'Unknown PDF')
                     pg = r.get('page', '?')
-                    # Citation uses proper naming now
                     r['source_citation'] = f"PDF: {src} (Page {pg})"
                 else:
                     r['source_citation'] = "ADMIN KNOWLEDGE BASE"
-                    
                 results.append(r)
                 seen_ids.add(rid)
-                
-                if len(results) >= 15:
-                    break
+                if len(results) >= 15: break
         
         return results
     except Exception as e:
         print(f"❌ RAG Error: {e}")
         return []
 
-def analyze_parcel_label(image_data):
+# --- NEW OPTIMIZED OCR SECTION ---
+
+def optimize_image(image_bytes, max_size=1024):
     """
-    Analyze image data using Gemini's native JSON output mode for maximum speed and reliability.
+    Preprocessing image for Speed & Accuracy:
+    1. Grayscale (L): Helps with faded thermal labels.
+    2. Resize: Limits max dimension to 1024px to reduce latency.
     """
     try:
+        image = Image.open(io.BytesIO(image_bytes))
+        image = image.convert("L") # Convert to grayscale
+        
+        ratio = min(max_size / image.width, max_size / image.height)
+        if ratio < 1:
+            new_size = (int(image.width * ratio), int(image.height * ratio))
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
+            
+        output = io.BytesIO()
+        image.save(output, format="JPEG", quality=85)
+        return output.getvalue()
+    except Exception as e:
+        print(f"⚠️ Image Optimization Failed: {e}")
+        return image_bytes
+
+def analyze_parcel_label(image_data):
+    """
+    Ultimate Thai Logistics OCR:
+    - Supports all major carriers (Kerry, Flash, SPX, J&T, DHL, etc.)
+    - Strict logic for Room Number (Ignores Soi/Road).
+    - Auto-corrects transport based on tracking number patterns.
+    """
+    try:
+        # 1. Optimize Image
+        optimized_image = optimize_image(image_data)
+
         response_schema = {
             "type": "OBJECT",
             "properties": {
@@ -202,71 +203,77 @@ def analyze_parcel_label(image_data):
             "required": ["recipient_name", "room_number", "transport", "tracking_number", "is_label"]
         }
 
-        # UPDATED PROMPT: Direct, Fast, Strict Mapping
+        # 2. Comprehensive System Prompt
         system_instruction = """
-You are a high-speed OCR engine for Thai Shipping Labels.
-Extract text visually and output strict JSON.
+You are an expert Logistics OCR engine specialized in Thai Shipping Labels.
+Extract visual text and return strict JSON.
 
-### CRITICAL RULES:
+### 1. TRANSPORT COMPANY (Logistics Detection)
+Identify the logo/header. Map strictly to these STANDARD NAMES:
+- **Major Thai:** "Kerry Express", "Flash Express", "SPX Express", "J&T Express", "Thailand Post", "Ninja Van", "DHL", "Best Express", "SCG Express"
+- **Global:** "FedEx", "UPS", "TNT"
+- **Rule:** If "Shopee" or "SPX" logo -> "SPX Express".
 
-1. **transport** (Logistics Company):
-   - LOOK AT THE LOGO/HEADER FIRST.
-   - **NORMALIZE STRICTLY (Map detected logo to these exact strings):**
-     - SPX / Shopee -> "SPX EXPRESS"
-     - Flash -> "FLASH EXPRESS"
-     - Kerry -> "KERRY EXPRESS"
-     - J&T -> "J&T EXPRESS"
-     - Post / Thailand Post -> "Thailand Post"
-     - DHL -> "DHL"
-     - Ninja -> "NINJA VAN"
-   - If not in list, output the largest header text found.
+### 2. RECIPIENT NAME (ผู้รับ)
+- Find "To:", "ผู้รับ:", "C/O".
+- **CLEANING:** Remove titles (คุณ, นาย, นาง). Remove phone numbers.
+- **CRITICAL:** If name is mixed with address (e.g. "Somchai 88/1"), EXTRACT ONLY NAME.
 
-2. **recipient_name**:
-   - Locate "ผู้รับ" or "TO". The text immediately following is the name.
-   - **MUST DO:** If the text line ends with digits or "X/Y" (e.g., "สมชาย 88/9"), CUT the number out.
-   - Keep ONLY the Thai/English name. Remove titles (นาย/นาง/คุณ).
+### 3. ROOM NUMBER (เลขห้อง)
+- **TARGET:** Look for "Room", "ห้อง", or pattern "XX/YY" or "XXX".
+- **STRICT EXCLUSION:** DO NOT confuse "Soi" (ซอย), "Moo" (หมู่), "Road" (ถนน) with Room Number.
+- If text is "Soi 5", Room is NOT 5.
+- Format: Return ONLY digits or "XX/YY".
 
-3. **room_number**:
-   - **TARGET:** The unit number cut from the `recipient_name` line (Priority 1).
-   - If not found there, look at the Top-Right corner or "Remark" box.
-   - Format: Prefer "XX/YY" or pure numbers.
-   - IGNORE: Soi, Moo, Road, Postcode.
+### 4. TRACKING NUMBER (เลขพัสดุ)
+- The barcode text (Alphanumeric).
+- Flash/SPX often starts with "TH".
+- Kerry often starts with "KEA", "KER".
 
-4. **tracking_number**:
-   - The alphanumeric code under the main barcode (Starts with TH, KER, SPX, etc.).
-
-5. **is_label**:
-   - true if it looks like a shipping label.
-
-### PROCESSING ORDER:
-1. Identify Logo -> Apply `transport` mapping.
-2. Identify Barcode -> `tracking_number`
-3. Identify Receiver Line -> Split into `recipient_name` and `room_number`
+### 5. IS_LABEL
+- true if it looks like a shipping label.
 """
         
         response = client.models.generate_content(
-            model=MODEL_NAME,
+            model=MODEL_NAME, # Gemini 2.0 Flash
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 response_mime_type='application/json',
                 response_schema=response_schema,
-                temperature=0.1 
+                temperature=0.0 # Strict & Deterministic
             ),
             contents=[
-                types.Part.from_bytes(data=image_data, mime_type='image/jpeg')
+                types.Part.from_bytes(data=optimized_image, mime_type='image/jpeg')
             ]
         )
         
-        return json.loads(response.text.strip())
+        result = json.loads(response.text.strip())
+        
+        # 3. Logic Validation & Correction
+        if result.get('is_label'):
+            track = result.get('tracking_number', '').upper().replace(" ", "")
+            transport = result.get('transport', 'Unknown')
+            
+            # Auto-correct Transport based on Tracking Pattern
+            if track.startswith("TH") and len(track) > 10 and transport == "Unknown":
+                result['transport'] = "Flash Express" # Most likely in TH
+            elif track.startswith("KEA") or track.startswith("KER"):
+                result['transport'] = "Kerry Express"
+            elif track.startswith("SPX"):
+                result['transport'] = "SPX Express"
+                
+            result['tracking_number'] = track
+            
+        return result
         
     except Exception as e:
-        print(f"AI Label Analysis Error: {e}")
+        print(f"❌ Smart Label Analysis Error: {e}")
         return None
 
+# --- END OPTIMIZED OCR SECTION ---
+
 def check_match(scanned_data, user_profile):
-    """
-    Robust comparison between scanned data and user profile.
-    """
+    """Robust comparison between scanned data and user profile."""
     if not scanned_data or not scanned_data.get('is_label'):
         return {
             "is_match": False, 
@@ -327,9 +334,7 @@ def check_match(scanned_data, user_profile):
     }
 
 def extract_intent_and_selection(text):
-    """
-    Extract both intent and embedded selection from user input.
-    """
+    """Extract both intent and embedded selection from user input."""
     try:
         prompt = f"""Analyze Thai text to extract BOTH the intent and any embedded selection (numbers/PINs).
 
@@ -342,222 +347,96 @@ def extract_intent_and_selection(text):
 
 Text: "{text}"
 
-If text contains BOTH intent AND selection (e.g., "ขอรับนอกเวลา45632", "ยกเลิกชิ้น1"), extract BOTH.
-If ONLY intent (e.g., "ลงทะเบียน"), selection is null.
-If ONLY selection (e.g., "45632", "ชิ้น1"), intent is 'pick_parcel'.
-
 Return JSON format ONLY:
 {{"intent": "register_outside|cancel|pick_parcel|check_parcel|general", "selection": "extracted_number_or_null"}}"""
 
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
-        # Clean markdown
         result_text = res.text.strip().replace('```json', '').replace('```', '').strip()
         result = json.loads(result_text)
         
         intent = result.get('intent', 'general').lower()
         selection = result.get('selection')
-        
-        if selection in ['null', 'None', '', 'none']:
-            selection = None
+        if selection in ['null', 'None', '', 'none']: selection = None
             
-        valid_intents = ['register_outside', 'check_parcel', 'pick_parcel', 'cancel', 'general']
-        if intent not in valid_intents:
-            intent = 'general'
-            
-        print(f"🔍 Intent: {intent}, Selection: {selection}")
         return (intent, selection)
-        
     except Exception as e:
         print(f"Intent Extraction Error: {e}")
-        # Fallback
+        # Fallback Logic
         text_lower = text.lower()
         numbers = re.findall(r'\d+', text)
-        
-        if 'ลงทะเบียน' in text or 'รับนอกเวลา' in text or 'ขอรับนอก' in text:
+        if 'ลงทะเบียน' in text or 'รับนอกเวลา' in text:
             return ('register_outside', numbers[0] if numbers else None)
         elif 'ยกเลิก' in text:
             return ('cancel', numbers[0] if numbers else None)
-        elif 'เช็ก' in text or 'ดูพัสดุ' in text:
-            return ('check_parcel', None)
         elif numbers:
             return ('pick_parcel', numbers[0])
         else:
             return ('general', None)
 
 def analyze_intent(text):
-    """Legacy compatibility wrapper."""
     intent, _ = extract_intent_and_selection(text)
     return intent
 
 def generate_chat_response(user_text, user_context={}):
-    """
-    Generates a response using Gemini + RAG + Chat History.
-    """
+    """Generates a response using Gemini + RAG + Chat History."""
     try:
-        # 1. Use Active Context
-        history_context = ""
+        # History Context
+        history_context = "No previous history."
         raw_history = user_context.get('history', [])
-        
         if raw_history:
-            history_text = []
-            for h in raw_history:
-                role_label = "AI" if h.get('role') == 'assistant' else "User"
-                msg = h.get('message', '')
-                if msg:
-                    history_text.append(f"{role_label}: {msg}")
-            
-            if history_text:
-                history_context = "\n".join(history_text)
-            else:
-                history_context = "No previous history."
-        else:
-            history_context = "No previous history."
+            history_text = [f"{'AI' if h.get('role')=='assistant' else 'User'}: {h.get('message','')}" for h in raw_history]
+            history_context = "\n".join(history_text)
         
-        # 2. RAG Step
+        # RAG Context
         docs = retrieve_knowledge(user_text)
         if docs:
-            kb_context = "\n".join([
-                f"\n[Document: {d.get('source_citation','Unknown')}]\n"
-                f"Topic: {d.get('topic','-')}\n"
-                f"Content: {d.get('content','')}\n" 
-                f"Tags: {', '.join(d.get('tags',[]))}" 
-                for d in docs
-            ])
+            kb_context = "\n".join([f"- {d.get('content','')} (Source: {d.get('source_citation')})" for d in docs])
         else:
-            kb_context = "No specific condo internal data found for this query."
+            kb_context = "No specific condo internal data found."
             
-        user_info = f"User Name: {user_context.get('first_name','Guest')}\nUser Room: {user_context.get('room_number','-')}"
+        user_info = f"User: {user_context.get('first_name','Guest')}, Room: {user_context.get('room_number','-')}"
         
         full_prompt = f"""
         {CHAT_SYSTEM_PROMPT}
         
-        [CONDO KNOWLEDGE BASE]
+        [KNOWLEDGE BASE]
         {kb_context}
         
-        [USER PROFILE]
+        [USER INFO]
         {user_info}
         
-        [CHAT HISTORY]
+        [HISTORY]
         {history_context}
         
-        [CURRENT USER MESSAGE]
         User: {user_text}
-        
-        Instruction: 
-        - Refer to the USER as "คุณ[Name]" with spaces.
-        - Answer ONLY based on the KNOWLEDGE BASE. 
-        - If unsure, say you don't have the info yet.
-        - Be helpful and professional.
         
         Answer (Thai):
         """
-        
         response = client.models.generate_content(model=MODEL_NAME, contents=full_prompt)
         return response.text.strip()
     except Exception as e:
         print(f"Gen Chat Error: {e}")
-        return "ขออภัยค่ะ น้องบอตกำลังประมวลผลข้อมูล โปรดรอสักครู่หรือลองใหม่ภายหลังค่ะ"
+        return "ขออภัยค่ะ ระบบขัดข้องชั่วคราว โปรดลองใหม่ภายหลังค่ะ"
 
 def extract_selection_ids(text, parcels):
-    """
-    Comprehensive parcel selection extraction.
-    """
+    """Comprehensive parcel selection extraction."""
     try:
-        print(f"🔍 extract_selection_ids called with text: '{text}'")
+        parcel_info = [f"Index: {i+1}, PIN: {p.get('pin')}" for i, p in enumerate(parcels)]
+        parcel_by_index = {i+1: str(p.get('pin')) for i, p in enumerate(parcels)}
         
-        parcel_info = []
-        parcel_by_index = {}
-        parcel_by_pin = {}
-        
-        for i, p in enumerate(parcels, 1):
-            pin = str(p.get('pin'))
-            parcel_info.append(f"Index: {i}, PIN: {pin}, Tracking: {p.get('tracking_number')}, Courier: {p.get('transport')}")
-            parcel_by_index[i] = pin
-            parcel_by_pin[pin] = p
-        
-        text_clean = text.strip()
-        selected_pins = []
-        
-        has_thai = bool(re.search(r'[\u0E00-\u0E7F]', text_clean))
-        
-        # Strategy 1: Pure number handling
-        if not has_thai:
-            print("📊 Using regex for pure number input")
+        # Simple Numeric Check
+        if text.isdigit() and len(text) < 5:
+            idx = int(text)
+            if idx in parcel_by_index: return [parcel_by_index[idx]]
             
-            # Ranges
-            range_match = re.match(r'^(\d+)\s*-\s*(\d+)$', text_clean)
-            if range_match:
-                start_idx = int(range_match.group(1))
-                end_idx = int(range_match.group(2))
-                for idx in range(start_idx, end_idx + 1):
-                    if idx in parcel_by_index:
-                        selected_pins.append(parcel_by_index[idx])
-                return selected_pins
-            
-            # Comma-separated
-            if ',' in text_clean:
-                parts = re.split(r'[,\s]+', text_clean)
-                for part in parts:
-                    if part.isdigit():
-                        idx = int(part)
-                        if idx in parcel_by_index:
-                            selected_pins.append(parcel_by_index[idx])
-                return selected_pins if selected_pins else []
-            
-            # Space-separated
-            if ' ' in text_clean:
-                parts = text_clean.split()
-                for part in parts:
-                    if part.isdigit():
-                        num = int(part)
-                        if 1 <= num <= len(parcels):
-                            if num in parcel_by_index:
-                                selected_pins.append(parcel_by_index[num])
-                if selected_pins:
-                    return selected_pins
-            
-            # Pure digits (PIN vs Index)
-            if text_clean.isdigit():
-                digits = text_clean
-                if len(digits) >= 5: # PIN
-                    if digits in parcel_by_pin:
-                        return [digits]
-                    return []
-                else: # Index sequential e.g. "12" -> 1,2
-                    for digit_char in digits:
-                        idx = int(digit_char)
-                        if idx in parcel_by_index:
-                            selected_pins.append(parcel_by_index[idx])
-                    return selected_pins if selected_pins else []
-        
-        # Strategy 2: AI for complex input
-        print("🤖 Using AI for complex input")
-        info_str = "\n".join(parcel_info)
-        
-        prompt = f"""
-        User wants to select parcels from this list:
-        {info_str}
-        
+        # AI Extraction for complex queries
+        prompt = f"""User wants to select parcels from: {parcel_info}
         User input: "{text}"
-        
-        TASK: Extract ALL selected parcels and return their PIN codes.
-        OUTPUT FORMAT: Return ONLY a valid JSON array of PIN strings.
-        Examples: ["1234"], ["1234", "5678"], []
-        """
+        Return JSON array of PINs. Example: ["1234", "5678"] or []"""
         
         res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
         txt = res.text.strip().replace('```json', '').replace('```', '').strip()
-        
-        if not txt or txt.lower() in ["none", "null"]:
-            return []
-            
-        selected_pins = json.loads(txt)
-        if isinstance(selected_pins, list):
-            result = [str(p) for p in selected_pins]
-            return result
-        else:
-            return []
-            
-    except Exception as e:
-        print(f"❌ Extraction Error: {e}")
+        selected = json.loads(txt)
+        return [str(p) for p in selected] if isinstance(selected, list) else []
+    except Exception:
         return []
