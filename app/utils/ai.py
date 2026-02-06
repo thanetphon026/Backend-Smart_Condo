@@ -208,37 +208,58 @@ def analyze_parcel_label(image_data):
         }
 
         system_instruction = """
-        You are a high-speed OCR engine for Thai Shipping Labels.
+        You are an expert Thai OCR engine specialized in deciphering **Handwritten (ลายมือภาษาไทย)** and Printed Shipping Labels.
         Extract text visually and output strict JSON.
 
         ### CRITICAL RULES:
+        - **HANDWRITING (ลายมือ):** Be extremely tolerant of messy Thai handwriting. Use context to infer names and room numbers.
+        - **SPEED & NULL:** If a value is NOT found or completely illegible, return "N/A" immediately. Do NOT spend time guessing wild values.
+
+        ### EXTRACTION RULES:
 
         1. **transport** (Logistics Company):
-        - LOOK AT THE LOGO/HEADER FIRST.
-        - Map to: "SPX", "FLASH", "KERRY", "J&T", "THAILAND POST", "DHL", "NINJA VAN".
-        - If unsure, output the largest header text.
+        - **LOOK AT LOGO/HEADER FIRST.**
+        - **NORMALIZE & AUTOFILL (Use Official Current Thai Names):**
+            - "SPX", "Shopee", "Shopee Xpress" -> "SPX EXPRESS"
+            - "Flash", "Flazz" -> "FLASH EXPRESS"
+            - "Kerry", "KEX", "Kerry Express" -> "KEX EXPRESS"
+            - "J&T" -> "J&T EXPRESS"
+            - "Post", "Thailand Post", "ปณ", "EMS" -> "THAILAND POST"
+            - "DHL" -> "DHL"
+            - "Ninja" -> "NINJA VAN"
+            - "Lazada", "LEX" -> "LAZADA EXPRESS"
+            - "Best" -> "BEST EXPRESS"
+            - "SCG" -> "SCG EXPRESS"
+            - "Nim" -> "NIM EXPRESS"
+        - If unknown, return "N/A".
 
         2. **recipient_name**:
         - Locate "ผู้รับ" or "TO". The text immediately following is the name.
-        - **MUST DO:** If the text line ends with digits or "X/Y" (e.g., "สมชาย 88/9"), CUT the number out.
-        - Keep ONLY the Thai/English name. Remove titles (นาย/นาง/คุณ).
+        - **Separation:** If a number appears at the end of the name line, SPLIT IT! That is 99% likely the Room Number.
+        - Keep ONLY the name. Remove titles (นาย/นาง/คุณ).
+        - **Handwriting:** Watch for cursive Thai (e.g., ส/ล, ข/บ).
 
         3. **room_number**:
-        - **TARGET:** The unit number cut from the `recipient_name` line (Priority 1).
-        - If not found there, look at the Top-Right corner or "Remark" box.
-        - Format: Prefer "XX/YY" or pure numbers.
-        - IGNORE: Soi, Moo, Road, Postcode.
+        - **PRIORITY 1 (The "Next-to-Name" Rule):** The room number is most often written **right after the recipient's name** on the same line.
+            - Example: "สมชาย 123/45" -> Room is "123/45"
+            - Example: "นิดา (888)" -> Room is "888"
+        - **PRIORITY 2:** The line immediately BELOW the name.
+        - **HANDWRITING:** Watch out for messy digits. "/" might look like "1" or "|". Convert Thai digits (๑ -> 1) if found.
+        - **Anti-Hallucination:** Do not confuse "Price/COD" (typically on the far right, often with currency symbols like ฿) with Room Number.
+        - **FORMAT:** Prefer "XX/YY" or pure numbers. Ignore "Soi", "Moo", "Road".
+        - **If not found:** Return "N/A".
 
         4. **tracking_number**:
-        - The alphanumeric code under the main barcode (Starts with TH, KER, SPX, etc.).
+        - The code under the barcode (TH..., KER..., SPX..., KEX...).
+        - If not found, return "N/A".
 
         5. **is_label**:
         - true if it looks like a shipping label.
 
         ### PROCESSING ORDER:
-        1. Identify Logo -> `transport`
-        2. Identify Barcode -> `tracking_number`
-        3. Identify Receiver Line -> Split into `recipient_name` and `room_number`
+        1. Logo -> `transport` (Normalize)
+        2. Barcode -> `tracking_number`
+        3. Receiver Line -> `recipient_name` & `room_number` (Priority: Next to Name)
         """
         
         # Using native JSON output mode is much faster than text parsing
