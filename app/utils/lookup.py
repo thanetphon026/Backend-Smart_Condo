@@ -9,14 +9,28 @@ from .db import users_col, parcels_col
 def normalize_room(room_str):
     """
     Normalize room number for comparison.
-    Removes whitespace, common prefixes, and standardizes format.
+    Removes whitespace, common prefixes, Thai digits, and standardizes format.
     """
     if not room_str or room_str == "N/A":
         return None
-    # Convert to string, strip all whitespace, remove common prefixes
-    normalized = str(room_str).strip().replace(" ", "").replace("\t", "")
+        
+    # Thai digits mapping
+    thai_digits = str.maketrans('๐๑๒๓๔๕๖๗๘๙', '0123456789')
+    
+    # Convert to string, translate Thai digits, strip all whitespace
+    normalized = str(room_str).translate(thai_digits).strip()
+    normalized = "".join(normalized.split())
+    
     # Remove common Thai/English prefixes
     normalized = normalized.replace("Room", "").replace("room", "").replace("ห้อง", "")
+    
+    # Remove leading zeros if any in the room parts
+    if "/" in normalized:
+        parts = normalized.split("/")
+        normalized = "/".join([p.lstrip('0') if p != '0' else '0' for p in parts])
+    else:
+        normalized = normalized.lstrip('0') if normalized != '0' else '0'
+        
     return normalized if normalized else None
 
 
