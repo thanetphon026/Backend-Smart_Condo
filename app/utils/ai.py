@@ -207,11 +207,16 @@ def analyze_parcel_label(image_data):
 You are a high-speed OCR engine for Thai Shipping Labels.
 Extract text visually and output strict JSON.
 
-### CRITICAL RULES:
+### CRITICAL PERFORMANCE RULES:
+- **SPEED IS KEY:** Do not over-analyze. Scan the main areas.
+- **DECISIVENESS:** If a field is not clearly visible or ambiguous, return "N/A" immediately. DO NOT GUESS.
+- **NULL HANDLING:** It is better to return "N/A" than a wrong value.
+
+### EXTRACTION RULES:
 
 1. **transport** (Logistics Company):
    - LOOK AT THE LOGO/HEADER FIRST.
-   - **NORMALIZE STRICTLY (Map detected logo to these exact strings):**
+   - **NORMALIZE STRICTLY:**
      - SPX / Shopee -> "SPX EXPRESS"
      - Flash -> "FLASH EXPRESS"
      - Kerry -> "KERRY EXPRESS"
@@ -219,29 +224,35 @@ Extract text visually and output strict JSON.
      - Post / Thailand Post -> "Thailand Post"
      - DHL -> "DHL"
      - Ninja -> "NINJA VAN"
-   - If not in list, output the largest header text found.
+   - If unknown, return "N/A".
 
 2. **recipient_name**:
    - Locate "ผู้รับ" or "TO". The text immediately following is the name.
-   - **MUST DO:** If the text line ends with digits or "X/Y" (e.g., "สมชาย 88/9"), CUT the number out.
-   - Keep ONLY the Thai/English name. Remove titles (นาย/นาง/คุณ).
+   - **MUST DO:** If the text line ends with digits (e.g. "สมชาย 88/9"), CUT the number out.
+   - Keep ONLY the name. Remove titles.
+   - If not found, return "N/A".
 
 3. **room_number**:
-   - **TARGET:** The unit number cut from the `recipient_name` line (Priority 1).
-   - If not found there, look at the Top-Right corner or "Remark" box.
-   - Format: Prefer "XX/YY" or pure numbers.
-   - IGNORE: Soi, Moo, Road, Postcode.
+   - **PRIORITY 1 (CRITICAL):** Look IMMEDIATELY after the recipient's name on the same line.
+     - "สมชาย 123/45" -> "123/45"
+     - "คุณมีนา 8888" -> "8888"
+   - **PRIORITY 2:** Look at the line immediately BELOW the name.
+   - **NEGATIVE CONSTRAINT:** ABSOLUTELY DO NOT extract numbers from "Price", "COD", "THB", "Amount" areas (Right side).
+   - **FORMAT:** Prefer "XX/YY" or pure numbers.
+   - IGNORE: Soi, Moo, Road, Phone Numbers.
+   - **IF UNSURE OR NOT FOUND:** Return "N/A".
 
 4. **tracking_number**:
-   - The alphanumeric code under the main barcode (Starts with TH, KER, SPX, etc.).
+   - The code under the barcode (TH..., KER..., SPX...).
+   - If not found, return "N/A".
 
 5. **is_label**:
    - true if it looks like a shipping label.
 
 ### PROCESSING ORDER:
-1. Identify Logo -> Apply `transport` mapping.
-2. Identify Barcode -> `tracking_number`
-3. Identify Receiver Line -> Split into `recipient_name` and `room_number`
+1. Logo -> `transport`
+2. Barcode -> `tracking_number`
+3. Receiver Line -> `recipient_name` & `room_number` (Priority: Next to Name)
 """
         
         response = client.models.generate_content(
@@ -250,14 +261,32 @@ Extract text visually and output strict JSON.
                 system_instruction=system_instruction,
                 response_mime_type='application/json',
                 response_schema=response_schema,
-                temperature=0.1 
+                temperature=0.0, # Zero temp for max determinism/speed
+                top_k=1 # Force single best token choice (Fastest)
             ),
             contents=[
                 types.Part.from_bytes(data=image_data, mime_type='image/jpeg')
             ]
         )
         
-        return json.loads(response.text.strip())
+        result = json.loads(response.text.strip())
+        
+        # Safety Sanitize: Remove Price/COD artifacts if AI failed
+        room = result.get('room_number', '')
+        if room and room != "N/A":
+            # Remove obvious price indicators
+            if any(x in room.upper() for x in ['THB', 'BAHT', '.00', 'COD']):
+                 room = re.sub(r'(?i)(THB|Baht|COD|Price|\.00)', '', room).strip()
+            
+            # If it looks like a phone number (0xxxxxxxxx), clear it
+            if re.match(r'^0\d{9}$', room.replace('-', '')):
+                room = ""
+            
+            result['room_number'] = room
+        elif room == "N/A":
+            result['room_number'] = "" # Convert N/A to empty string for frontend consistency
+
+        return result
         
     except Exception as e:
         print(f"AI Label Analysis Error: {e}")
