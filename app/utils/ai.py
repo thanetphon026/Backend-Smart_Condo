@@ -9,6 +9,7 @@ from .lookup import normalize_name
 client = genai.Client(api_key=Config.GEMINI_API_KEY)
 MODEL_NAME = 'gemini-2.0-flash'
 EMBEDDING_MODEL = 'models/text-embedding-004'
+# EMBEDDING_MODEL = 'models/embedding-001' # Fallback if 004 fails
 
 CHAT_SYSTEM_PROMPT = """
 You are "Nong Bot Niti", a highly intelligent and polite Condo Assistant.
@@ -75,9 +76,11 @@ def generate_embedding(text):
     """
     try:
         # New SDK v1
+        # SDK v1 style - updated for google-genai compatibility
         result = client.models.embed_content(
             model=EMBEDDING_MODEL,
-            contents=text
+            contents=text,
+            config={'output_dimensionality': 768}
         )
         return result.embeddings[0].values
     except Exception as e:
