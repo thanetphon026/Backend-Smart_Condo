@@ -8,7 +8,7 @@ from .lookup import normalize_name
 
 client = genai.Client(api_key=Config.GEMINI_API_KEY)
 MODEL_NAME = 'gemini-2.0-flash'
-EMBEDDING_MODEL = 'text-embedding-004'
+EMBEDDING_MODEL = 'models/text-embedding-004'
 
 CHAT_SYSTEM_PROMPT = """
 You are "Nong Bot Niti", a highly intelligent and polite Condo Assistant.
