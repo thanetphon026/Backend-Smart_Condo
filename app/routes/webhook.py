@@ -1,4 +1,5 @@
 from flask import Blueprint, request, abort, current_app, jsonify
+import threading
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, PostbackEvent, FollowEvent
 from ..utils.line import (
@@ -175,6 +176,16 @@ def parse_user_registration(text):
 
 @line_handler.add(MessageEvent, message=TextMessageContent)
 def handle_text_message(event):
+    # Process text messages in a separate thread to avoid blocking the webhook
+    # This allows the server to return 'OK' (200) to LINE immediately
+    thread = threading.Thread(target=process_text_message_async, args=(event,))
+    thread.start()
+
+def process_text_message_async(event):
+    # Use current_app.app_context() if needed for database or config access
+    # but since these are imported as globals/singletons in this project,
+    # we can use them directly.
+    
     user_id = event.source.user_id
     reply_token = event.reply_token
     text = event.message.text.strip()
@@ -211,8 +222,8 @@ def handle_text_message(event):
     # 2. Check for USER REGISTRATION command (always allow this)
     # Priority Fix: unexpected trigger from "ลงทะเบียนรับนอกเวลา"
     is_registration_cmd = (
-        (text.startswith('ลงทะเบียน') and 'รับนอกเวลา' not in text) or 
-        text.lower().startswith('register') or 
+        (text.startswith('ลงทะเบียน') and 'รับนอกเวลา' not in text) or
+        text.lower().startswith('register') or
         text.startswith('สมัคร')
     )
     
@@ -296,8 +307,8 @@ def handle_text_message(event):
             # Check office hours (08:30 - 17:30)
             now = get_bkk_time()
             is_office_open = (
-                (now.hour == 8 and now.minute >= 30) or 
-                (9 <= now.hour <= 16) or 
+                (now.hour == 8 and now.minute >= 30) or
+                (9 <= now.hour <= 16) or
                 (now.hour == 17 and now.minute <= 30)
             )
             
@@ -307,6 +318,9 @@ def handle_text_message(event):
                 return
             
             # Office Closed -> smart routing
+            # Note: We need to know if there are after-hours parcels
+            has_after_hours = parcels_col.count_documents({"room_number": room, "status": "pending", "is_after_hours": True}) > 0
+            
             if has_after_hours:
                 # No in-time parcels but has after-hours -> assume cancellation selection
                 handle_cancel_select_parcel(user, user_id, text, reply_token)
@@ -591,6 +605,11 @@ def handle_cancel_select_parcel(user, user_id, text, reply_token):
 
 @line_handler.add(MessageEvent, message=ImageMessageContent)
 def handle_image_message(event):
+    # Process image messages in a separate thread
+    thread = threading.Thread(target=process_image_message_async, args=(event,))
+    thread.start()
+
+def process_image_message_async(event):
     user_id = event.source.user_id
     reply_token = event.reply_token
     message_id = event.message.id
@@ -752,6 +771,11 @@ def handle_image_message(event):
 
 @line_handler.add(PostbackEvent)
 def handle_postback(event):
+    # Process postback events in a separate thread
+    thread = threading.Thread(target=process_postback_async, args=(event,))
+    thread.start()
+
+def process_postback_async(event):
     user_id = event.source.user_id
     reply_token = event.reply_token
     data = event.postback.data

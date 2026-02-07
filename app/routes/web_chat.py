@@ -193,11 +193,14 @@ def handle_text_web(user, user_id, text):
             return handle_cancel_select_parcel_web(user, user_id, embedded_selection)
     
     # Context-aware handling for 'pick_parcel'
+    if intent == 'pick_parcel':
+        room = user.get('room_number')
+        if room:
             # Check office hours (08:30 - 17:30)
             now = get_bkk_time()
             is_office_open = (
-                (now.hour == 8 and now.minute >= 30) or 
-                (9 <= now.hour <= 16) or 
+                (now.hour == 8 and now.minute >= 30) or
+                (9 <= now.hour <= 16) or
                 (now.hour == 17 and now.minute <= 30)
             )
             
@@ -206,6 +209,8 @@ def handle_text_web(user, user_id, text):
                 return handle_pick_parcel_web(user, user_id, text)
             
             # Office Closed -> smart routing
+            has_after_hours = parcels_col.count_documents({"room_number": room, "status": "pending", "is_after_hours": True}) > 0
+            
             if has_after_hours:
                 # No in-time parcels but has after-hours -> assume cancellation selection
                 return handle_cancel_select_parcel_web(user, user_id, text)
