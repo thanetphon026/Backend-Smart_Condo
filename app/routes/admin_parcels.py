@@ -185,6 +185,15 @@ def scan_parcel():
             img_url = future_upload.result()
             ai_data = future_ai.result()
             
+        # Handle specific AI errors
+        if isinstance(ai_data, dict) and ai_data.get('error') == 'quota_exceeded':
+            return jsonify({
+                "status": "error",
+                "error_code": "quota_exceeded",
+                "message": "⚠️ AI Quota Exceeded: Gemini API ของคุณหมดโควต้าหรือเกินวงเงินที่กำหนดไว้ กรุณาตรวจสอบ Google Cloud Console หรือใช้การบันทึกข้อมูลเองแทน",
+                "image_url": img_url
+            }), 429
+
         # Ensure ai_data is a valid dict with default values to prevent frontend issues
         if not ai_data:
             print("⚠️ AI Extraction returned None, using empty results")

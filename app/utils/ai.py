@@ -7,7 +7,7 @@ import datetime
 from .lookup import normalize_name
 
 client = genai.Client(api_key=Config.GEMINI_API_KEY)
-MODEL_NAME = 'gemini-2.0-flash'
+MODEL_NAME = 'gemini-3.1-flash-lite-preview'
 EMBEDDING_MODEL = 'gemini-embedding-001'  # Current recommended embedding model (replaces deprecated text-embedding-004)
 
 CHAT_SYSTEM_PROMPT = """
@@ -282,10 +282,10 @@ def analyze_parcel_label(image_data):
         import json
         return json.loads(response.text.strip())
     except Exception as e:
-        print(f"AI Label Analysis Error: {e}")
-        return None
-    except Exception as e:
-        print(f"AI Label Analysis Error: {e}")
+        error_msg = str(e)
+        print(f"AI Label Analysis Error: {error_msg}")
+        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+            return {"error": "quota_exceeded", "message": "Gemini API Quota Exceeded or Spending Cap Reached"}
         return None
 
 def check_match(scanned_data, user_profile):
