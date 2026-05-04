@@ -21,9 +21,27 @@ from ..config import Config
 import datetime
 import requests
 import io
+import time
 
 
 webhook_bp = Blueprint('webhook', __name__)
+
+def track_async_time(func):
+    """Decorator to track duration of async background processing."""
+    from functools import wraps
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            duration = time.perf_counter() - start_time
+            # Attempt to get user info for better logging
+            user_id = "unknown"
+            if args and hasattr(args[0], 'source'):
+                user_id = args[0].source.user_id
+            print(f"⚡ [{func.__name__}] Finished in {duration:.4f}s | User: {user_id}", flush=True)
+    return wrapper
 
 def reply_with_logging(user_id, reply_token, text=None, flex_contents=None):
     """Helper to reply and log assistant response to history."""
@@ -181,6 +199,7 @@ def handle_text_message(event):
     thread = threading.Thread(target=process_text_message_async, args=(event,))
     thread.start()
 
+@track_async_time
 def process_text_message_async(event):
     # Use current_app.app_context() if needed for database or config access
     # but since these are imported as globals/singletons in this project,
@@ -609,6 +628,7 @@ def handle_image_message(event):
     thread = threading.Thread(target=process_image_message_async, args=(event,))
     thread.start()
 
+@track_async_time
 def process_image_message_async(event):
     user_id = event.source.user_id
     reply_token = event.reply_token
@@ -775,6 +795,7 @@ def handle_postback(event):
     thread = threading.Thread(target=process_postback_async, args=(event,))
     thread.start()
 
+@track_async_time
 def process_postback_async(event):
     user_id = event.source.user_id
     reply_token = event.reply_token
