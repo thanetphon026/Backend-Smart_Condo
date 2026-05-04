@@ -1,6 +1,7 @@
-from flask import Flask
+from flask import Flask, g, request
 from flask_cors import CORS
 from .config import Config
+import time
 
 def create_app():
     app = Flask(__name__)
@@ -11,6 +12,20 @@ def create_app():
     app.json = MongoJSONProvider(app)
     
     CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+    @app.before_request
+    def start_timer():
+        g.start_time = time.perf_counter()
+
+    @app.after_request
+    def log_response_time(response):
+        if hasattr(g, 'start_time'):
+            duration = time.perf_counter() - g.start_time
+            path = request.path
+            method = request.method
+            status = response.status_code
+            print(f"⏱️  Response Time: {duration:.4f}s | {method} {path} | Status: {status}", flush=True)
+        return response
 
     from .utils.helpers import token_required
 
