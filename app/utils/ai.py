@@ -7,7 +7,7 @@ import datetime
 from .lookup import normalize_name
 
 client = genai.Client(api_key=Config.GEMINI_API_KEY)
-MODEL_NAME = 'gemini-3.1-flash-lite-preview'
+MODEL_NAME = 'gemini-2.0-flash'
 EMBEDDING_MODEL = 'gemini-embedding-001'  # Current recommended embedding model (replaces deprecated text-embedding-004)
 
 CHAT_SYSTEM_PROMPT = """
