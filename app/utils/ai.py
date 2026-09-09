@@ -1,14 +1,31 @@
 from google import genai
 from google.genai import types
+from openai import OpenAI
 from ..config import Config
 from .db import kb_col, chat_history_col
 import re
 import datetime
+import base64
+import json
 from .lookup import normalize_name
 
-client = genai.Client(api_key=Config.GEMINI_API_KEY)
-MODEL_NAME = 'gemini-2.0-flash'
-EMBEDDING_MODEL = 'gemini-embedding-001'  # Current recommended embedding model (replaces deprecated text-embedding-004)
+# --- Gemini (ใช้เฉพาะ Embedding สำหรับ Vector Search) ---
+gemini_client = genai.Client(api_key=Config.GEMINI_API_KEY)
+EMBEDDING_MODEL = 'gemini-embedding-001'
+
+# --- Typhoon LLM (Chat, Intent, Keywords) ---
+typhoon_client = OpenAI(
+    api_key=Config.TYPHOON_API_KEY,
+    base_url="https://api.opentyphoon.ai/v1"
+)
+TYPHOON_LLM_MODEL = "typhoon-v2-70b-instruct"
+
+# --- Typhoon OCR (อ่านตัวอักษรจากภาพ) ---
+typhoon_ocr_client = OpenAI(
+    api_key=Config.TYPHOON_API_KEY,
+    base_url="https://api.opentyphoon.ai/v1"
+)
+TYPHOON_OCR_MODEL = "typhoon-ocr"
 
 CHAT_SYSTEM_PROMPT = """
 You are "Nong Bot Niti", a highly intelligent and polite Condo Assistant.
@@ -34,32 +51,35 @@ Rules for Interaction:
 """
 
 def extract_keywords(text):
-    """Enhanced keyword extraction with typo correction and intent expansion."""
+    """Enhanced keyword extraction with typo correction and intent expansion (Typhoon LLM)."""
+    typo_map = {
+        'หอวข้าว': 'หาอาหาร', 'หอว': 'หา', 'หวิข้าว': 'หิวข้าว',
+        'เซเวน': 'เซเว่น', 'ร้านาหาร': 'ร้านอาหาร',
+        'ส่วนกลาง': 'สิ่งอำนวยความสะดวก'
+    }
     try:
-        # Common Thai typo corrections
-        typo_map = {
-            'หอวข้าว': 'หาอาหาร', 'หอว': 'หา', 'หวิข้าว': 'หิวข้าว',
-            'เซเวน': 'เซเว่น', 'ร้านาหาร': 'ร้านอาหาร',
-            'ส่วนกลาง': 'สิ่งอำนวยความสะดวก'
-        }
-        
         corrected_text = text
         for typo, correct in typo_map.items():
             corrected_text = corrected_text.replace(typo, correct)
         
-        prompt = f"""Analyze the user input, correct any Thai typos, and extract 3-5 Thai keywords for condo knowledge base.
+        prompt = f"""วิเคราะห์ข้อความของผู้ใช้ แก้คำผิดภาษาไทย และสกัด 3-5 คำสำคัญสำหรับค้นหาในฐานข้อมูลคอนโด
 
-Infer intent even from misspellings:
-- "หิวข้าว"/"หาอาหาร"/"หอวข้าว" → อาหาร ร้านอาหาร เซเว่น ร้านค้า
+ตัวอย่าง:
+- "หิวข้าว"/"หาอาหาร" → อาหาร ร้านอาหาร เซเว่น ร้านค้า
 - "จอดรถ"/"ที่จอด" → จอดรถ ที่จอดรถ ลานจอด
-- "ฟิตเนส"/"สระน้ำ"/"ส่วนกลาง" → สิ่งอำนวยความสะดวก ฟิตเนส ออกกำลังกาย สระว่ายน้ำ
+- "ฟิตเนส"/"สระน้ำ" → สิ่งอำนวยความสะดวก ฟิตเนส ออกกำลังกาย สระว่ายน้ำ
 
-User Input: "{corrected_text}"
+ข้อความผู้ใช้: "{corrected_text}"
 
-Return ONLY keywords (space-separated):"""
+ตอบด้วยคำสำคัญเท่านั้น คั่นด้วยช่องว่าง:"""
         
-        res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
-        keywords = res.text.strip().split()
+        res = typhoon_client.chat.completions.create(
+            model=TYPHOON_LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0.1
+        )
+        keywords = res.choices[0].message.content.strip().split()
         print(f"🔑 Keywords: {keywords} (from: '{text}')")
         return keywords
     except Exception as e:
@@ -72,11 +92,10 @@ Return ONLY keywords (space-separated):"""
 def generate_embedding(text):
     """
     Generate 768-dimensional vector embedding for text using Gemini.
+    (ยังคงใช้ Gemini Embedding เนื่องจาก Typhoon ไม่มี Embedding API ในขณะนี้)
     """
     try:
-        # New SDK v1
-        # SDK v1 style - updated for google-genai compatibility
-        result = client.models.embed_content(
+        result = gemini_client.models.embed_content(
             model=EMBEDDING_MODEL,
             contents=text,
             config={'output_dimensionality': 768}
@@ -193,99 +212,110 @@ def retrieve_knowledge(query, limit=15):
 
 def analyze_parcel_label(image_data):
     """
-    Analyze image data using Gemini's native JSON output mode for maximum speed and reliability.
+    วิเคราะห์ป้ายพัสดุด้วย Typhoon OCR + Typhoon LLM (2 ขั้นตอน):
+    Step 1: Typhoon OCR อ่านตัวอักษรทั้งหมดจากภาพ (raw text)
+    Step 2: Typhoon LLM แปลง raw text เป็น structured JSON
     """
     try:
-        # Define the expected JSON schema for the response
-        response_schema = {
-            "type": "OBJECT",
-            "properties": {
-                "recipient_name": {"type": "STRING"},
-                "room_number": {"type": "STRING"},
-                "transport": {"type": "STRING"},
-                "tracking_number": {"type": "STRING"},
-                "is_label": {"type": "BOOLEAN"}
-            },
-            "required": ["recipient_name", "room_number", "transport", "tracking_number", "is_label"]
-        }
-
-        system_instruction = """
-        You are an expert Thai OCR engine specialized in deciphering **Handwritten (ลายมือภาษาไทย)** and Printed Shipping Labels.
-        Extract text visually and output strict JSON.
-
-        ### CRITICAL RULES:
-        - **HANDWRITING (ลายมือ):** Be extremely tolerant of messy Thai handwriting. Use context to infer names and room numbers.
-        - **SPEED & NULL:** If a value is NOT found or completely illegible, return "N/A" immediately. Do NOT spend time guessing wild values.
-
-        ### EXTRACTION RULES:
-
-        1. **transport** (Logistics Company):
-        - **LOOK AT LOGO/HEADER FIRST.**
-        - **NORMALIZE & AUTOFILL (Use Official Current Thai Names):**
-            - "SPX", "Shopee", "Shopee Xpress" -> "SPX EXPRESS"
-            - "Flash", "Flazz" -> "FLASH EXPRESS"
-            - "Kerry", "KEX", "Kerry Express" -> "KEX EXPRESS"
-            - "J&T" -> "J&T EXPRESS"
-            - "Post", "Thailand Post", "ปณ", "EMS" -> "THAILAND POST"
-            - "DHL" -> "DHL"
-            - "Ninja" -> "NINJA VAN"
-            - "Lazada", "LEX" -> "LAZADA EXPRESS"
-            - "Best" -> "BEST EXPRESS"
-            - "SCG" -> "SCG EXPRESS"
-            - "Nim" -> "NIM EXPRESS"
-        - If unknown, return "N/A".
-
-        2. **recipient_name**:
-        - Locate "ผู้รับ" or "TO". The text immediately following is the name.
-        - **Separation:** If a number appears at the end of the name line, SPLIT IT! That is 99% likely the Room Number.
-        - Keep ONLY the name. Remove titles (นาย/นาง/คุณ).
-        - **Handwriting:** Watch for cursive Thai (e.g., ส/ล, ข/บ).
-
-        3. **room_number**:
-        - **PRIORITY 1 (The "Next-to-Name" Rule):** The room number is most often written **right after the recipient's name** on the same line.
-            - Example: "สมชาย 123/45" -> Room is "123/45"
-            - Example: "นิดา (888)" -> Room is "888"
-        - **PRIORITY 2:** The line immediately BELOW the name.
-        - **HANDWRITING:** Watch out for messy digits. "/" might look like "1" or "|". Convert Thai digits (๑ -> 1) if found.
-        - **Anti-Hallucination:** Do not confuse "Price/COD" (typically on the far right, often with currency symbols like ฿) with Room Number.
-        - **FORMAT:** Prefer "XX/YY" or pure numbers. Ignore "Soi", "Moo", "Road".
-        - **If not found:** Return "N/A".
-
-        4. **tracking_number**:
-        - The code under the barcode (TH..., KER..., SPX..., KEX...).
-        - If not found, return "N/A".
-
-        5. **is_label**:
-        - true if it looks like a shipping label.
-
-        ### PROCESSING ORDER:
-        1. Logo -> `transport` (Normalize)
-        2. Barcode -> `tracking_number`
-        3. Receiver Line -> `recipient_name` & `room_number` (Priority: Next to Name)
-        """
+        # --- Step 1: Typhoon OCR - อ่านตัวอักษรจากภาพ ---
+        print("📸 Sending image to Typhoon OCR...")
+        base64_image = base64.b64encode(image_data).decode('utf-8')
         
-        # Using native JSON output mode is much faster than text parsing
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                response_mime_type='application/json',
-                response_schema=response_schema,
-                temperature=0.1 # Low temperature for consistency
-            ),
-            contents=[
-                types.Part.from_bytes(data=image_data, mime_type='image/jpeg')
-            ]
+        ocr_response = typhoon_ocr_client.chat.completions.create(
+            model=TYPHOON_OCR_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "อ่านและถอดความข้อความทุกตัวอักษรที่เห็นในภาพนี้ให้ครบถ้วน รวมทั้งตัวเลข ภาษาไทย และภาษาอังกฤษทั้งหมด"
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=1000
         )
         
-        # Clean markdown json using a more robust regex approach
-        import json
-        return json.loads(response.text.strip())
+        raw_ocr_text = ocr_response.choices[0].message.content.strip()
+        print(f"🔤 Typhoon OCR raw text: {raw_ocr_text[:200]}...")
+        
+        if not raw_ocr_text:
+            print("⚠️ OCR returned empty text")
+            return {"is_label": False, "recipient_name": "N/A", "room_number": "N/A", "transport": "N/A", "tracking_number": "N/A"}
+        
+        # --- Step 2: Typhoon LLM - แปลง raw text เป็น JSON ---
+        print("🧠 Sending OCR text to Typhoon LLM for JSON extraction...")
+        
+        llm_prompt = f"""คุณคือผู้เชี่ยวชาญสกัดข้อมูลจากป้ายพัสดุภาษาไทย
+วิเคราะห์ข้อความ OCR ต่อไปนี้และสกัดข้อมูลป้ายพัสดุ:
+
+[OCR TEXT]
+{raw_ocr_text}
+
+[กฎการสกัดข้อมูล]
+1. transport (บริษัทขนส่ง) - ดูจากโลโก้/ชื่อบริษัทในข้อความ:
+   - "SPX", "Shopee", "Shopee Express" → "SPX EXPRESS"
+   - "Flash", "Flazz", "FLASH" → "FLASH EXPRESS"
+   - "Kerry", "KEX" → "KEX EXPRESS"
+   - "J&T" → "J&T EXPRESS"
+   - "Thailand Post", "ปณ", "EMS", "ไปรษณีย์" → "THAILAND POST"
+   - "DHL" → "DHL"
+   - "Ninja", "NinjaVan" → "NINJA VAN"
+   - "Lazada", "LEX" → "LAZADA EXPRESS"
+   - "Best" → "BEST EXPRESS"
+   - "SCG" → "SCG EXPRESS"
+   - "Nim" → "NIM EXPRESS"
+   - ถ้าไม่พบ → "N/A"
+
+2. recipient_name (ชื่อผู้รับ) - หาจากคำว่า "ผู้รับ" หรือ "TO:":
+   - ตัดคำนำหน้า (นาย/นาง/นางสาว/คุณ) ออก
+   - ถ้าไม่พบ → "N/A"
+
+3. room_number (เลขห้อง) - มักอยู่หลังชื่อผู้รับ หรือบรรทัดถัดไป:
+   - รูปแบบ: XX/YY หรือตัวเลขล้วน
+   - อย่าสับสนกับราคาหรือ COD
+   - ถ้าไม่พบ → "N/A"
+
+4. tracking_number (เลขพัสดุ) - รหัสใต้บาร์โค้ด (TH..., KER..., SPX..., KEX...):
+   - ถ้าไม่พบ → "N/A"
+
+5. is_label - true ถ้าข้อความมีลักษณะป้ายพัสดุ, false ถ้าไม่ใช่
+
+ตอบเป็น JSON เท่านั้น ห้ามอธิบายเพิ่ม:
+{{"recipient_name": "...", "room_number": "...", "transport": "...", "tracking_number": "...", "is_label": true/false}}"""
+        
+        llm_response = typhoon_client.chat.completions.create(
+            model=TYPHOON_LLM_MODEL,
+            messages=[{"role": "user", "content": llm_prompt}],
+            max_tokens=300,
+            temperature=0.1
+        )
+        
+        result_text = llm_response.choices[0].message.content.strip()
+        # ทำความสะอาด markdown code block ถ้ามี
+        result_text = result_text.replace('```json', '').replace('```', '').strip()
+        
+        result = json.loads(result_text)
+        print(f"✅ Typhoon LLM parsed: {result}")
+        return result
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON Parse Error: {e}")
+        return None
     except Exception as e:
         error_msg = str(e)
-        print(f"AI Label Analysis Error: {error_msg}")
-        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            return {"error": "quota_exceeded", "message": "Gemini API Quota Exceeded or Spending Cap Reached"}
+        print(f"❌ Typhoon OCR/LLM Error: {error_msg}")
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            return {"error": "unauthorized", "message": "Typhoon API Key ไม่ถูกต้องหรือยังไม่ได้ตั้งค่า"}
+        if "429" in error_msg or "rate_limit" in error_msg.lower():
+            return {"error": "rate_limit", "message": "Typhoon API Rate Limit Exceeded"}
         return None
 
 def check_match(scanned_data, user_profile):
@@ -369,7 +399,7 @@ def check_match(scanned_data, user_profile):
 
 def extract_intent_and_selection(text):
     """
-    Extract both intent and embedded selection from user input.
+    Extract both intent and embedded selection from user input (Typhoon LLM).
     Returns: (intent, selection_text)
     
     Examples:
@@ -379,27 +409,32 @@ def extract_intent_and_selection(text):
     - "1-3" -> ('pick_parcel', '1-3')
     """
     try:
-        prompt = f"""Analyze Thai text to extract BOTH the intent and any embedded selection (numbers/PINs).
+        prompt = f"""วิเคราะห์ข้อความภาษาไทยเพื่อหา intent และ selection (ตัวเลข/PIN) ที่ฝังอยู่
 
-[Intent Rules]
-- 'register_outside': Register for after-hours (ลงทะเบียน, รับนอกเวลา, ขอรับนอกเวลา)
-- 'cancel': Cancel registration (ยกเลิก, ย้ายกลับ, ยกเลิกนอกเวลา)
-- 'pick_parcel': ONLY numbers/ranges (1, 1-3, ชิ้น2, รหัส1234)
-- 'check_parcel': Check status (เช็ก, ดูพัสดุ, มีพัสดุไหม)
-- 'general': Everything else
+[กฎ Intent]
+- 'register_outside': ลงทะเบียน, รับนอกเวลา, ขอรับนอกเวลา
+- 'cancel': ยกเลิก, ย้ายกลับ, ยกเลิกนอกเวลา
+- 'pick_parcel': ตัวเลข/ช่วง เช่น 1, 1-3, ชิ้น2, รหัส1234
+- 'check_parcel': เช็ก, ดูพัสดุ, มีพัสดุไหม
+- 'general': อื่นๆ
 
-Text: "{text}"
+ข้อความ: "{text}"
 
-If text contains BOTH intent AND selection (e.g., "ขอรับนอกเวลา45632", "ยกเลิกชิ้น1"), extract BOTH.
-If ONLY intent (e.g., "ลงทะเบียน"), selection is null.
-If ONLY selection (e.g., "45632", "ชิ้น1"), intent is 'pick_parcel'.
+ถ้ามีทั้ง intent และ selection (เช่น "ขอรับนอกเวลา45632") ให้สกัดทั้งคู่
+ถ้ามีแค่ intent (เช่น "ลงทะเบียน") selection = null
+ถ้ามีแค่ตัวเลข (เช่น "45632") intent = 'pick_parcel'
 
-Return JSON format ONLY:
-{{"intent": "register_outside|cancel|pick_parcel|check_parcel|general", "selection": "extracted_number_or_null"}}"""
+ตอบเป็น JSON เท่านั้น:
+{{"intent": "register_outside|cancel|pick_parcel|check_parcel|general", "selection": "ตัวเลขหรือ null"}}"""
 
-        res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
-        import json
-        result = json.loads(res.text.strip().replace('```json', '').replace('```', '').strip())
+        res = typhoon_client.chat.completions.create(
+            model=TYPHOON_LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0.1
+        )
+        result_text = res.choices[0].message.content.strip().replace('```json', '').replace('```', '').strip()
+        result = json.loads(result_text)
         
         intent = result.get('intent', 'general').lower()
         selection = result.get('selection')
@@ -510,8 +545,13 @@ def generate_chat_response(user_text, user_context={}):
         Answer (Thai):
         """
         
-        response = client.models.generate_content(model=MODEL_NAME, contents=full_prompt)
-        return response.text.strip()
+        response = typhoon_client.chat.completions.create(
+            model=TYPHOON_LLM_MODEL,
+            messages=[{"role": "user", "content": full_prompt}],
+            max_tokens=1000,
+            temperature=0.4
+        )
+        return response.choices[0].message.content.strip()
     except Exception as e:
         print(f"Gen Chat Error: {e}")
         return "ขออภัยค่ะ น้องบอตกำลังประมวลผลข้อมูล โปรดรอสักครู่หรือลองใหม่ภายหลังค่ะ"
@@ -609,49 +649,42 @@ def extract_selection_ids(text, parcels):
                     print(f"✅ Sequential digits detected: {selected_pins}")
                     return selected_pins if selected_pins else []
         
-        # Strategy 2: Use AI for Thai text, mixed inputs, or complex cases
-        print("🤖 Using AI for complex input")
+        # Strategy 2: Use Typhoon LLM for Thai text, mixed inputs, or complex cases
+        print("🤖 Using Typhoon LLM for complex input")
         info_str = "\n".join(parcel_info)
         
-        prompt = f"""
-        User wants to select parcels from this list:
-        {info_str}
+        prompt = f"""ผู้ใช้ต้องการเลือกพัสดุจากรายการนี้:
+{info_str}
+
+ข้อความผู้ใช้: "{text}"
+
+สกัด PIN codes ของพัสดุที่เลือก รองรับรูปแบบ:
+1. ตัวเลขล้วน: "1" → Index 1, "1 2 3" → Indexes 1,2,3
+2. คั่นด้วยจุลภาค: "1,2,3" → Indexes 1,2,3
+3. ช่วง: "1-2", "2-4" → Index ในช่วง
+4. ตัวเลขไทย: "หนึ่ง"=1, "สอง"=2, "สาม"=3, "สี่"=4, "ห้า"=5
+5. ช่วงภาษาไทย: "หนึ่งถึงสาม" → 1,2,3
+6. ผสม: "ชิ้น1และสอง" → 1,2
+7. แก้คำผิด: "หนึง่"→1, "สอว"→2
+8. PIN 5+ หลัก: ถือว่าเป็น PIN code โดยตรง
+
+คืนค่าเป็น JSON array ของ PIN strings เท่านั้น:
+- ["12345"] สำหรับชิ้นเดียว
+- ["12345", "67890"] สำหรับหลายชิ้น
+- [] ถ้าไม่พบ
+
+ห้ามอธิบาย ตอบแค่ JSON array:"""
         
-        User input: "{text}"
-        
-        TASK: Extract ALL selected parcels and return their PIN codes.
-        
-        HANDLE THESE FORMATS:
-        1. Pure numbers: "1" -> Index 1, "1 2 3" -> Indexes 1,2,3
-        2. Comma-separated: "1,2,3" or "1, 2, 3" -> Indexes 1,2,3
-        3. Ranges: "1-2" or "2-4" -> Indexes in range
-        4. Thai numbers: "หนึ่ง"=1, "สอง"=2, "สาม"=3, "สี่"=4, "ห้า"=5
-        5. Thai ranges: "หนึ่งถึงสาม" or "ชิ้นหนึ่งถึงสาม" -> Indexes 1,2,3
-        6. Mixed: "ชิ้น1และสอง" -> Indexes 1,2
-        7. CORRECT TYPOS: "หนึง่"->1, "สอว"->2, "ชิ้นสองเเละ3"->"2,3"
-        8. PIN codes: If text contains 5+ consecutive digits, treat as PIN
-        9. PIN+Index mix: "ชิ้น1และรหัส65489" -> Index 1 + PIN 65489
-        
-        CRITICAL RULES:
-        - Return the actual PIN codes from the list, NOT index numbers
-        - For index N, find the PIN at that position
-        - Be flexible with spacing and Thai spelling errors
-        - If nothing matches, return empty array
-        
-        OUTPUT FORMAT: Return ONLY a valid JSON array of PIN strings.
-        Examples: 
-        - ["1234"] for single item
-        - ["1234", "5678", "9012"] for multiple items
-        - [] if nothing found
-        
-        DO NOT include any explanation, ONLY the JSON array.
-        """
-        
-        res = client.models.generate_content(model=MODEL_NAME, contents=prompt)
+        res = typhoon_client.chat.completions.create(
+            model=TYPHOON_LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            temperature=0.1
+        )
         
         # Clean markdown
-        txt = res.text.strip()
-        print(f"🤖 AI Response: {txt}")
+        txt = res.choices[0].message.content.strip()
+        print(f"🤖 Typhoon LLM Response: {txt}")
         
         if txt.startswith("```json"): txt = txt[7:]
         if txt.startswith("```"): txt = txt[3:]

@@ -5,7 +5,8 @@ load_dotenv()
 
 class Config:
     MONGO_URI = os.getenv("MONGO_URI")
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # ยังใช้สำหรับ Embedding (Vector Search)
+    TYPHOON_API_KEY = os.getenv("TYPHOON_API_KEY")
     LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
     LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
     
