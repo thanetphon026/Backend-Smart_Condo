@@ -18,7 +18,7 @@ typhoon_client = OpenAI(
     api_key=Config.TYPHOON_API_KEY,
     base_url="https://api.opentyphoon.ai/v1"
 )
-TYPHOON_LLM_MODEL = "typhoon-v2-70b-instruct"
+TYPHOON_LLM_MODEL = "typhoon-v2.5-30b-a3b-instruct"
 
 # --- Typhoon OCR (อ่านตัวอักษรจากภาพ) ---
 typhoon_ocr_client = OpenAI(
