@@ -210,132 +210,16 @@ def retrieve_knowledge(query, limit=15):
         print(f"❌ RAG Error: {e}")
         return []
 
-def normalize_extracted_tracking(tracking_number, transport):
-    """Clean and normalize tracking numbers based on courier format and common OCR errors."""
-    if not tracking_number or str(tracking_number).strip().upper() in ["N/A", "NONE", "NULL", ""]:
-        return "N/A"
-    
-    # ตัดขีด ช่องว่าง จุด สัญลักษณ์แปลกๆ และแปลงเป็นตัวพิมพ์ใหญ่
-    track = re.sub(r'[\s\-_.:/\\|#*]', '', str(tracking_number)).upper()
-    transport_upper = str(transport).upper() if transport else ""
-    
-    # 1. จัดการ J&T Express: หากมี JTTH, 1TTH, ITTH, LTTH, J&TTH, JT นำหน้า ให้ตัดทิ้งทันที
-    is_jnt = ("J&T" in transport_upper or "JNT" in transport_upper or 
-              any(track.startswith(p) for p in ["JTTH", "1TTH", "ITTH", "LTTH", "J&TTH", "JT"]))
-    
-    if is_jnt:
-        for jt_p in ["J&TTH", "JTTH", "1TTH", "ITTH", "LTTH", "J&T", "JT"]:
-            if track.startswith(jt_p):
-                track = track[len(jt_p):]
-                break
-        # คลีนตัวอักษรที่มักสับสนในเลข J&T
-        track = (track.replace("I", "1").replace("L", "1").replace("J", "1")
-                      .replace("O", "0").replace("Q", "0").replace("D", "0")
-                      .replace("S", "5").replace("B", "8").replace("Z", "2"))
-        # หากมีชุดตัวเลข 12 หลัก ให้ดึงมาใช้ทันที
-        m = re.search(r'\d{12}', track)
-        if m:
-            return m.group(0)
-        if track.isdigit() and len(track) >= 10:
-            return track
-
-    # 2. แก้ไขกรณี OCR อ่าน TH นำหน้าเป็น 1H, TI, โH, หรือ 1TH (Flash / SPX)
-    if track.startswith("1H") or track.startswith("TI") or track.startswith("โH"):
-        track = "TH" + track[2:]
-    elif track.startswith("1TH"):
-        track = "TH" + track[3:]
-
-    # 3. กรณี ไปรษณีย์ไทย (EMS / ลงทะเบียน / พัสดุ) เช่น ED123456789TH
-    if (len(track) == 13 and track.endswith("TH")) or ("THAILAND POST" in transport_upper and len(track) >= 11):
-        prefix = track[:2]
-        if track.endswith("TH") and len(track) >= 11:
-            middle = track[2:-2]
-            suffix = "TH"
-        else:
-            middle = track[2:]
-            suffix = ""
-            
-        clean_middle = (middle.replace("O", "0").replace("Q", "0").replace("D", "0")
-                             .replace("I", "1").replace("L", "1").replace("J", "1")
-                             .replace("Z", "2").replace("S", "5").replace("B", "8"))
-        return f"{prefix}{clean_middle}{suffix}"
-
-    # 4. กรณี Flash Express (ขึ้นต้นด้วย TH ตามด้วย 12-14 หลัก มักลงท้ายด้วยตัวอักษร 1 ตัว เช่น TH01014V172U9B)
-    elif track.startswith("TH") or "FLASH" in transport_upper:
-        if not track.startswith("TH") and len(track) >= 10:
-            track = "TH" + track
-            
-        body = track[2:]
-        clean_body = []
-        for i, char in enumerate(body):
-            # ตัวอักษรท้ายสุดของ Flash อาจเป็นตัวอักษรจริง เช่น A, B
-            if i == len(body) - 1 and char.isalpha():
-                clean_body.append(char)
-            elif char in ['O', 'Q']:
-                clean_body.append('0')
-            elif char in ['I', 'L', 'J']:
-                clean_body.append('1')
-            elif char == 'S':
-                clean_body.append('5')
-            elif char == 'B':
-                clean_body.append('8')
-            elif char == 'Z':
-                clean_body.append('2')
-            else:
-                clean_body.append(char)
-        return "TH" + "".join(clean_body)
-
-    # 5. กรณี SPX Express (SPXTH... หรือ TH...)
-    elif track.startswith("SPX") or "SPX" in transport_upper or "SHOPEE" in transport_upper:
-        if track.startswith("SPX"):
-            body = track[3:]
-            if body.startswith("TH"):
-                body = body[2:]
-        elif track.startswith("TH"):
-            body = track[2:]
-        else:
-            body = track
-            
-        clean_body = (body.replace("O", "0").replace("Q", "0")
-                          .replace("I", "1").replace("L", "1").replace("J", "1")
-                          .replace("S", "5").replace("B", "8").replace("Z", "2"))
-        return f"SPXTH{clean_body}"
-
-    # 6. กรณี KEX / Kerry Express (ขึ้นต้นด้วย KEX, KER, หรือ SD)
-    elif track.startswith("KEX") or track.startswith("KER") or track.startswith("SD") or "KEX" in transport_upper or "KERRY" in transport_upper:
-        prefix = ""
-        for p in ["KEX", "KER", "SD"]:
-            if track.startswith(p):
-                prefix = p
-                track = track[len(p):]
-                break
-        clean_body = (track.replace("O", "0").replace("Q", "0")
-                           .replace("I", "1").replace("L", "1")
-                           .replace("S", "5").replace("B", "8").replace("Z", "2"))
-        return f"{prefix}{clean_body}" if prefix else clean_body
-
-    # 7. กรณีทั่วไปที่เป็นตัวเลขล้วน
-    elif len(track) >= 10:
-        track = (track.replace("I", "1").replace("L", "1").replace("J", "1")
-                      .replace("O", "0").replace("Q", "0").replace("D", "0")
-                      .replace("S", "5").replace("B", "8").replace("Z", "2"))
-        
-    return track
-
 def analyze_parcel_label(image_data):
     """
     วิเคราะห์ป้ายพัสดุด้วย Typhoon OCR + Typhoon LLM (2 ขั้นตอน):
-    Step 1: Typhoon OCR อ่านตัวอักษรทั้งหมดจากภาพ (raw text) แบบรวดเร็วและแม่นยำ (max_tokens=1000)
-    Step 2: Typhoon LLM สกัด JSON และตรวจจับชื่อผู้รับ + บริษัทขนส่ง + เลขพัสดุ
-    Step 3: Python Post-processing ตัด JTTH, ทำความสะอาดเลขพัสดุและชื่อ
+    Step 1: Typhoon OCR อ่านตัวอักษรทั้งหมดจากภาพ (raw text)
+    Step 2: Typhoon LLM แปลง raw text เป็น structured JSON
     """
     try:
         # --- Step 1: Typhoon OCR - อ่านตัวอักษรจากภาพ ---
-        print("📸 Sending image to Typhoon OCR (Fast & Direct Mode)...")
+        print("📸 Sending image to Typhoon OCR...")
         base64_image = base64.b64encode(image_data).decode('utf-8')
-        
-        # Prompt สั้น ชัดเจน ตรงประเด็น ช่วยให้ OCR ตอบไวและไม่อ่านตกหล่น
-        ocr_prompt = "อ่านและถอดความข้อความทั้งหมดที่ปรากฏในภาพป้ายพัสดุนี้อย่างละเอียดและครบถ้วน ถอดความทีละบรรทัดทั้งภาษาไทย ตัวเลข และภาษาอังกฤษ ห้ามข้ามตัวอักษรหรือสระ"
         
         ocr_response = typhoon_ocr_client.chat.completions.create(
             model=TYPHOON_OCR_MODEL,
@@ -345,7 +229,7 @@ def analyze_parcel_label(image_data):
                     "content": [
                         {
                             "type": "text",
-                            "text": ocr_prompt
+                            "text": "อ่านและถอดความข้อความทุกตัวอักษรที่เห็นในภาพนี้ให้ครบถ้วน แม่นยำตามต้นฉบับ ทั้งภาษาไทย ตัวเลข และภาษาอังกฤษทั้งหมด รักษาตำแหน่งสระ-วรรณยุกต์ให้ถูกต้อง (เช่น สระอุ สระอู อักษร อ และ ฮ) และแยกแยะตัวเลขกับตัวอักษรภาษาอังกฤษอย่างแม่นยำ (เช่น เลข 1 กับตัว I หรือ l, เลข 0 กับตัว O)"
                         },
                         {
                             "type": "image_url",
@@ -357,96 +241,75 @@ def analyze_parcel_label(image_data):
                 }
             ],
             max_tokens=1000,
-            temperature=0.0
+            temperature=0,
+            top_p=0.1,
+            extra_body={"repetition_penalty": 1.2}
         )
         
         raw_ocr_text = ocr_response.choices[0].message.content.strip()
-        print(f"🔤 Typhoon OCR raw text:\n{raw_ocr_text}")
+        print(f"🔤 Typhoon OCR raw text: {raw_ocr_text[:200]}...")
         
         if not raw_ocr_text:
             print("⚠️ OCR returned empty text")
             return {"is_label": False, "recipient_name": "N/A", "room_number": "N/A", "transport": "N/A", "tracking_number": "N/A"}
         
-        # --- Step 2: Typhoon LLM - แปลง raw text เป็น JSON และสกัดข้อมูล ---
+        # --- Step 2: Typhoon LLM - แปลง raw text เป็น JSON ---
         print("🧠 Sending OCR text to Typhoon LLM for JSON extraction...")
         
         llm_prompt = f"""คุณคือผู้เชี่ยวชาญสกัดข้อมูลจากป้ายพัสดุภาษาไทย
-วิเคราะห์ข้อความ OCR ด้านล่าง และสกัดข้อมูลป้ายพัสดุให้ถูกต้อง:
+วิเคราะห์ข้อความ OCR ต่อไปนี้และสกัดข้อมูลป้ายพัสดุ:
 
 [OCR TEXT]
 {raw_ocr_text}
 
 [กฎการสกัดข้อมูล]
-1. transport (บริษัทขนส่ง):
+1. transport (บริษัทขนส่ง) - ดูจากโลโก้/ชื่อบริษัทในข้อความ:
    - "SPX", "Shopee", "Shopee Express" → "SPX EXPRESS"
    - "Flash", "Flazz", "FLASH" → "FLASH EXPRESS"
-   - "Kerry", "KEX", "KEX EXPRESS" → "KEX EXPRESS"
-   - "J&T", "JNT", "JTTH" → "J&T EXPRESS"
-   - "Thailand Post", "ปณ", "EMS", "ไปรษณีย์", "ไปรษณีย์ไทย" → "THAILAND POST"
+   - "Kerry", "KEX" → "KEX EXPRESS"
+   - "J&T" → "J&T EXPRESS"
+   - "Thailand Post", "ปณ", "EMS", "ไปรษณีย์" → "THAILAND POST"
    - "DHL" → "DHL"
    - "Ninja", "NinjaVan" → "NINJA VAN"
-   - "Lazada", "LEX", "LEXTH" → "LAZADA EXPRESS"
-   - "Best", "Best Express" → "BEST EXPRESS"
+   - "Lazada", "LEX" → "LAZADA EXPRESS"
+   - "Best" → "BEST EXPRESS"
    - "SCG" → "SCG EXPRESS"
-   - "Nim", "Nim Express" → "NIM EXPRESS"
+   - "Nim" → "NIM EXPRESS"
    - ถ้าไม่พบ → "N/A"
 
-2. recipient_name (ชื่อ-นามสกุลผู้รับพัสดุ):
-   - สกัดเฉพาะ "ชื่อของผู้รับ" (หาจากคำว่า "ผู้รับ", "TO:", "Receiver", "ลูกค้า", "ส่งถึง", "ชื่อ", หรือชื่อบุคคลที่อยู่คู่กับเลขห้อง/ที่อยู่จัดส่ง)
-   - ห้ามเอาชื่อ "ผู้ส่ง" (From, Sender, ผู้ส่งสินค้า, ชื่อร้านค้า) มาเด็ดขาด! ต้องแยกผู้รับกับผู้ส่งให้ถูกต้อง
-   - หากมีชื่อผู้รับในข้อความ ต้องดึงมาเสมอ ห้ามตอบ "N/A" ถ้ามีชื่อผู้รับปรากฏอยู่
-   - ตัดคำนำหน้าออกเสมอ เช่น "นาย", "นาง", "นางสาว", "คุณ", "Mr.", "Mrs.", "Miss"
-   - แก้ไขคำผิดที่สระหรือวรรณยุกต์หลุดจากการสแกนตามหลักภาษาไทย (เช่น "อนสรณ์" → "อนุสรณ์", "ภมิ" → "ภูมิ")
-
-3. room_number (เลขห้อง):
-   - รูปแบบ: XX/YY หรือเลขห้อง เช่น 123/45, 405
-   - ระวังอย่าสับสนกับรหัสไปรษณีย์ 5 หลัก, เบอร์โทร, หรือยอดเงิน COD
+2. recipient_name (ชื่อผู้รับ) - หาจากคำว่า "ผู้รับ" หรือ "TO:":
+   - ตัดคำนำหน้า (นาย/นาง/นางสาว/คุณ) ออก
+   - ตรวจสอบคำผิดที่อาจเกิดจาก OCR เช่น สับสนระหว่าง "อ" กับ "ฮ" หรือสระอุ/สระอู/วรรณยุกต์ที่ตกหล่น ให้แก้ไขสะกดเป็นชื่อ-สกุลภาษาไทยที่ถูกต้อง
    - ถ้าไม่พบ → "N/A"
 
-4. tracking_number (เลขพัสดุ):
-   - J&T Express: ตัวเลข 12 หลัก (มักขึ้นต้นด้วย 82, 83, 61, 84) หากมีคำว่า "JTTH", "1TTH", "ITTH", หรือ "JT" นำหน้า ให้ตัดออก เอาเฉพาะตัวเลข 12 หลัก
-   - Flash Express: ขึ้นต้นด้วย TH เช่น TH0123456789A
-   - SPX Express: ขึ้นต้นด้วย SPXTH... หรือ TH...
-   - KEX / Kerry: ขึ้นต้นด้วย KEX, KER, หรือตัวเลข 10-12 หลัก
-   - ไปรษณีย์ไทย: 2 ตัวอักษร + เลข 9 หลัก + TH (เช่น ED123456789TH)
+3. room_number (เลขห้อง) - มักอยู่หลังชื่อผู้รับ หรือบรรทัดถัดไป:
+   - รูปแบบ: XX/YY หรือตัวเลขล้วน
+   - หากมีตัว "I" หรือ "l" ปนในตัวเลข ให้แปลงเป็นเลข "1"
+   - อย่าสับสนกับราคาหรือ COD
    - ถ้าไม่พบ → "N/A"
 
-5. is_label:
-   - true ถ้ามีลักษณะเป็นป้ายพัสดุ/ใบเสร็จขนส่ง, false ถ้าไม่ใช่
+4. tracking_number (เลขพัสดุ) - รหัสใต้บาร์โค้ด (TH..., KER..., SPX..., KEX...):
+   - หากมีตัว "I" หรือ "l" ปะปนอยู่ท่ามกลางตัวเลข ให้แก้เป็นเลข "1" (เช่น TH0I... -> TH01...)
+   - ถ้าไม่พบ → "N/A"
 
-ตอบเป็น JSON เท่านั้น:
+5. is_label - true ถ้าข้อความมีลักษณะป้ายพัสดุ, false ถ้าไม่ใช่
+
+ตอบเป็น JSON เท่านั้น ห้ามอธิบายเพิ่ม:
 {{"recipient_name": "...", "room_number": "...", "transport": "...", "tracking_number": "...", "is_label": true/false}}"""
         
         llm_response = typhoon_client.chat.completions.create(
             model=TYPHOON_LLM_MODEL,
             messages=[{"role": "user", "content": llm_prompt}],
-            max_tokens=350,
-            temperature=0.0
+            max_tokens=300,
+            temperature=0
         )
         
         result_text = llm_response.choices[0].message.content.strip()
+        # ทำความสะอาด markdown code block ถ้ามี
         result_text = result_text.replace('```json', '').replace('```', '').strip()
         
         result = json.loads(result_text)
-        
-        # --- Step 3: Python Post-Processing Normalization ---
-        if isinstance(result, dict):
-            # ทำความสะอาดและตัด JTTH ในเลขพัสดุ
-            result['tracking_number'] = normalize_extracted_tracking(
-                result.get('tracking_number'),
-                result.get('transport')
-            )
-            # ตัดคำนำหน้าที่อาจหลงเหลือและล้างช่องว่างในชื่อผู้รับ
-            if result.get('recipient_name') and result['recipient_name'] != "N/A":
-                clean_name = str(result['recipient_name']).strip()
-                clean_name = re.sub(r'^(นาย|นางสาว|นาง|น\.ส\.|คุณ|Mr\.|Mrs\.|Miss)\s*', '', clean_name, flags=re.IGNORECASE).strip()
-                result['recipient_name'] = clean_name if clean_name else "N/A"
-                
-            # ล้างช่องว่างเลขห้อง
-            if result.get('room_number') and result['room_number'] != "N/A":
-                result['room_number'] = str(result['room_number']).strip()
-        
-        print(f"✅ Typhoon LLM parsed & normalized: {result}")
+        print(f"✅ Typhoon LLM parsed: {result}")
         return result
         
     except json.JSONDecodeError as e:
