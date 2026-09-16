@@ -59,9 +59,9 @@ def ensure_indexes():
     except Exception as e:
         print(f"⚠️ Failed to create indexes: {e}")
 
-def log_audit(action, performed_by, target=None, details=None, metadata=None):
+def log_audit(action, performed_by, target=None, details=None):
     """
-    Enhanced audit logging with metadata and context.
+    Audit logging for user and admin actions.
     """
     import datetime
     from flask import request
@@ -79,7 +79,6 @@ def log_audit(action, performed_by, target=None, details=None, metadata=None):
             "target": target,
             "timestamp": datetime.datetime.utcnow(),
             "details": details or "",
-            "metadata": metadata or {},
             "ip_address": ip_address
         }
         audit_logs_col.insert_one(log_entry)
