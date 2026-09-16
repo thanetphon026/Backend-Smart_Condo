@@ -91,15 +91,24 @@ def handle_follow(event):
             display_name = profile.display_name
             picture_url = profile.picture_url
             
-            # Update user with profile info immediately
+            # Update user with profile info immediately (set created_at on insert)
             users_col.update_one(
                 {"line_user_id": user_id},
-                {"$set": {
-                    "display_name": display_name,
-                    "picture_url": picture_url,
-                    "platform": "line",
-                    "last_active_at": datetime.datetime.utcnow()
-                }},
+                {
+                    "$set": {
+                        "display_name": display_name,
+                        "picture_url": picture_url,
+                        "platform": "line",
+                        "last_active_at": datetime.datetime.utcnow()
+                    },
+                    "$setOnInsert": {
+                        "created_at": datetime.datetime.utcnow(),
+                        "first_name": None,
+                        "last_name": None,
+                        "room_number": None,
+                        "phone_number": None
+                    }
+                },
                 upsert=True
             )
     except Exception as e:
@@ -122,7 +131,7 @@ def handle_follow(event):
         card = create_welcome_card(display_name=display_name, is_returning=False)
         reply_with_logging(user_id, reply_token, flex_contents=card)
         
-        # Create user record if not exists
+        # Create user record if not exists (e.g. if profile fetch failed)
         if not user:
             users_col.insert_one({
                 "line_user_id": user_id,
@@ -130,7 +139,9 @@ def handle_follow(event):
                 "first_name": None,
                 "last_name": None,
                 "room_number": None,
-                "phone": None,
+                "phone_number": None,
+                "platform": "line",
+                "last_active_at": datetime.datetime.utcnow(),
                 "created_at": datetime.datetime.utcnow()
             })
         log_audit("New User Follow", display_name or user_id, target="Follow Event")
@@ -230,13 +241,23 @@ def process_text_message_async(event):
                         "display_name": profile.display_name,
                         "picture_url": profile.picture_url,
                         "last_active_at": datetime.datetime.utcnow()
+                    },
+                    "$setOnInsert": {
+                        "created_at": datetime.datetime.utcnow()
                     }},
                     upsert=True
                 )
         except Exception as e:
             print(f"Failed to auto-update profile: {e}")
 
-    users_col.update_one({"line_user_id": user_id}, {"$set": {"last_active_at": datetime.datetime.utcnow(), "platform": "line"}}, upsert=True)
+    users_col.update_one(
+        {"line_user_id": user_id}, 
+        {
+            "$set": {"last_active_at": datetime.datetime.utcnow(), "platform": "line"},
+            "$setOnInsert": {"created_at": datetime.datetime.utcnow()}
+        }, 
+        upsert=True
+    )
     
     # 2. Check for USER REGISTRATION command (always allow this)
     # Priority Fix: unexpected trigger from "ลงทะเบียนรับนอกเวลา"

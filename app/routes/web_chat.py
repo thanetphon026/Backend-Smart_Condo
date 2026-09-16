@@ -118,7 +118,10 @@ def handle_chat():
 
         users_col.update_one(
             {"line_user_id": user_id}, 
-            {"$set": update_data},
+            {
+                "$set": update_data,
+                "$setOnInsert": {"created_at": datetime.datetime.utcnow()}
+            },
             upsert=True
         )
         

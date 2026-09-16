@@ -77,7 +77,7 @@ def confirm_receive():
         {"$set": {
             "status": "received", 
             "picked_up_at": datetime.datetime.utcnow(),
-            "picked_up_by": "admin"
+            "picked_up_by": admin_name
         }},
         return_document=True
     )
