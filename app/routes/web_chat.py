@@ -16,7 +16,7 @@ from ..utils.line import (
     create_image_error_card
 )
 from ..utils.cloudinary_utils import upload_image
-from ..utils.helpers import get_bkk_time, token_required
+from ..utils.helpers import get_bkk_time, token_required, is_registration_open, get_operating_hours
 import datetime
 import io
 import base64
@@ -199,13 +199,9 @@ def handle_text_web(user, user_id, text):
     if intent == 'pick_parcel':
         room = user.get('room_number')
         if room:
-            # Check office hours (08:30 - 17:30)
+            # Check office hours (Dynamic)
             now = get_bkk_time()
-            is_office_open = (
-                (now.hour == 8 and now.minute >= 30) or
-                (9 <= now.hour <= 16) or
-                (now.hour == 17 and now.minute <= 30)
-            )
+            is_office_open, op_hours = is_registration_open(now)
             
             if is_office_open:
                 # Within Office Hours -> assume registration
@@ -221,7 +217,7 @@ def handle_text_web(user, user_id, text):
                 # No after-hours parcels, show status card about office closed
                 card = create_status_card(
                     title="ไม่อยู่ในเวลาให้บริการ",
-                    status_text="❌ คุณสามารถลงทะเบียนรับได้เฉพาะเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nพัสดุจะถูกนำไปวางที่จุดรับของเองเวลา 18:00 น. ค่ะ",
+                    status_text=f"❌ คุณสามารถลงทะเบียนรับได้เฉพาะเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ\n\nพัสดุจะถูกนำไปวางที่จุดรับของเองเวลา 18:00 น. ค่ะ",
                     color="#ff9900"
                 )
                 return web_reply(user_id, flex=card)
@@ -304,19 +300,14 @@ def parse_user_registration_web(text):
 
 def handle_register_outside_web(user, user_id):
     """Handle after-hours registration request."""
+    # Allowed ONLY during registration hours
     now = get_bkk_time()
-    
-    # Allowed ONLY 08:30 - 17:30
-    is_office_open = (
-        (now.hour == 8 and now.minute >= 30) or 
-        (9 <= now.hour <= 16) or 
-        (now.hour == 17 and now.minute <= 30)
-    )
+    is_office_open, op_hours = is_registration_open(now)
     
     if not is_office_open:
         card = create_status_card(
             title="หมดเวลาลงทะเบียน",
-            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
+            status_text=f"⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
         return web_reply(user_id, flex=card)
@@ -360,16 +351,13 @@ def handle_pick_parcel_web(user, user_id, text):
     if not available:
         return web_reply(user_id, reply="ไม่มีพัสดุในเวลาที่รอการลงทะเบียนนอกเวลาค่ะ")
     
+    # Allowed ONLY during registration hours
     now = get_bkk_time()
-    is_office_open = (
-        (now.hour == 8 and now.minute >= 30) or 
-        (9 <= now.hour <= 16) or 
-        (now.hour == 17 and now.minute <= 30)
-    )
+    is_office_open, op_hours = is_registration_open(now)
     if not is_office_open:
         card = create_status_card(
             title="หมดเวลาลงทะเบียน",
-            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
+            status_text=f"⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
         return web_reply(user_id, flex=card)
@@ -434,16 +422,12 @@ def handle_check_parcel_web(user, user_id):
 def handle_cancel_outside_web(user, user_id, user_text=""):
     """Handle after-hours cancellation request."""
     now = get_bkk_time()
-    # Check office hours (08:30 - 17:30)
-    is_office_open = (
-        (now.hour == 8 and now.minute >= 30) or 
-        (9 <= now.hour <= 16) or 
-        (now.hour == 17 and now.minute <= 30)
-    )
+    # Check registration hours (Dynamic)
+    is_office_open, op_hours = is_registration_open(now)
     if not is_office_open:
         card = create_status_card(
             title="ไม่อยู่ในเวลาให้บริการ",
-            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
+            status_text=f"❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
             color="#ff9900"
         )
         return web_reply(user_id, flex=card)
@@ -475,16 +459,13 @@ def handle_cancel_outside_web(user, user_id, user_text=""):
 
 def handle_cancel_select_parcel_web(user, user_id, text):
     """Handle parcel selection for cancellation."""
+    # Allowed ONLY during registration hours
     now = get_bkk_time()
-    is_office_open = (
-        (now.hour == 8 and now.minute >= 30) or 
-        (9 <= now.hour <= 16) or 
-        (now.hour == 17 and now.minute <= 30)
-    )
+    is_office_open, op_hours = is_registration_open(now)
     if not is_office_open:
         card = create_status_card(
             title="ไม่อยู่ในเวลาให้บริการ",
-            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ",
+            status_text=f"❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ",
             color="#ff9900"
         )
         return web_reply(user_id, flex=card)

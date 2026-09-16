@@ -3,7 +3,7 @@ from ..utils.db import parcels_col, users_col
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
-from ..utils.helpers import get_bkk_time, token_required
+from ..utils.helpers import get_bkk_time, token_required, is_registration_open
 
 @dashboard_bp.route('/api/admin/dashboard/stats', methods=['GET'])
 @token_required
@@ -20,12 +20,9 @@ def get_stats():
         total_received = parcels_col.count_documents({"status": "received"})
         total_users = users_col.count_documents({})
         
-        # System Status
+        # System Status (Dynamic Operating Hours)
         now = get_bkk_time()
-        # Open 08:30 - 17:30
-        start_time = now.replace(hour=8, minute=30, second=0, microsecond=0)
-        end_time = now.replace(hour=17, minute=30, second=0, microsecond=0)
-        is_registration_open = start_time <= now <= end_time
+        is_open, op_hours = is_registration_open(now)
         
         return jsonify({
             "status": "success",
@@ -38,7 +35,9 @@ def get_stats():
                 "outside_received": outside_received,
                 "total_received": total_received,
                 "system_status": {
-                    "registration_open": is_registration_open,
+                    "registration_open": is_open,
+                    "registration_start": op_hours["registration_start"],
+                    "registration_end": op_hours["registration_end"],
                     "server_time": now.isoformat()
                 }
             }

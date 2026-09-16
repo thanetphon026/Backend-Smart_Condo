@@ -48,6 +48,7 @@ def create_app():
     from .routes.maintenance import maintenance_bp
     from .routes.web_chat import web_chat_bp
     from .routes.admin_kb import admin_kb_bp
+    from .routes.admin_settings import settings_bp
     
     app.register_blueprint(webhook_bp)
     app.register_blueprint(auth_bp)
@@ -58,5 +59,6 @@ def create_app():
     app.register_blueprint(maintenance_bp)
     app.register_blueprint(web_chat_bp)
     app.register_blueprint(admin_kb_bp)
+    app.register_blueprint(settings_bp)
     
     return app

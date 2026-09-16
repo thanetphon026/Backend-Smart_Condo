@@ -62,7 +62,7 @@ def health_check():
     except Exception as e:
         return jsonify({"status": "online", "db": "disconnected", "error": str(e)}), 500
 
-from ..utils.helpers import get_bkk_time
+from ..utils.helpers import get_bkk_time, is_registration_open, get_operating_hours
 
 @webhook_bp.route("/callback", methods=['POST'])
 def callback():
@@ -344,13 +344,9 @@ def process_text_message_async(event):
                 handle_cancel_select_parcel(user, user_id, text, reply_token)
                 return
             
-            # Check office hours (08:30 - 17:30)
+            # Check office hours (Dynamic)
             now = get_bkk_time()
-            is_office_open = (
-                (now.hour == 8 and now.minute >= 30) or
-                (9 <= now.hour <= 16) or
-                (now.hour == 17 and now.minute <= 30)
-            )
+            is_office_open, op_hours = is_registration_open(now)
             
             if is_office_open:
                 # Within Office Hours -> assume registration
@@ -369,7 +365,7 @@ def process_text_message_async(event):
                 # No after-hours parcels, show status card about office closed
                 card = create_status_card(
                     title="ไม่อยู่ในเวลาให้บริการ",
-                    status_text="❌ คุณสามารถลงทะเบียนรับได้เฉพาะเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nพัสดุจะถูกนำไปวางที่จุดรับของเองเวลา 18:00 น. ค่ะ",
+                    status_text=f"❌ คุณสามารถลงทะเบียนรับได้เฉพาะเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ\n\nพัสดุจะถูกนำไปวางที่จุดรับของเองเวลา 18:00 น. ค่ะ",
                     color="#ff9900"
                 )
                 reply_with_logging(user_id, reply_token, flex_contents=card)
@@ -402,19 +398,14 @@ def process_text_message_async(event):
     reply_with_logging(user_id, reply_token, text=response_text)
 
 def handle_register_outside(user, user_id, reply_token):
+    # Allowed ONLY during registration hours
     now = get_bkk_time()
-    
-    # Allowed ONLY 08:30 - 17:30
-    is_office_open = (
-        (now.hour == 8 and now.minute >= 30) or 
-        (9 <= now.hour <= 16) or 
-        (now.hour == 17 and now.minute <= 30)
-    )
+    is_office_open, op_hours = is_registration_open(now)
     
     if not is_office_open:
         card = create_status_card(
             title="หมดเวลาลงทะเบียน",
-            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
+            status_text=f"⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
         reply_with_logging(user_id, reply_token, flex_contents=card)
@@ -465,17 +456,13 @@ def handle_pick_parcel(user, user_id, text, reply_token):
         reply_with_logging(user_id, reply_token, text="ไม่มีพัสดุในเวลาที่รอการลงทะเบียนนอกเวลาค่ะ")
         return
 
-    # Allowed ONLY 08:30 - 17:30
+    # Allowed ONLY during registration hours
     now = get_bkk_time()
-    is_office_open = (
-        (now.hour == 8 and now.minute >= 30) or 
-        (9 <= now.hour <= 16) or 
-        (now.hour == 17 and now.minute <= 30)
-    )
+    is_office_open, op_hours = is_registration_open(now)
     if not is_office_open:
         card = create_status_card(
             title="หมดเวลาลงทะเบียน",
-            status_text="⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
+            status_text=f"⛔ ระบบเปิดรับลงทะเบียนเฉพาะช่วงเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ\n\nกรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลในเวลาทำการค่ะ",
             color="#ff3333"
         )
         reply_with_logging(user_id, reply_token, flex_contents=card)
@@ -543,16 +530,12 @@ def handle_cancel_outside(user, user_id, reply_token, user_text=""):
     - Only allowed during office hours 08:00 - 16:30
     """
     now = get_bkk_time()
-    # Check office hours (08:30 - 17:30)
-    is_office_open = (
-        (now.hour == 8 and now.minute >= 30) or 
-        (9 <= now.hour <= 16) or 
-        (now.hour == 17 and now.minute <= 30)
-    )
+    # Check registration hours (Dynamic)
+    is_office_open, op_hours = is_registration_open(now)
     if not is_office_open:
         card = create_status_card(
             title="ไม่อยู่ในเวลาให้บริการ",
-            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
+            status_text=f"❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
             color="#ff9900"
         )
         reply_with_logging(user_id, reply_token, flex_contents=card)
@@ -595,17 +578,13 @@ def handle_cancel_select_parcel(user, user_id, text, reply_token):
     """
     Handle when user selects specific parcels to cancel from the list.
     """
-    # Allowed ONLY 08:30 - 17:30
+    # Allowed ONLY during registration hours
     now = get_bkk_time()
-    is_office_open = (
-        (now.hour == 8 and now.minute >= 30) or 
-        (9 <= now.hour <= 16) or 
-        (now.hour == 17 and now.minute <= 30)
-    )
+    is_office_open, op_hours = is_registration_open(now)
     if not is_office_open:
         card = create_status_card(
             title="ไม่อยู่ในเวลาให้บริการ",
-            status_text="❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา 08:30 - 17:30 น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
+            status_text=f"❌ คุณสามารถยกเลิกการลงทะเบียนได้เฉพาะช่วงเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ\n\nหากต้องการยกเลิกเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ค่ะ",
             color="#ff9900"
         )
         reply_with_logging(user_id, reply_token, flex_contents=card)

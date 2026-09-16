@@ -35,3 +35,44 @@ def token_required(f):
             
         return f(*args, **kwargs)
     return decorated
+
+def get_operating_hours():
+    """Fetch current operating hours settings from MongoDB or return default 08:30 - 17:30."""
+    try:
+        from .db import settings_col
+        doc = settings_col.find_one({"_id": "operating_hours"})
+        if doc:
+            return {
+                "registration_start": doc.get("registration_start", "08:30"),
+                "registration_end": doc.get("registration_end", "17:30")
+            }
+    except Exception as e:
+        print(f"⚠️ Error fetching operating hours: {e}")
+    return {
+        "registration_start": "08:30",
+        "registration_end": "17:30"
+    }
+
+def is_registration_open(now=None):
+    """
+    Check if current Bangkok time is within registration window.
+    Returns: (bool is_open, dict operating_hours)
+    """
+    if now is None:
+        now = get_bkk_time()
+    op_hours = get_operating_hours()
+    try:
+        start_h, start_m = map(int, op_hours["registration_start"].split(':'))
+        end_h, end_m = map(int, op_hours["registration_end"].split(':'))
+        
+        current_minutes = now.hour * 60 + now.minute
+        start_minutes = start_h * 60 + start_m
+        end_minutes = end_h * 60 + end_m
+        
+        is_open = start_minutes <= current_minutes <= end_minutes
+        return is_open, op_hours
+    except Exception as e:
+        print(f"⚠️ Error calculating registration hours: {e}")
+        current_minutes = now.hour * 60 + now.minute
+        return (8 * 60 + 30) <= current_minutes <= (17 * 60 + 30), op_hours
+

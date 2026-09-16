@@ -11,6 +11,7 @@ kb_col = db["knowledge_base"]
 admins_col = db["admins"]
 audit_logs_col = db["audit_logs"]
 chat_history_col = db["chat_history"]
+settings_col = db["settings"]
 
 def ensure_indexes():
     """Create MongoDB Indexes."""
