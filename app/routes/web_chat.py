@@ -534,6 +534,10 @@ def handle_image_web(user, user_id, image_base64, image_type):
             )
             return web_reply(user_id, flex=card)
             
+        # Upload to Cloudinary and record incoming user image in chat history
+        image_url = upload_image(io.BytesIO(image_bytes))
+        save_chat_history(user_id, 'user', '[รูปภาพ]', platform='web', image_url=image_url)
+            
     except Exception as e:
         return web_reply(user_id, reply=f"เกิดข้อผิดพลาดในการประมวลผลรูปภาพ: {str(e)}", status="error")
 
@@ -585,8 +589,8 @@ def handle_image_web(user, user_id, image_base64, image_type):
     reason = match_result['reason']
     ocr = match_result['ocr_details']
     
-    # Upload to Cloudinary
-    image_url = upload_image(io.BytesIO(image_bytes))
+    if not image_url:
+        image_url = upload_image(io.BytesIO(image_bytes))
     
     room_name = f"ห้อง {user_room} - {user.get('first_name', 'Guest')}"
     log_status = "Success" if is_match else "Failed"
@@ -607,7 +611,7 @@ def handle_image_web(user, user_id, image_base64, image_type):
         confirm_action={"type": "postback", "label": "ยืนยันการรับของ", "data": f"action=confirm_self&room={user_room}&verify_img={image_url}&ts={timestamp}"} if is_match else None
     )
     
-    return jsonify({"status": "success", "flex": card, "timestamp": datetime.datetime.utcnow().isoformat()})
+    return web_reply(user_id, flex=card)
 
 
 def handle_postback_web(user, user_id, postback_data):

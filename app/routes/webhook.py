@@ -688,6 +688,10 @@ def process_image_message_async(event):
         
         image_bytes = bytes(image_bytes)
         
+        # Upload image and save to chat history
+        image_url = upload_image(io.BytesIO(image_bytes))
+        save_chat_history(user_id, 'user', '[รูปภาพ]', platform='line', image_url=image_url)
+        
     except requests.exceptions.Timeout:
         reply_message(reply_token, text="หมดเวลาดาวน์โหลดไฟล์ (Timeout) เนื่องจากไฟล์อาจมีขนาดใหญ่เกินไปค่ะ")
         return
@@ -734,7 +738,7 @@ def process_image_message_async(event):
                 status_text="❌ คุณยังไม่ได้ลงทะเบียนรับของนอกเวลา หรือไม่มีพัสดุรอรับที่เตรียมไว้ในจุดรับของด้วยตนเองค่ะ",
                 color="#ff3333"
             )
-            reply_message(reply_token, flex_contents=card)
+            reply_with_logging(user_id, reply_token, flex_contents=card)
             return
 
         # 4. Strict AI Analyze (Using already downloaded image_bytes)
@@ -748,7 +752,7 @@ def process_image_message_async(event):
                 status_text=f"❌ {reason}\n\nกรุณาถ่ายรูปหน้าพัสดุให้ชัดเจน หรือติดต่อเจ้าหน้าที่ค่ะ",
                 color="#ff3333"
             )
-            reply_message(reply_token, flex_contents=card)
+            reply_with_logging(user_id, reply_token, flex_contents=card)
             return
 
         # 5. Robust Match Logic
@@ -756,7 +760,8 @@ def process_image_message_async(event):
         is_match = match_result['is_match']
         reason = match_result['reason']
         ocr = match_result['ocr_details']
-        image_url = upload_image(io.BytesIO(image_bytes))
+        if not image_url:
+            image_url = upload_image(io.BytesIO(image_bytes))
 
         room_name = f"ห้อง {user_room} - {user.get('first_name', 'Guest')}"
         log_status = "Success" if is_match else "Failed"
@@ -777,14 +782,14 @@ def process_image_message_async(event):
             image_url=image_url,
             confirm_action={"type": "postback", "label": "ยืนยันการรับของ", "data": f"action=confirm_self&room={user_room}&verify_img={image_url}&ts={timestamp}"} if is_match else None
         )
-        reply_message(reply_token, flex_contents=card)
+        reply_with_logging(user_id, reply_token, flex_contents=card)
 
     except Exception as e:
         print(f"Error Processing Image Message: {e}")
         import traceback
         traceback.print_exc()
         try:
-            reply_message(reply_token, text="เกิดข้อผิดพลาดในระบบ กรุณาลองใหม่อีกครั้งหรือติดต่อเจ้าหน้าที่ค่ะ")
+            reply_with_logging(user_id, reply_token, text="เกิดข้อผิดพลาดในระบบ กรุณาลองใหม่อีกครั้งหรือติดต่อเจ้าหน้าที่ค่ะ")
         except:
             pass
 
