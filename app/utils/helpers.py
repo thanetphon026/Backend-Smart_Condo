@@ -76,3 +76,15 @@ def is_registration_open(now=None):
         current_minutes = now.hour * 60 + now.minute
         return (8 * 60 + 30) <= current_minutes <= (17 * 60 + 30), op_hours
 
+def is_self_pickup_open(now=None):
+    """
+    Check if self-pickup scan is open (when office registration is closed).
+    Returns: (bool is_pickup_open, dict operating_hours)
+    """
+    if now is None:
+        now = get_bkk_time()
+    is_reg_open, op_hours = is_registration_open(now)
+    # Self-pickup is open outside office hours (when office registration is closed)
+    is_pickup_open = not is_reg_open
+    return is_pickup_open, op_hours
+

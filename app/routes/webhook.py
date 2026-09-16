@@ -62,7 +62,7 @@ def health_check():
     except Exception as e:
         return jsonify({"status": "online", "db": "disconnected", "error": str(e)}), 500
 
-from ..utils.helpers import get_bkk_time, is_registration_open, get_operating_hours
+from ..utils.helpers import get_bkk_time, is_registration_open, get_operating_hours, is_self_pickup_open
 
 @webhook_bp.route("/callback", methods=['POST'])
 def callback():
@@ -365,7 +365,7 @@ def process_text_message_async(event):
                 # No after-hours parcels, show status card about office closed
                 card = create_status_card(
                     title="ไม่อยู่ในเวลาให้บริการ",
-                    status_text=f"❌ คุณสามารถลงทะเบียนรับได้เฉพาะเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ\n\nพัสดุจะถูกนำไปวางที่จุดรับของเองเวลา 18:00 น. ค่ะ",
+                    status_text=f"❌ คุณสามารถลงทะเบียนรับได้เฉพาะเวลา {op_hours['registration_start']} - {op_hours['registration_end']} น. เท่านั้นค่ะ\n\nพัสดุจะถูกนำไปวางที่จุดรับของเองเวลา {op_hours['registration_end']} น. ค่ะ",
                     color="#ff9900"
                 )
                 reply_with_logging(user_id, reply_token, flex_contents=card)
@@ -700,15 +700,14 @@ def process_image_message_async(event):
     
     # Validation/Processing Block
     try:
-        # 2. Check Time Restrictions (Self-Pickup Scan: 18:00 - 08:30)
+        # 2. Check Time Restrictions (Self-Pickup Scan: Outside office hours)
         now = get_bkk_time()
-        # Open from 18:00 (18:00) until 08:30 (08:29)
-        is_pickup_open = (now.hour >= 18 or now.hour < 8 or (now.hour == 8 and now.minute < 30))
+        is_pickup_open, op_hours = is_self_pickup_open(now)
         
         if not is_pickup_open:
             card = create_status_card(
                 title="ไม่อยู่ในเวลาให้บริการ",
-                status_text="❌ ระบบสแกนรับของด้วยตนเองเปิดให้บริการเวลา 18:00 น. จนถึง 08:30 น. เท่านั้นค่ะ\n\nในช่วงเวลาทำการ (08:30 - 17:30 น.) กรุณาติดต่อรับพัสดุกับนิติบุคคลโดยตรงค่ะ",
+                status_text=f"❌ ในช่วงเวลาทำการ ({op_hours['registration_start']} - {op_hours['registration_end']} น.) กรุณาติดต่อรับพัสดุกับเจ้าหน้าที่นิติบุคคลโดยตรงค่ะ\n\nระบบสแกนรับของด้วยตนเองจะเปิดให้บริการนอกเวลาทำการ (หลัง {op_hours['registration_end']} น. จนถึง {op_hours['registration_start']} น.) ค่ะ",
                 color="#999999"
             )
             reply_with_logging(user_id, reply_token, flex_contents=card)
