@@ -276,7 +276,8 @@ def create_parcel():
                 tracking_number=new_parcel['tracking_number'],
                 scan_time=formatted_time,
                 total_pending=total_pending,
-                image_url=new_parcel['image_url']
+                image_url=new_parcel['image_url'],
+                pin=pin
              )
              send_message(user['line_user_id'], flex_contents=card)
 

@@ -116,10 +116,10 @@ def create_block_card(title, status, details, image_url=None, confirm_action=Non
         
     return bubble
 
-def create_new_parcel_notification(room_number, recipient_name, transport, tracking_number, scan_time, total_pending, image_url=None):
+def create_new_parcel_notification(room_number, recipient_name, transport, tracking_number, scan_time, total_pending, image_url=None, pin=None):
     """
-    Header: พัสดุใหม่
-    Body: Details + Image + Total Pending + Instruction
+    Header: พัสดุมาใหม่
+    Body: Details + PIN + Image + Total Pending + Instruction
     """
     bubble = {
         "type": "bubble",
@@ -153,24 +153,62 @@ def create_new_parcel_notification(room_number, recipient_name, transport, track
             }
         })
 
+    contents_list = [
+        {"type": "text", "text": f"🏠 เลขห้อง: {room_number}", "weight": "bold", "size": "sm", "wrap": True},
+        {"type": "text", "text": f"👤 ชื่อผู้รับ: {recipient_name}", "size": "sm", "wrap": True},
+        {"type": "text", "text": f"🚚 บริษัทขนส่ง: {transport}", "size": "sm", "wrap": True},
+        {"type": "text", "text": f"📦 เลขพัสดุ: {tracking_number or '-'}", "size": "sm", "wrap": True},
+    ]
+
+    if pin:
+        contents_list.append({
+            "type": "box",
+            "layout": "horizontal",
+            "margin": "sm",
+            "backgroundColor": "#eef6ff",
+            "paddingAll": "8px",
+            "cornerRadius": "md",
+            "contents": [
+                {"type": "text", "text": "🔑 รหัส PIN:", "weight": "bold", "size": "sm", "color": "#0056b3", "flex": 3},
+                {"type": "text", "text": str(pin), "weight": "bold", "size": "md", "color": "#007bff", "flex": 4, "align": "end"}
+            ]
+        })
+
+    contents_list.extend([
+        {"type": "text", "text": f"⏰ เวลาที่บันทึก: {scan_time}", "size": "xs", "color": "#aaaaaa", "wrap": True, "margin": "sm"},
+        {"type": "separator", "margin": "md"},
+        {"type": "text", "text": f"📊 พัสดุค้างทั้งหมด: {total_pending} ชิ้น", "weight": "bold", "size": "sm", "color": "#007bff", "margin": "md"},
+    ])
+
+    # Dynamic operating hours note
+    try:
+        from .helpers import get_operating_hours
+        op_hours = get_operating_hours()
+        op_start = op_hours.get('registration_start', '08:30')
+        op_end = op_hours.get('registration_end', '17:30')
+        op_text = f"ให้แจ้งภายใน {op_start} - {op_end} น. ของทุกวัน"
+    except Exception:
+        op_text = "ให้แจ้งภายใน 08:30 - 17:30 น. ของทุกวัน"
+
+    contents_list.append({
+        "type": "box",
+        "layout": "vertical",
+        "margin": "md",
+        "backgroundColor": "#fff4e5",
+        "paddingAll": "10px",
+        "cornerRadius": "md",
+        "contents": [
+            {"type": "text", "text": "🔔 ต้องการรับนอกเวลา?", "weight": "bold", "size": "xs", "color": "#b45d00"},
+            {"type": "text", "text": op_text, "size": "xs", "color": "#b45d00", "wrap": True}
+        ]
+    })
+
     details_box = {
         "type": "box",
         "layout": "vertical",
         "margin": "lg",
         "spacing": "sm",
-        "contents": [
-            {"type": "text", "text": f"🏠 เลขห้อง: {room_number}", "weight": "bold", "size": "sm", "wrap": True},
-            {"type": "text", "text": f"👤 ชื่อผู้รับ: {recipient_name}", "size": "sm", "wrap": True},
-            {"type": "text", "text": f"🚚 บริษัทขนส่ง: {transport}", "size": "sm", "wrap": True},
-            {"type": "text", "text": f"📦 เลขพัสดุ: {tracking_number}", "size": "sm", "wrap": True},
-            {"type": "text", "text": f"⏰ เวลาที่บันทึก: {scan_time}", "size": "xs", "color": "#aaaaaa", "wrap": True},
-            {"type": "separator", "margin": "md"},
-            {"type": "text", "text": f"📊 พัสดุค้างทั้งหมด: {total_pending} ชิ้น", "weight": "bold", "size": "sm", "color": "#007bff", "margin": "md"},
-            {"type": "box", "layout": "vertical", "margin": "md", "backgroundColor": "#fff4e5", "paddingAll": "10px", "cornerRadius": "md", "contents": [
-                {"type": "text", "text": "🔔 ต้องการรับนอกเวลา?", "weight": "bold", "size": "xs", "color": "#b45d00"},
-                {"type": "text", "text": "ให้แจ้งภายใน 08:30-17:30 น. ของทุกวัน", "size": "xs", "color": "#b45d00", "wrap": True}
-            ]}
-        ]
+        "contents": contents_list
     }
     bubble["body"]["contents"].append(details_box)
     
